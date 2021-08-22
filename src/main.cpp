@@ -1586,6 +1586,11 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
          printf("%s\n\r", buffer);
          LCD_ShowString(0, 80, buffer, foreground);
 
+         sprintf((char*)buffer, "%4u %4u", scaleRollData(aud_roll.getCurrent()), scalePitchData(aud_pitch.getCurrent()));
+         LCD_ShowString(0, 112, buffer, foreground);
+
+         sprintf((char*)buffer, "%4u %4u", scaleThrottleData(aud_throttle.getCurrent()), scaleYawData(aud_yaw.getCurrent()));
+         LCD_ShowString(0, 128, buffer, foreground);
       }
       #endif // STICK_CALIBRATION
 
