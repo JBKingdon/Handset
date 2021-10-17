@@ -40,24 +40,24 @@ unsigned long micros(void){
 /** Send 8 bit data over SPI and read 8 bit return value
  *  TODO Not currently used - remove?
  */
-uint8_t spi1_transfer(uint8_t x)
-{
-    gpio_bit_reset(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS low
+// uint8_t spi1_transfer(uint8_t x)
+// {
+//     gpio_bit_reset(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS low
 
-    while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_TBE))
-        ; // wait for any previous tx to complete
+//     while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_TBE))
+//         ; // wait for any previous tx to complete
 
-    spi_i2s_data_transmit(SPI1, x);
+//     spi_i2s_data_transmit(SPI1, x);
 
-    while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_RBNE))
-        ; // wait for rx data to be ready
+//     while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_RBNE))
+//         ; // wait for rx data to be ready
 
-    uint16_t r = spi_i2s_data_receive(SPI1);
+//     uint16_t r = spi_i2s_data_receive(SPI1);
 
-    gpio_bit_set(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS high
+//     gpio_bit_set(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS high
 
-    return (uint8_t)r;
-}
+//     return (uint8_t)r;
+// }
 
 /**
  * Transfer multiple bytes over SPI

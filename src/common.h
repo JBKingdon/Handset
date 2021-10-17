@@ -4,7 +4,7 @@
 #include "config.h"
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
-#include "SX127xDriver.h"
+#include "SX1262Driver.h"
 #endif
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
@@ -83,6 +83,8 @@ typedef enum
     RATE_125HZ = 6,
     RATE_100HZ = 7,
     RATE_50HZ  = 8,
+    RATE_25HZ  = 9
+
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 #endif // ELRS_OG_COMPATIBILITY
 
@@ -106,9 +108,9 @@ typedef struct expresslrs_mod_settings_s
 {
     int8_t index;
     expresslrs_RFrates_e enum_rate; // Max value of 16 since only 4 bits have been assigned in the sync package.
-    SX127x_Bandwidth bw;
-    SX127x_SpreadingFactor sf;
-    SX127x_CodingRate cr;
+    SX1262_Bandwidth bw;
+    SX1262_RadioLoRaSpreadingFactors_t sf;
+    SX1262_RadioLoRaCodingRates_t cr;
     uint32_t interval;                  //interval in us seconds that corresponds to that frequnecy
     expresslrs_tlm_ratio_e TLMinterval; // every X packets is a response TLM packet, should be a power of 2
     uint8_t FHSShopInterval;            // every X packets we hope to a new frequnecy. Max value of 16 since only 4 bits have been assigned in the sync package.

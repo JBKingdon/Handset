@@ -170,7 +170,8 @@ uint16_t SX1280Driver::convertPowerToMw(int power)
     // for e28-12 output is just the current setting
     uint16_t mw = pow10(float(power)/10.0f) + 0.5; // round to nearest
     #else
-    #error("must define a radio module")
+    // #error("must define a radio module")
+    const uint16_t mw = 0;
     #endif
 
     return mw;

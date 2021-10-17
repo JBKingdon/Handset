@@ -8,12 +8,19 @@
 // #define T_DISPLAY
 #define PCB_V1_0
 
+#ifdef RADIO_E22
+
+    #define Regulatory_Domain_FCC_915
+
+#else // not E22
 
 #ifdef ELRS_OG_COMPATIBILITY
     #define Regulatory_Domain_ISM_2400
 #else
     #define Regulatory_Domain_ISM_2400_NA
 #endif
+
+#endif // E22
 
 
 #ifdef RADIO_E28_12
@@ -26,6 +33,12 @@
 #elif defined(RADIO_E28_27)
 #define MAX_PRE_PA_POWER 0
 #define DISARM_POWER (-15)
+#elif defined(RADIO_E22)
+// #define MAX_PRE_PA_POWER 22     // sx1262 actually uses signed values in dBm
+#define MAX_PRE_PA_POWER 10     // while testing
+#define DISARM_POWER (-9)
+#else
+#error "Must define a radio module to use"
 #endif
 
 
@@ -51,6 +64,12 @@
 #define RADIO_RESET_PORT GPIOA
 #define RADIO_RESET_PIN GPIO_PIN_11
 
+#define RADIO_RXEN_PORT GPIOB
+#define RADIO_RXEN_PIN GPIO_PIN_11
+
+#define RADIO_TXEN_PORT GPIOA
+#define RADIO_TXEN_PIN GPIO_PIN_8
+
 
 // rotary encoder button
 // #define RE_BUTTON_PORT GPIOA
@@ -62,37 +81,37 @@
 // for testing on the nano
 // #define SWB_TMP PA14
 
-#define SWA_LOW  PC15
-#define SWA_HIGH PC14
+// #define SWA_LOW  PC15
+// #define SWA_HIGH PC14
 
-#define SWB_LOW  PA13
-#define SWB_HIGH PA14
+// #define SWB_LOW  PA13
+// #define SWB_HIGH PA14
 
-#define SWC_LOW PA15
-#define SWC_HIGH PB3
+// #define SWC_LOW PA15
+// #define SWC_HIGH PB3
 
-#define SWD_LOW  PB5
-#define SWD_HIGH PB4
+// #define SWD_LOW  PB5
+// #define SWD_HIGH PB4
 
 // need adc scaling constants even if we don't have anything connected
-#define ADC_PITCH_REVERSED false
-#define ADC_PITCH_MIN 726u
-#define ADC_PITCH_CTR 2080u
-#define ADC_PITCH_MAX 3497u
+// #define ADC_PITCH_REVERSED false
+// #define ADC_PITCH_MIN 726u
+// #define ADC_PITCH_CTR 2080u
+// #define ADC_PITCH_MAX 3497u
 
-#define ADC_ROLL_REVERSED true
-#define ADC_ROLL_MIN 592u
-#define ADC_ROLL_CTR 2083u
-#define ADC_ROLL_MAX 3547u
+// #define ADC_ROLL_REVERSED true
+// #define ADC_ROLL_MIN 592u
+// #define ADC_ROLL_CTR 2083u
+// #define ADC_ROLL_MAX 3547u
 
-#define ADC_THROTTLE_REVERSED true
-#define ADC_THROTTLE_MIN 561u
-#define ADC_THROTTLE_MAX 3504u
+// #define ADC_THROTTLE_REVERSED true
+// #define ADC_THROTTLE_MIN 561u
+// #define ADC_THROTTLE_MAX 3504u
 
-#define ADC_YAW_REVERSED false
-#define ADC_YAW_MIN 741u
-#define ADC_YAW_CTR 2081u
-#define ADC_YAW_MAX 3436u
+// #define ADC_YAW_REVERSED false
+// #define ADC_YAW_MIN 741u
+// #define ADC_YAW_CTR 2081u
+// #define ADC_YAW_MAX 3436u
 
 
 #elif defined(T_DISPLAY)

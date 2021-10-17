@@ -12,6 +12,8 @@
 // Next:
 //    UI improvements
 //    Better stick calibration
+//    Get rid of "Driver" from the radio lib class name
+//    Make a proper class hierarchy for the radio libs
 
 //    msp for vtx channel?
    // Info from BF msp.c:
@@ -82,6 +84,7 @@ extern "C" {
 
 #define CRSF_FRAMETYPE_LINK_STATISTICS 0x14
 
+// LCD backlight brightness levels
 #define LCD_PWM_MAX     124
 #define LCD_PWM_CHARGING  5
 #define LCD_PWM_ARMED    20
@@ -244,7 +247,15 @@ volatile uint8_t NonceTX = 0;
 uint32_t SyncPacketLastSent = 0;
 uint32_t LastTLMpacketRecvMillis = 0;
 
+#ifdef RADIO_E22
+
+SX1262Driver radio;
+
+#else
+
 SX1280Driver radio;
+
+#endif // E22 vs E28 radios
 
 // telemetry values
 int8_t rssi;
@@ -419,12 +430,23 @@ void EXTI5_9_IRQHandler(void)
       exti_interrupt_flag_clear(EXTI_8);
       // printf("RXdone!\n\r");
 
-      // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
+      // XXX testing, needed for continuous receive mode
+      radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
 
       // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
 
       // TODO move to the event loop?
-      radio.readRXData();  // get the data from the sx1280 chip
+      radio.readRXData();  // get the data from the radio chip
+
+      // XXX testing
+      uint8_t counter = radio.RXdataBuffer[0];
+
+      int8_t rssi = radio.GetLastPacketRSSI();
+      // int8_t snr = radio.GetLastPacketSNR();
+
+      // printf("packet counter %u, rssi %d snr %d\n\r", counter, rssi, snr);
+      printf("packet counter %u, rssi %d\n\r", counter, rssi);
+
       ProcessTLMpacket();
 
    } else if (exti_interrupt_flag_get(EXTI_9) == SET) {
@@ -432,8 +454,26 @@ void EXTI5_9_IRQHandler(void)
       // printf("TXdone!\n\r");
 
       // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
+      // radio.GetStatus();
 
-      TXdoneISR();
+      // uint16_t irqS = radio.GetIrqStatus();
+
+      // printf("irqS %04X", irqS);
+      // if (irqS & SX1262_IRQ_TX_DONE) printf(" TX_DONE");
+      // if (irqS & SX1262_IRQ_RX_DONE) printf(" RX_DONE");
+      // if (irqS & SX1262_IRQ_PREAMBLE_DETECTED) printf(" PREAMBLE");
+      // if (irqS & SX1262_IRQ_SYNCWORD_VALID) printf(" SYNCWORD");
+      // if (irqS & SX1262_IRQ_HEADER_VALID) printf(" HEADER VALID");
+      // if (irqS & SX1262_IRQ_HEADER_ERROR) printf(" HEADER ERROR");
+      // if (irqS & SX1262_IRQ_CRC_ERROR) printf(" CRC ERROR");
+      // if (irqS & SX1262_IRQ_CAD_DONE) printf(" CAD DONE");
+      // if (irqS & SX1262_IRQ_CAD_DETECTED) printf(" CAD DETECTED");
+      // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) printf(" RXTX TIMEOUT");
+      // printf("\n\r");
+
+      // if (irqS & SX1262_IRQ_TX_DONE) {
+         TXdoneISR();
+      // }
    }
 }
 
@@ -1108,7 +1148,7 @@ void spi1_config(void)
    // spi_init_struct.prescale             = SPI_PSC_32; // 1.6 MHz - must be running off a ~50MHz clock
    // spi_init_struct.prescale             = SPI_PSC_16; // 3.2 MHz
    // spi_init_struct.prescale             = SPI_PSC_8; // 6.4 MHz
-   spi_init_struct.prescale             = SPI_PSC_4; // 12.8 MHz -- works in v3 dag prototype, works on spring board test setup
+   spi_init_struct.prescale             = SPI_PSC_4; // 12.8 MHz -- works for gd32 with both sx1280 and sx1262
 
    spi_init_struct.endian               = SPI_ENDIAN_MSB;
    spi_init(SPI1, &spi_init_struct);
@@ -2102,9 +2142,12 @@ int main(void)
    // need to do this before calling checkForChargeMode()
    adc_software_trigger_enable(ADC1, ADC_REGULAR_CHANNEL);
 
+// prototype setup needs to skup startup checks
+#ifndef LONGAN_NANO
    checkForChargeMode();
 
    runSafetyChecks();
+#endif
 
    LCD_Clear(DARKBLUE);
    BACK_COLOR = DARKBLUE;
@@ -2149,11 +2192,44 @@ int main(void)
       printf("persistent data not found\n\r");
    }
 
+   // XXX testing
+   printf("overriding linkRateIndex\n\r");
+   linkRateIndex = 0;
+
+   // printf("XXX testing, setting radio from eeprom disabled\n\r");
    SetRFLinkRate(linkRateIndex);
 
    #ifdef USE_DYNAMIC_POWER
    updateDynPowerFilter();
    #endif
+
+   delay(50);
+   printf("setting FS\n\r");
+   radio.SetMode(SX1262_MODE_FS);
+   delay(50);
+   radio.GetStatus();
+
+   // XXX For testing, just go into a continuous loop here
+   uint8_t data[OTA_PACKET_LENGTH];
+   const bool transmitter = true;
+   if (!transmitter) {
+      printf("calling RXnb\n\r");
+      radio.RXnb();
+   }
+   while (true)
+   {
+      if (transmitter) {
+         printf("calling TXnb\n\r");
+         radio.TXnb(data, OTA_PACKET_LENGTH);
+         data[0]++;
+      // } else {
+      }
+      delay(500);
+      // printf("setting fs\n\r");
+      // radio.SetMode(SX1262_MODE_FS);
+      // delay(5);
+      // radio.GetStatus();
+   }
 
    // enable the timer for the tx interrupt
    timer_enable(TIMER2);
