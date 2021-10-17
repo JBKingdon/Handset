@@ -107,6 +107,18 @@ enum EDITABLE_PARAMS {
    PARAM_N_PARAMS // must be last
 };
 
+volatile bool readyToSend;
+#ifdef LONGAN_NANO
+const bool testModeIsTransmitter = false;
+#else
+const bool testModeIsTransmitter = true;
+#endif // LONGAN_NANO
+
+uint32_t timeoutCounter = 0;
+uint32_t mismatchCounter = 0;
+uint32_t totalPackets = 0;
+
+
 uint8_t paramToChange = PARAM_NONE;
 
 bool syncWhenArmed = true; // need this on for testing with no switches attached
@@ -428,10 +440,28 @@ void EXTI5_9_IRQHandler(void)
 {
    if (exti_interrupt_flag_get(EXTI_8) == SET) {
       exti_interrupt_flag_clear(EXTI_8);
+
+ 
+      // XXX Need to check for timeout, increment a counter, set the readyTo flag if this is the transmitter
+      uint16_t irqS = radio.GetIrqStatus();
+
+      if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
+         printf("timeout\n\r");
+         radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
+         timeoutCounter++;
+         if (testModeIsTransmitter) {
+            readyToSend = true;
+         } else {
+            // for receiver, need to start another rx
+            radio.RXnb();
+         }
+         return;
+      }
+
       // printf("RXdone!\n\r");
 
       // XXX testing, needed for continuous receive mode
-      radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
+      // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
 
       // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
 
@@ -439,19 +469,45 @@ void EXTI5_9_IRQHandler(void)
       radio.readRXData();  // get the data from the radio chip
 
       // XXX testing
-      uint8_t counter = radio.RXdataBuffer[0];
+      // uint8_t counter = radio.RXdataBuffer[0];
 
-      int8_t rssi = radio.GetLastPacketRSSI();
+      // int8_t rssi = radio.GetLastPacketRSSI();
       // int8_t snr = radio.GetLastPacketSNR();
 
       // printf("packet counter %u, rssi %d snr %d\n\r", counter, rssi, snr);
-      printf("packet counter %u, rssi %d\n\r", counter, rssi);
+      // printf("packet counter %u, rssi %d\n\r", counter, rssi);
 
-      ProcessTLMpacket();
+      // delayMicros(50);
+
+      // testing. If this is the transmitter we should validate the data then set the flag for the next tx
+      // if this is the receiver we need to echo the packet back
+      if (testModeIsTransmitter) {
+         // XXX do validation
+         if (memcmp((const void *)radio.RXdataBuffer, (const void *)radio.TXdataBuffer, OTA_PACKET_LENGTH) != 0)
+         {
+            mismatchCounter++;
+         }
+         // printf("setting readyToSend\n\r");
+         readyToSend = true;
+      } else {
+         // send the echo
+         // printf("sending echo\n\r");
+         radio.TXnb(radio.RXdataBuffer, OTA_PACKET_LENGTH);
+         totalPackets++;
+         if (totalPackets % 1000 == 0) {
+            printf("rx total %lu, timeouts %lu\n\r", totalPackets, timeoutCounter);
+         }
+      }
+
+      // XXX testing
+      // ProcessTLMpacket();
 
    } else if (exti_interrupt_flag_get(EXTI_9) == SET) {
       exti_interrupt_flag_clear(EXTI_9);
       // printf("TXdone!\n\r");
+
+      // Testing, once tx is finished start another receive
+      radio.RXnb();
 
       // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
       // radio.GetStatus();
@@ -472,7 +528,8 @@ void EXTI5_9_IRQHandler(void)
       // printf("\n\r");
 
       // if (irqS & SX1262_IRQ_TX_DONE) {
-         TXdoneISR();
+         // XXX testing
+         // TXdoneISR();
       // }
    }
 }
@@ -2210,21 +2267,41 @@ int main(void)
    radio.GetStatus();
 
    // XXX For testing, just go into a continuous loop here
-   uint8_t data[OTA_PACKET_LENGTH];
-   const bool transmitter = true;
-   if (!transmitter) {
+   
+   // fill the packet with some non-zero values
+   radio.TXdataBuffer[0] = 0;
+   for(int i=1; i<OTA_PACKET_LENGTH; i++) radio.TXdataBuffer[i] = i+127;
+
+   if (testModeIsTransmitter) {
+      readyToSend = true;
+      radio.setRxTimeout(1000000/15); // XXX move the scaling inside the setRxTimeout function
+   } else {
+      // start the receiver
       printf("calling RXnb\n\r");
       radio.RXnb();
    }
+
+   unsigned long tPrev = millis();
+   uint32_t lastTotalP = 0;
+
    while (true)
    {
-      if (transmitter) {
-         printf("calling TXnb\n\r");
-         radio.TXnb(data, OTA_PACKET_LENGTH);
-         data[0]++;
+      if (testModeIsTransmitter && readyToSend) {
+         // printf("sending ping\n\r");
+         radio.TXdataBuffer[0]++;
+         totalPackets++;
+         radio.TXnb(radio.TXdataBuffer, OTA_PACKET_LENGTH);
+         readyToSend = false;
+         if (totalPackets % 100 == 0) {
+            unsigned long now = millis();
+            unsigned long elapsed = now - tPrev;
+            uint32_t rate = (totalPackets - lastTotalP) * 1000 * 2 / elapsed; // factor of 2 for ping + echo
+            printf("total: %lu, timeouts: %lu, errors: %lu, rate %lu pkts/s\n\r", totalPackets, timeoutCounter, mismatchCounter, rate);
+            tPrev = now; lastTotalP = totalPackets;
+         }
       // } else {
       }
-      delay(500);
+      // delay(500);
       // printf("setting fs\n\r");
       // radio.SetMode(SX1262_MODE_FS);
       // delay(5);

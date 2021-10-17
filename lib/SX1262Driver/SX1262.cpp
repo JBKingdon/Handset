@@ -232,6 +232,12 @@ void SX1262Driver::End()
 }
 
 
+void SX1262Driver::setRxTimeout(uint32_t newTimeout)
+{
+    rxTimeout = newTimeout;
+}
+
+
 // lora specific setup
 /**
 From the datasheet:
@@ -421,7 +427,7 @@ void SX1262Driver::Begin()
     // printf("setting dios\n\r");
 
     // Using dual dios for rx and tx done
-    this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE, SX1262_IRQ_TX_DONE, SX1262_IRQ_RADIO_NONE);
+    this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE | SX1262_IRQ_RX_TX_TIMEOUT, SX1262_IRQ_TX_DONE, SX1262_IRQ_RADIO_NONE);
     // this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE, SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RADIO_NONE);
 
     // GetStatus();
@@ -596,25 +602,27 @@ void SX1262Driver::SetMode(SX1262_RadioOperatingModes_t OPmode)
 
         // val is 3 bytes of timeout. 0 = single shot receive with no timeout, 0xFFFFFF is continuous receive mode
         // other vals are actual timeouts in units of 15.625 µs
-        buf3[0] = 0xFF;
-        buf3[1] = 0xFF;
-        buf3[2] = 0xFF;
-        // buf3[0] = 0x0;
-        // buf3[1] = 0x0;
-        // buf3[2] = 0x0;
-        hal.WriteCommand(SX1262_RADIO_SET_RX, buf3, 3);
-        break;
+        {
+            uint8_t buf[4];
+            buf[0] = SX1262_RADIO_SET_RX;
+            buf[1] = (rxTimeout >> 16) & 0xFF;
+            buf[2] = (rxTimeout >> 8) & 0xFF;
+            buf[3] = (rxTimeout >> 0) & 0xFF;
 
+            hal.fastWriteCommand(buf, sizeof(buf));
+            break;
+        }
     // 13.1.4 SetTx
     case SX1262_MODE_TX:
         // val is 3 bytes of timeout in units of 15.625 µs.
         // 0 disables the timeout
-        buf3[0] = 0x00; // 
-        buf3[1] = 0x00; // no timeout set for now
-        buf3[2] = 0x00; // TODO dynamic timeout based on expected onairtime
-        hal.WriteCommand(SX1262_RADIO_SET_TX, buf3, 3);
-        break;
-
+        {
+            uint32_t tmp = 0; // single cycle 0 init
+            uint8_t *buf = (uint8_t*)&tmp;
+            buf[0] = SX1262_RADIO_SET_TX;
+            hal.fastWriteCommand(buf, 4);
+            break;
+        }
     case SX1262_MODE_CAD:
         printf("CAD not implemented\n\r");
         break;

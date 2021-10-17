@@ -4,8 +4,8 @@
 
 // which board are we using
 
-// #define LONGAN_NANO
 // #define T_DISPLAY
+// #define LONGAN_NANO
 #define PCB_V1_0
 
 #ifdef RADIO_E22

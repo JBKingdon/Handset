@@ -33,6 +33,7 @@
 class SX1262Driver
 {
 private:
+    uint32_t rxTimeout = 0xFFFFFF;
     void setupLora();
 
 public:
@@ -49,11 +50,14 @@ public:
     /////////////////////////////
 
     ///////////Radio Variables////////
+
+    // TODO reconsider use of public variables
+
     // Do these need to be so big?
     volatile uint8_t TXdataBuffer[256];
     volatile uint8_t RXdataBuffer[256];
 
-    uint8_t TXbuffLen;
+    uint8_t TXbuffLen;  // XXX check usage
     uint8_t RXbuffLen;
 
     static uint8_t _syncWord;
@@ -100,6 +104,7 @@ public:
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();
 
+    void setRxTimeout(uint32_t newTimeout);
 
     static void ICACHE_RAM_ATTR TXnb(volatile uint8_t *data, uint8_t length);
     static void ICACHE_RAM_ATTR TXnbISR(); //ISR for non-blocking TX routine
