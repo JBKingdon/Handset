@@ -1,6 +1,7 @@
 // Support for SX1262 module
 
-// TODO work arounds for bw500 and IQ (and enable UID based IQ again)
+// TODO work around for IQ (and enable UID based IQ again)
+// TODO set OPC limit
 
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
@@ -25,12 +26,6 @@ SX1262Hal hal;
 SX1262Driver *SX1262Driver::instance = NULL;
 
 //InterruptAssignment_ InterruptAssignment = NONE;
-
-//uint8_t SX127xDriver::_syncWord = SX127X_SYNC_WORD;
-
-//uint8_t SX127xDriver::currPWR = 0b0000;
-//uint8_t SX127xDriver::maxPWR = 0b1111;
-
 
 uint32_t beginTX;
 uint32_t endTX;
@@ -92,7 +87,6 @@ void enableTCXO()
 
     command[0] = SX1262_RADIO_SET_DIO3_AS_TXCO_CTRL;
     command[1] = 0x02;      // 2 = 1v8, which is the 'typical' value according to the docs
-    // command[1] = 0x07;      // 7 = 3v3
     command[2] = (delay >> 16) & 0xFF;
     command[3] = (delay >> 8) & 0xFF;
     command[4] = delay & 0xFF;
@@ -123,11 +117,7 @@ void calibrate()
     SX1262Driver::instance->SetMode(SX1262_MODE_STDBY_RC);
     // SX1262Driver::instance->SetMode(SX1262_MODE_STDBY_XOSC);
 
-    delay(50);
-
     SX1262Driver::instance->GetStatus();
-
-    delay(100);
 
     // start calibration
     command[0] = SX1262_RADIO_CALIBRATE;
@@ -135,8 +125,8 @@ void calibrate()
 
     hal.fastWriteCommand(command, sizeof(command));
 
-    // needs 3.5ms to complete
-    delay(50);
+    // needs 3.5ms to complete, no need to be fancy, we're not calibrating often
+    delay(5);
 
     SX1262Driver::instance->GetStatus();
 }
@@ -154,12 +144,14 @@ void calibrateImage()
 
     hal.fastWriteCommand(buf, sizeof(buf));
 
-    delay(10);
+    delay(5);
 }
 
 /**
     Table 13-86
         Opcode= 0x07 0x00 0x00
+
+    Calling clear when there are no errors set seems to cause the adc calibration error to be asserted (?!)
  */
 void clearDeviceErrors()
 {
@@ -200,6 +192,8 @@ void setPaConfig()
 {
     uint8_t buf[5];
 
+    printf("setPaConfig using max 20dBm settings\n\r");
+
     buf[0] = SX1262_RADIO_SET_PA_CONFIG;
     buf[1] = 0x03;
     buf[2] = 0x05;
@@ -221,17 +215,17 @@ void setRegulatorMode()
 
 SX1262Driver::SX1262Driver()
 {
-    instance = this;
+    instance = this; // TODO get rid of singleton variables
 }
 
 void SX1262Driver::End()
 {
     hal.end();
-    instance->TXdoneCallback = &nullCallback; // remove callbacks
+    instance->TXdoneCallback = &nullCallback; // remove callbacks (or needed for esp?)
     instance->RXdoneCallback = &nullCallback;
 }
 
-
+// XXX pass newTimeout in ms (or us?) and scale internally
 void SX1262Driver::setRxTimeout(uint32_t newTimeout)
 {
     rxTimeout = newTimeout;
@@ -264,7 +258,8 @@ otherwise it will goes to STDBY_RC mode.
 */
 void SX1262Driver::setupLora()
 {
-    this->SetMode(SX1262_MODE_STDBY_RC);                                    //step 1 put in STDBY_RC mode
+    // stdby xosc works and saves the tcxo startup time on mode changes
+    this->SetMode(SX1262_MODE_STDBY_XOSC);                                    //step 1 put in STDBY mode
 
     // GetStatus();
 
@@ -277,14 +272,13 @@ void SX1262Driver::setupLora()
     // GetStatus();
 
     // printf("setting fifo addr\n\r");
+    // TODO any benefit if we were to have rx and tx buffers at different addresses?
     SetFIFOaddr(0x00, 0x00);        //Step 4: Config FIFO addr
     // GetStatus();
 
     // printf("set mod params\n\r");
     this->ConfigModParams(currBW, currSF, currCR);                          //Step 5: Configure Modulation Params XXX step 4?
     // GetStatus();
-
-    delay(5);
 
     #ifdef USE_HARDWARE_CRC
     this->SetPacketParams(12, SX1262_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1262_LORA_CRC_ON, SX1262_LORA_IQ_NORMAL);
@@ -383,8 +377,6 @@ void SX1262Driver::Begin()
     printf("enabling tcxo\n\r");
     enableTCXO();
 
-    // delay(2); // give tcxo time to turn on
-
     // debugErrorStatus();
 
     // clear errors
@@ -396,11 +388,9 @@ void SX1262Driver::Begin()
     // printf("setting xosc\n\r");
     SetMode(SX1262_MODE_STDBY_XOSC);
 
-    delay(100); // settling time
+    delay(2); // settling time
+    hal.WaitOnBusy(); // to be sure
     // GetStatus();
-
-
-    // try adding a specific image calibration phase for 915
 
     // run calibration
     printf("running calibration\n\r");
@@ -409,10 +399,10 @@ void SX1262Driver::Begin()
     debugErrorStatus();
 
     // clear errors
-    printf("Clearing errors\n\r");
-    clearDeviceErrors();
+    // printf("Clearing errors\n\r");
+    // clearDeviceErrors();
 
-    debugErrorStatus();
+    // debugErrorStatus();
 
     printf("calibrate image\n\r");
     calibrateImage();
@@ -453,7 +443,9 @@ void ICACHE_RAM_ATTR SX1262Driver::Config(const SX1262_RadioLoRaBandwidths_t bw,
     iqMode = SX1262_LORA_IQ_NORMAL;
 
     this->SetMode(SX1262_MODE_STDBY_XOSC);
-    delay(5);
+    // might need to wait for tcxo
+    hal.WaitOnBusy();
+
     ConfigModParams(bw, sf, cr);
 
     #ifdef USE_HARDWARE_CRC
@@ -541,16 +533,12 @@ void SX1262Driver::SetPacketParams(const uint8_t preambleLength, const SX1262_Ra
     buf[4] = payloadLength;
     buf[5] = crc;
     buf[6] = invertIQ;
-    // buf[7] = 0x00;
-    // buf[8] = 0x00;
-    // buf[9] = 0x00;
 
     hal.fastWriteCommand(buf, sizeof(buf));
 }
 
 
-
-/**
+/** Not convinced that this function adds value
  * 
  */
 void SX1262Driver::SetMode(SX1262_RadioOperatingModes_t OPmode)
@@ -561,7 +549,6 @@ void SX1262Driver::SetMode(SX1262_RadioOperatingModes_t OPmode)
      //   return;
     //}
 
-    uint8_t buf3[3]; //TODO make word alignmed
 
     switch (OPmode)
     {
@@ -592,10 +579,12 @@ void SX1262Driver::SetMode(SX1262_RadioOperatingModes_t OPmode)
 
     // 13.1.3 SetFs
     case SX1262_MODE_FS:
-        buf3[0] = SX1262_RADIO_SET_FS;
-        // no val
-        hal.fastWriteCommand(buf3, 1);
-        break;
+        {
+            uint8_t buf[1] = {SX1262_RADIO_SET_FS};
+            // no val
+            hal.fastWriteCommand(buf, 1);
+            break;
+        }
 
     // 13.1.5 SetRx
     case SX1262_MODE_RX:
@@ -643,8 +632,7 @@ void SX1262Driver::SetMode(SX1262_RadioOperatingModes_t OPmode)
  */
 void setHighSensitivity()
 {
-    // hal.WriteRegister(0x08AC, 0x96);
-    printf("setHighSens disabled\n\r");
+    hal.WriteRegister(0x08AC, 0x96); // XXX define the constants
 }
 
 
@@ -668,20 +656,6 @@ void SX1262Driver::ConfigModParams(SX1262_RadioLoRaBandwidths_t bw, SX1262_Radio
     rfparams[4] = 0; // low data rate optimisation, we want it off (0)
 
     hal.fastWriteCommand(rfparams, sizeof(rfparams));
-
-    /**
-     * XXX Add sx1262 specific work-arounds here
-    */
-    switch (sf) {
-        case SX1262_RadioLoRaSpreadingFactors_t::SX1262_LORA_SF5:
-        case SX1262_RadioLoRaSpreadingFactors_t::SX1262_LORA_SF6:
-            break;
-        case SX1262_RadioLoRaSpreadingFactors_t::SX1262_LORA_SF7:
-        case SX1262_RadioLoRaSpreadingFactors_t::SX1262_LORA_SF8:
-            break;
-        default:
-            break;
-    }
 
     setHighSensitivity();
 }
@@ -784,10 +758,34 @@ void SX1262Driver::ClearIrqStatus(uint16_t irqMask)
 void SX1262Driver::TXnb(volatile uint8_t *data, uint8_t length)
 {
     hal.TXenable(); // do first to allow PA to stabilise
+
+    // Errata 15.1:
+    // Before any packet transmission, bit #2 at address 0x0889 shall be set to:
+    // • 0 if the LoRa BW = 500 kHz
+    // • 1 for any other LoRa BW
+    // • 1 for any (G)FSK configuration
+    if (instance->currBW == SX1262_LORA_BW_500)
+    {
+        const uint16_t REG_ADDR = 0x889;
+        uint8_t buffer[5];
+        buffer[1] = (REG_ADDR >> 8) & 0xFF;
+        buffer[2] = (REG_ADDR >> 0) & 0xFF;
+        uint8_t reg889 = hal.fastReadSingleRegister(buffer);
+
+        reg889 &= ~0x04; // clear bit 2
+        // unfortunately the addr got overwritten during the read call, so we have to put it back again
+        buffer[1] = (REG_ADDR >> 8) & 0xFF;
+        buffer[2] = (REG_ADDR >> 0) & 0xFF;
+        buffer[3] = reg889;
+        hal.fastWriteSingleRegister(buffer);
+    }
+    // XXX do we need an else to set the bit for other bandwidths? Surely we could just do that once?
+
+
     instance->ClearIrqStatus(SX1262_IRQ_RADIO_ALL);
-    instance->SetFIFOaddr(0x00, 0x00);   // not 100% sure if needed again
     hal.WriteBuffer(0x00, data, length); //todo fix offset to equal fifo addr
     instance->SetMode(SX1262_MODE_TX);
+
     // beginTX = micros();
 
     // instance->GetStatus();
@@ -815,6 +813,7 @@ void SX1262Driver::TXnb(volatile uint8_t *data, uint8_t length)
 //     instance->RXdoneCallback();
 // }
 
+// TODO pass in the buffer to use and get rid of the databuffer declarations in this class
 void SX1262Driver::readRXData()
 {
     uint8_t FIFOaddr = instance->GetRxBufferAddr();
@@ -825,7 +824,6 @@ void SX1262Driver::RXnb()
 {
     hal.RXenable();     // sets the rx enable and tx enable pins if required
     instance->ClearIrqStatus(SX1262_IRQ_RADIO_ALL);
-    //instance->SetFIFOaddr(0x00, 0x00);
     instance->SetMode(SX1262_MODE_RX);  // issues the rx command with continuous mode
 
     // instance->GetStatus();

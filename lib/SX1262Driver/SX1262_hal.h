@@ -51,10 +51,13 @@ public:
     void ICACHE_RAM_ATTR WriteCommand(SX1262_RadioCommands_t command, uint8_t val);
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size);
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t value);
+    void ICACHE_RAM_ATTR fastWriteSingleRegister(uint8_t *buffer);
+
 
     void ICACHE_RAM_ATTR ReadCommand(SX1262_RadioCommands_t opcode, uint8_t *buffer, uint8_t size);
     void ICACHE_RAM_ATTR ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size);
     uint8_t ICACHE_RAM_ATTR ReadRegister(uint16_t address);
+    uint8_t ICACHE_RAM_ATTR fastReadSingleRegister(uint8_t *buffer);
 
     void ICACHE_RAM_ATTR WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size); // Writes and Reads to FIFO
     void ICACHE_RAM_ATTR ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size);

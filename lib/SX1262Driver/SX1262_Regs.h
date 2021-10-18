@@ -1,21 +1,10 @@
 #pragma once
 
-
-// #define SX1262_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB 0x0954
-// #define SX1262_REG_LR_ESTIMATED_FREQUENCY_ERROR_MASK 0x0FFFFF
-
 #define SX1262_XTAL_FREQ 32000000
 
 // step is xo / 2^25
 #define SX1262_FREQ_STEP ((double)SX1262_XTAL_FREQ / 33554432)
 
-// typedef enum
-// {
-//     SX1262_RF_IDLE = 0x00, //!< The radio is idle
-//     SX1262_RF_RX_RUNNING,  //!< The radio is in reception state
-//     SX1262_RF_TX_RUNNING,  //!< The radio is in transmission state
-//     SX1262_RF_CAD,         //!< The radio is doing channel activity detection
-// } SX1262_RadioStates_t;
 
 /*!
  * \brief Represents the operating mode the radio is actually running
@@ -32,13 +21,6 @@ typedef enum
     SX1262_MODE_CAD           //! The radio is in channel activity detection mode
 } SX1262_RadioOperatingModes_t;
 
-// XXX What are these used for, and why do they look odd?
-/**
-#define SX1262_RX_TX_CONTINUOUS \
-    (TickTime_t) { RADIO_TICK_SIZE_0015_US, 0xFFFF }
-#define SX1262_RX_TX_SINGLE \
-    (TickTime_t) { RADIO_TICK_SIZE_0015_US, 0 }
-*/
 
 /**
  * Declares the oscillator in use while in standby mode
@@ -82,18 +64,6 @@ typedef enum
     SX1262_PACKET_TYPE_LORA = 0x01
 } SX1262_RadioPacketTypes_t;
 
-//only for GFSK
-// typedef enum
-// {
-//     SX1262_PREAMBLE_LENGTH_04_BITS = 0x00, //!< Preamble length: 04 bits
-//     SX1262_PREAMBLE_LENGTH_08_BITS = 0x10, //!< Preamble length: 08 bits
-//     SX1262_PREAMBLE_LENGTH_12_BITS = 0x20, //!< Preamble length: 12 bits
-//     SX1262_PREAMBLE_LENGTH_16_BITS = 0x30, //!< Preamble length: 16 bits
-//     SX1262_PREAMBLE_LENGTH_20_BITS = 0x40, //!< Preamble length: 20 bits
-//     SX1262_PREAMBLE_LENGTH_24_BITS = 0x50, //!< Preamble length: 24 bits
-//     SX1262_PREAMBLE_LENGTH_28_BITS = 0x60, //!< Preamble length: 28 bits
-//     SX1262_PREAMBLE_LENGTH_32_BITS = 0x70, //!< Preamble length: 32 bits
-// } SX1262_RadioPreambleLengths_t;
 
 /**
  * 
@@ -107,16 +77,6 @@ typedef enum
     SX1262_LORA_IQ_INVERTED = 0x01 // XXX if using inverted check the datasheet for work-around
 } SX1262_RadioLoRaIQModes_t;
 
-/**
-  Table 13-69
-    0x00 CRC OFF
-    0x01 CRC ON
- */
-// typedef enum
-// {
-//     SX1262_RADIO_CRC_OFF = 0x00,
-//     SX1262_RADIO_CRC_ON  = 0x01
-// } SX1262_RadioCrcTypes_t;
 
 /**
  * Represents the ramping time for power amplifier
@@ -314,20 +274,3 @@ typedef enum
     SX1262_IRQ_RX_TX_TIMEOUT     = 0x0200,
     SX1262_IRQ_RADIO_ALL         = 0x03FF
 } SX1262_RadioIrqMasks_t;
-
-// XXX check
-// typedef enum
-// {
-//     SX1262_RADIO_DIO1 = 0x02,
-//     SX1262_RADIO_DIO2 = 0x04,
-//     SX1262_RADIO_DIO3 = 0x08,
-// } SX1262_RadioDios_t;
-
-// XXX what are these?
-// typedef enum
-// {
-//     SX1262_RADIO_TICK_SIZE_0015_US = 0x00,
-//     SX1262_RADIO_TICK_SIZE_0062_US = 0x01,
-//     SX1262_RADIO_TICK_SIZE_1000_US = 0x02,
-//     SX1262_RADIO_TICK_SIZE_4000_US = 0x03,
-// } SX1262_RadioTickSizes_t;

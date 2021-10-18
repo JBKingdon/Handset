@@ -131,6 +131,22 @@ void SX1262Hal::ReadCommand(SX1262_RadioCommands_t command, uint8_t *buffer, uin
     }
 }
 
+/** faster write register for performance critical paths
+ * 
+ *  buffer must have the register address in bytes 1,2 and the value in
+ *  byte 3
+ * 
+ *  This function will insert the command into buffer[0]
+ */
+void  SX1262Hal::fastWriteSingleRegister(uint8_t *buffer)
+{
+    buffer[0] = SX1262_RADIO_WRITE_REGISTER;
+
+    WaitOnBusy();
+
+    spi1_transferBytes(buffer, 4);
+}
+
 void  SX1262Hal::WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 {
     uint8_t OutBuffer[size + 3];
@@ -151,6 +167,32 @@ void  SX1262Hal::WriteRegister(uint16_t address, uint8_t value)
     WriteRegister(address, &value, 1);
 }
 
+/** faster read for single register
+ * 
+ * buffer must be at least 5 bytes long and contain the address in
+ * bytes 1,2
+ * 
+ * This function will insert the command in buffer[0] and zeros in 3,4
+ * 
+ * The result will be returned in buffer[4] as well as the returned value
+ * 
+ * Note that the contents of the buffer including the address values will be overwritten
+ */
+uint8_t SX1262Hal::fastReadSingleRegister(uint8_t *buffer)
+{
+    buffer[0] = SX1262_RADIO_READ_REGISTER;
+    buffer[3] = 0x00;
+    buffer[4] = 0x00;
+
+    WaitOnBusy();
+
+    spi1_transferBytes(buffer, 5);
+
+    return buffer[4];
+}
+
+
+
 void  SX1262Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 {
     uint8_t OutBuffer[size + 4];
@@ -164,12 +206,12 @@ void  SX1262Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    spi1_transferBytes(OutBuffer, size + 4);
 
     memcpy(buffer, OutBuffer + 4, size);
 }
 
-// XXX TODO write a fast version for reading a single register
+
 uint8_t  SX1262Hal::ReadRegister(uint16_t address)
 {
     uint8_t data=0;
