@@ -117,7 +117,7 @@ const bool testModeIsTransmitter = true;
 uint32_t timeoutCounter = 0;
 uint32_t mismatchCounter = 0;
 uint32_t totalPackets = 0;
-
+int32_t cumulativeRSSI = 0;
 
 uint8_t paramToChange = PARAM_NONE;
 
@@ -482,7 +482,9 @@ void EXTI5_9_IRQHandler(void)
       // testing. If this is the transmitter we should validate the data then set the flag for the next tx
       // if this is the receiver we need to echo the packet back
       if (testModeIsTransmitter) {
-         // XXX do validation
+         cumulativeRSSI += radio.GetLastPacketRSSI();
+         // printf("cr %ld\n\r", cumulativeRSSI);
+         // validate the data wasn't corrupted
          if (memcmp((const void *)radio.RXdataBuffer, (const void *)radio.TXdataBuffer, OTA_PACKET_LENGTH) != 0)
          {
             mismatchCounter++;
@@ -2295,9 +2297,12 @@ int main(void)
          if (totalPackets % 100 == 0) {
             unsigned long now = millis();
             unsigned long elapsed = now - tPrev;
-            uint32_t rate = (totalPackets - lastTotalP) * 1000 * 2 / elapsed; // factor of 2 for ping + echo
-            printf("total: %lu, timeouts: %lu, errors: %lu, rate %lu pkts/s\n\r", totalPackets, timeoutCounter, mismatchCounter, rate);
+            uint32_t nPackets = totalPackets - lastTotalP;
+            uint32_t rate = (nPackets * 2000) / elapsed; // factor of 2 for ping + echo
+            int32_t averageRSSI = cumulativeRSSI / (int32_t)nPackets;
+            printf("total: %lu, timeouts: %lu, errors: %lu, rate %lu pkts/s, average RSSI %ld\n\r", totalPackets, timeoutCounter, mismatchCounter, rate, averageRSSI);
             tPrev = now; lastTotalP = totalPackets;
+            cumulativeRSSI = 0;
          }
       // } else {
       }

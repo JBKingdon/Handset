@@ -213,6 +213,19 @@ void setRegulatorMode()
     hal.fastWriteCommand(buf, sizeof(buf));
 }
 
+// 15.2 Better Resistance of the SX1262 Tx to Antenna Mismatch
+// On the SX1262, during the chip initialization, the register TxClampConfig should be modified to optimize the PA clamping
+// threshold. Bits 4-1 must be set to “1111” (default value “0100”).
+// This register modification must be done after a Power On Reset, or a wake-up from cold Start.
+void setTxClampConfig()
+{
+    const uint16_t txClampReg = 0x08D8;
+    uint8_t v = hal.ReadRegister(txClampReg);
+
+    v |= 0b00011110;
+    hal.WriteRegister(txClampReg, v);
+}
+
 SX1262Driver::SX1262Driver()
 {
     instance = this; // TODO get rid of singleton variables
@@ -367,6 +380,8 @@ void SX1262Driver::Begin()
 
     printf("buffer test complete\n\r");
 #endif //RUN_RADIO_BUFFER_TEST
+
+    setTxClampConfig();
 
     setRegulatorMode();
 
