@@ -33,8 +33,9 @@
 class SX1262Driver
 {
 private:
-    uint32_t rxTimeout = 0xFFFFFF;
+    uint32_t rxTimeout = 0xFFFFFF; // default to continuous mode as that's what earlier impls used
     void setupLora();
+    void clearRxTimeout();
 
 public:
     ///////Callback Function Pointers/////
@@ -54,6 +55,7 @@ public:
     // TODO reconsider use of public variables
 
     // Do these need to be so big?
+    // XXX just get rid of them
     volatile uint8_t TXdataBuffer[256];
     volatile uint8_t RXdataBuffer[256];
 

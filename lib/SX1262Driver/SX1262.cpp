@@ -220,10 +220,7 @@ void setRegulatorMode()
 void setTxClampConfig()
 {
     const uint16_t txClampReg = 0x08D8;
-    uint8_t v = hal.ReadRegister(txClampReg);
-
-    v |= 0b00011110;
-    hal.WriteRegister(txClampReg, v);
+    hal.readSetWriteRegister(txClampReg, 0b00011110);
 }
 
 SX1262Driver::SX1262Driver()
@@ -242,6 +239,28 @@ void SX1262Driver::End()
 void SX1262Driver::setRxTimeout(uint32_t newTimeout)
 {
     rxTimeout = newTimeout;
+}
+
+/** Clear the timeout registers after rx_done.
+ * Not sure I really like having this errata function in the public api as it will make the high
+ * level code messy. Would it be enough to hide a call in readRXData() on the assumption that the
+ * ISR will always want to get the buffer?
+ * 
+15.3 Implicit Header Mode Timeout Behavior
+
+When receiving LoRa® packets in Rx mode with Timeout active, and no header (Implicit Mode), the timer responsible for
+generating the Timeout (based on the RTC timer) is not stopped on RxDone event. Therefore, it may trigger an unexpected
+timeout in any subsequent mode where the RTC isn’t re-invoked, and therefore reset and re-programmed.
+
+It is advised to add the following commands after ANY Rx with Timeout active sequence, which stop the RTC and clear the
+timeout event, if any. The register at address 0x0902 will be used to stop the counter, while the register at address 0x0944
+will clear the potential event.
+ */
+void SX1262Driver::clearRxTimeout()
+{
+    hal.WriteRegister(0x0902, 0);
+
+    hal.readSetWriteRegister(0x0944, 2);
 }
 
 
@@ -831,7 +850,9 @@ void SX1262Driver::TXnb(volatile uint8_t *data, uint8_t length)
 // TODO pass in the buffer to use and get rid of the databuffer declarations in this class
 void SX1262Driver::readRXData()
 {
-    uint8_t FIFOaddr = instance->GetRxBufferAddr();
+    // first do the errata fixup for the rx timeout
+    clearRxTimeout();
+    uint8_t FIFOaddr = GetRxBufferAddr();
     hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, OTA_PACKET_LENGTH);
 }
 

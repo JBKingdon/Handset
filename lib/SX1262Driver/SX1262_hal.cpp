@@ -191,6 +191,26 @@ uint8_t SX1262Hal::fastReadSingleRegister(uint8_t *buffer)
     return buffer[4];
 }
 
+/** Set bits of a register
+ * Performs a read/modify/write operation on a register, where
+ * the modification is to bitwise-or the existing value with the mask parameter.
+ */
+void SX1262Hal::readSetWriteRegister(uint16_t address, uint8_t mask)
+{
+    uint8_t buffer[5];
+
+    buffer[1] = address >> 8;
+    buffer[2] = address & 0xFF;
+
+    uint8_t v = fastReadSingleRegister(buffer) | mask;
+
+    // address gets overwritten so we have to set it again
+    buffer[1] = address >> 8;
+    buffer[2] = address & 0xFF;
+    buffer[3] = v;
+
+    fastWriteSingleRegister(buffer);
+}
 
 
 void  SX1262Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
