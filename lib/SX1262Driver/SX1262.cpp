@@ -220,7 +220,9 @@ void setRegulatorMode()
 void setTxClampConfig()
 {
     const uint16_t txClampReg = 0x08D8;
+    // printf("clamp before %02X\n\r", hal.ReadRegister(txClampReg));
     hal.readSetWriteRegister(txClampReg, 0b00011110);
+    // printf("clamp after %02X\n\r", hal.ReadRegister(txClampReg));
 }
 
 SX1262Driver::SX1262Driver()
@@ -261,6 +263,30 @@ void SX1262Driver::clearRxTimeout()
     hal.WriteRegister(0x0902, 0);
 
     hal.readSetWriteRegister(0x0944, 2);
+}
+
+
+/** 15.4 Optimizing the Inverted IQ Operation
+    When exchanging LoRa® packets with inverted IQ polarity, some packet losses may be observed for longer packets.
+    Bit 2 at address 0x0736 must be set to:
+    • “0” when using inverted IQ polarity (see the SetPacketParam(...) command)
+    • “1” when using standard IQ polarity
+ */
+void SX1262Driver::optimizeIQ(bool isInverted)
+{
+    const uint16_t addr = 0x0736;
+
+    // printf("iq opt before %02X\n\r", hal.ReadRegister(addr));
+
+    if (isInverted) {
+        // clear bit 2
+        hal.readClearWriteRegister(addr, 4);
+    } else {
+        // set bit 2
+        hal.readSetWriteRegister(addr, 4);
+    }
+
+    // printf("iq opt after %02X\n\r", hal.ReadRegister(addr));
 }
 
 
@@ -473,8 +499,10 @@ void ICACHE_RAM_ATTR SX1262Driver::Config(const SX1262_RadioLoRaBandwidths_t bw,
     }
 
     // XXX testing, keep IQ normal
-    printf("forcing normal IQ\n\r");
-    iqMode = SX1262_LORA_IQ_NORMAL;
+    // printf("forcing normal IQ\n\r");
+    // iqMode = SX1262_LORA_IQ_NORMAL;
+    // printf("forcing inverted IQ\n\r");   // XXX inverted IQ not working? No packets. Try with more preamble
+    // iqMode = SX1262_LORA_IQ_INVERTED;
 
     this->SetMode(SX1262_MODE_STDBY_XOSC);
     // might need to wait for tcxo
@@ -487,6 +515,8 @@ void ICACHE_RAM_ATTR SX1262Driver::Config(const SX1262_RadioLoRaBandwidths_t bw,
     #else
     SetPacketParams(preambleLength, SX1262_LORA_PACKET_FIXED_LENGTH, OTA_PACKET_LENGTH, SX1262_LORA_CRC_OFF, iqMode);
     #endif
+
+    optimizeIQ(iqMode == SX1262_LORA_IQ_INVERTED);
 
     SetFrequency(freq);
 }

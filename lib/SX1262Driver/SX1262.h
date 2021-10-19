@@ -36,6 +36,7 @@ private:
     uint32_t rxTimeout = 0xFFFFFF; // default to continuous mode as that's what earlier impls used
     void setupLora();
     void clearRxTimeout();
+    void optimizeIQ(bool isInverted);
 
 public:
     ///////Callback Function Pointers/////

@@ -195,14 +195,20 @@ uint8_t SX1262Hal::fastReadSingleRegister(uint8_t *buffer)
  * Performs a read/modify/write operation on a register, where
  * the modification is to bitwise-or the existing value with the mask parameter.
  */
-void SX1262Hal::readSetWriteRegister(uint16_t address, uint8_t mask)
+void SX1262Hal::readModifyWriteRegister(const uint16_t address, const uint8_t mask, const bool set)
 {
     uint8_t buffer[5];
 
     buffer[1] = address >> 8;
     buffer[2] = address & 0xFF;
 
-    uint8_t v = fastReadSingleRegister(buffer) | mask;
+    uint8_t v = fastReadSingleRegister(buffer);
+    
+    if (set) {
+        v |= mask;
+    } else {
+        v &= ~mask; // clear bits by and-ing with the inverted mask
+    }
 
     // address gets overwritten so we have to set it again
     buffer[1] = address >> 8;
@@ -211,6 +217,26 @@ void SX1262Hal::readSetWriteRegister(uint16_t address, uint8_t mask)
 
     fastWriteSingleRegister(buffer);
 }
+
+
+/** Set bits of a register
+ * Performs a read/modify/write operation on a register, where
+ * the modification is to bitwise-or the existing value with the mask parameter.
+ */
+void SX1262Hal::readSetWriteRegister(uint16_t address, uint8_t mask)
+{
+    readModifyWriteRegister(address, mask, true);
+}
+
+/** Clear bits of a register
+ * Performs a read/modify/write operation on a register, where
+ * the modification is to bitwise-and the existing value with the mask parameter.
+ */
+void SX1262Hal::readClearWriteRegister(uint16_t address, uint8_t mask)
+{
+    readModifyWriteRegister(address, mask, false);
+}
+
 
 
 void  SX1262Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)

@@ -37,6 +37,9 @@ private:
     void ICACHE_RAM_ATTR ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size); // TODO get rid of this method that's only used internally
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size); // TODO get rid of this method that's only used internally
 
+    void readModifyWriteRegister(const uint16_t address, const uint8_t mask, const bool set);
+
+
 public:
     static SX1262Hal *instance;
 
@@ -60,6 +63,7 @@ public:
     uint8_t ICACHE_RAM_ATTR fastReadSingleRegister(uint8_t *buffer);
 
     void readSetWriteRegister(uint16_t address, uint8_t mask);
+    void readClearWriteRegister(uint16_t address, uint8_t mask);
 
 
     void ICACHE_RAM_ATTR WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size); // Writes and Reads to FIFO
