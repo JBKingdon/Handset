@@ -1,7 +1,8 @@
 // Support for SX1262 module
 
-// TODO work around for IQ (and enable UID based IQ again)
-// TODO set OPC limit
+
+// enable write/read test of the sx1262 fifo
+#define RUN_RADIO_BUFFER_TEST
 
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
@@ -10,9 +11,6 @@
 #include "SX1262_hal.h"
 #include "SX1262.h"
 
-extern "C" {
-#include "../../include/systick.h"
-}
 #include "../../src/utils.h"
 #include "../../src/config.h"
 
@@ -20,8 +18,18 @@ extern "C" {
 #include <math.h>
 #include <string.h>
 
+#ifdef GD32
+extern "C" {
+#include "../../include/systick.h"
+}
 
-SX1262Hal hal;
+#include "SX1262_hal_GD32.h"
+SX1262Hal_GD32 hal;
+#else
+#include "SX1262_hal_C3.h"
+extern void delay(uint32_t x); // TODO find a home for this
+SX1262Hal_C3 hal;
+#endif
 /////////////////////////////////////////////////////////////////
 SX1262Driver *SX1262Driver::instance = NULL;
 
@@ -382,7 +390,7 @@ void SX1262Driver::Begin()
 #ifdef RUN_RADIO_BUFFER_TEST
     printf("testing buffer...\n\r");
 
-    const uint8_t bytesToTest = 255;
+    const uint8_t bytesToTest = 100;
 
     // test that we can write to and read from the radio's buffer
     memset((void*)TXdataBuffer, 0, 256);
@@ -394,7 +402,7 @@ void SX1262Driver::Begin()
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != 0) {
-            printf("not 0 at %d:%d\n\r", i, RXdataBuffer[i]);
+            printf("!!! not 0 at %d:%d !!!\n\r", i, RXdataBuffer[i]);
             break;
         }
     }
@@ -406,7 +414,7 @@ void SX1262Driver::Begin()
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != 0xFF) {
-            printf("not FF at %d:%d\n\r", i, RXdataBuffer[i]);
+            printf("!!! not FF at %d:%d !!!\n\r", i, RXdataBuffer[i]);
             break;
         }
     }
@@ -418,7 +426,7 @@ void SX1262Driver::Begin()
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != i) {
-            printf("not i at %d:%d\n\r", i, RXdataBuffer[i]);
+            printf("!!! not i at %d:%d !!!\n\r", i, RXdataBuffer[i]);
             break;
         }
     }

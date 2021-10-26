@@ -16,6 +16,10 @@ Maintainer: Miguel Luis, Gregory Cristian and Matthieu Verdy
 Modified and adapted by Alessandro Carcione for ELRS project 
 */
 
+// temporary hack to allow esp-C3 to compile until I port the radio libs
+#ifdef GD32
+
+
 #include "../../src/config.h"
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
@@ -302,3 +306,5 @@ void  SX1280Hal::TXRXdisable()
 //     }
 //     //}
 // }
+
+#endif // GD32

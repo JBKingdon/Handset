@@ -26,11 +26,14 @@ Heavily modified/simplified by Alessandro Carcione 2020 for ELRS project
 // E28-27 max is 0
 // #define MAX_PRE_PA_POWER 0
 
+// temporary hack to allow esp-C3 to compile until I port the radio libs
+#ifdef GD32
 
 #include <stdint.h>
 #include "SX1280_Regs.h"
 // #include "SX1280.h"
 // #include <SPI.h>
+
 
 extern "C" {
 #include "gd32vf103.h"
@@ -97,3 +100,5 @@ public:
     // static void (*TXdoneCallback)(); //function pointer for callback
     // static void (*RXdoneCallback)(); //function pointer for callback
 };
+
+#endif // GD32

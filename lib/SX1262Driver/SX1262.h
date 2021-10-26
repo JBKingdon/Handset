@@ -17,8 +17,9 @@
 #define OTA_PACKET_LENGTH 8
 #endif // USE_HIRES_DATA
 
-
+#ifdef GD32
 #define ICACHE_RAM_ATTR
+#endif
 
 //void ICACHE_RAM_ATTR TXnbISR(); // why is this here? Can we get rid of it?
 

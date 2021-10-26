@@ -16,9 +16,12 @@ Maintainer: Miguel Luis, Gregory Cristian and Matthieu Verdy
 Modified and adapted by Alessandro Carcione for ELRS project 
 
 This has been hacked around a lot since it's original form. Errors and ommissions are probably mine (JBK)
+
+This is now the abstract base class that provides common implementation to the derived (mcu specific) classes
+
 */
 
-#include "../../src/config.h"
+#include "../../src/config.h" // for? Probably pin defs. Pass them in to the constructor instead
 #include "SX1262_Regs.h"
 #include "SX1262_hal.h"
 #include <stdio.h>
@@ -30,17 +33,13 @@ extern "C" {
 #include "../../include/systick.h"
 }
 
-SX1262Hal *SX1262Hal::instance = nullptr;
+
 
 // void  SX1262Hal::nullCallback(void){};
 
 // void (*SX1262Hal::TXdoneCallback)() = &nullCallback;
 // void (*SX1262Hal::RXdoneCallback)() = &nullCallback;
 
-SX1262Hal::SX1262Hal()
-{
-    instance = this;
-}
 
 void SX1262Hal::end()
 {
@@ -50,26 +49,6 @@ void SX1262Hal::end()
     // detachInterrupt(GPIO_PIN_DIO1);
 }
 
-void SX1262Hal::init()
-{
-    // all pin/spi setup done in main.cpp
-}
-
-void  SX1262Hal::reset(void)
-{
-    gpio_bit_set(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(50);
-    gpio_bit_reset(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(100);
-    gpio_bit_set(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(50);
-
-    if (WaitOnBusy()) {
-        printf("WARNING SX1262 busy didn't go low\n\r");
-    } else {
-        printf("SX1262 Ready!\n\r");
-    }
-}
 
 void SX1262Hal::WriteCommand(const SX1262_RadioCommands_t command, const uint8_t val)
 {
@@ -77,7 +56,7 @@ void SX1262Hal::WriteCommand(const SX1262_RadioCommands_t command, const uint8_t
 
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, 2);
+    spi->transfer(buffer, 2);
 }
 
 
@@ -90,7 +69,7 @@ void SX1262Hal::WriteCommand(SX1262_RadioCommands_t command, uint8_t *buffer, ui
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, size+1);
+    spi->transfer(OutBuffer, size+1);
 }
 
 /** faster version of Writecommand.
@@ -102,7 +81,7 @@ void SX1262Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
 {
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, size);
+    spi->transfer(buffer, size);
 }
 
 
@@ -118,7 +97,7 @@ void SX1262Hal::ReadCommand(SX1262_RadioCommands_t command, uint8_t *buffer, uin
         OutBuffer[0] = (uint8_t)command;
         OutBuffer[1] = 0x00;
         OutBuffer[2] = 0x00;
-        spi1_transferBytes(OutBuffer, 3);
+        spi->transfer(OutBuffer, 3);
         buffer[0] = OutBuffer[0];
     }
     else
@@ -126,7 +105,7 @@ void SX1262Hal::ReadCommand(SX1262_RadioCommands_t command, uint8_t *buffer, uin
         OutBuffer[0] = (uint8_t)command;
         OutBuffer[1] = 0x00;
         memcpy(OutBuffer + 2, buffer, size);
-        spi1_transferBytes(OutBuffer, sizeof(OutBuffer));
+        spi->transfer(OutBuffer, sizeof(OutBuffer));
         memcpy(buffer, OutBuffer + 2, size);
     }
 }
@@ -144,7 +123,7 @@ void  SX1262Hal::fastWriteSingleRegister(uint8_t *buffer)
 
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, 4);
+    spi->transfer(buffer, 4);
 }
 
 void  SX1262Hal::WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size)
@@ -159,7 +138,7 @@ void  SX1262Hal::WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, (uint8_t)sizeof(OutBuffer));
+    spi->transfer(OutBuffer, (uint8_t)sizeof(OutBuffer));
 }
 
 void  SX1262Hal::WriteRegister(uint16_t address, uint8_t value)
@@ -186,7 +165,7 @@ uint8_t SX1262Hal::fastReadSingleRegister(uint8_t *buffer)
 
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, 5);
+    spi->transfer(buffer, 5);
 
     return buffer[4];
 }
@@ -252,7 +231,7 @@ void  SX1262Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, size + 4);
+    spi->transfer(OutBuffer, size + 4);
 
     memcpy(buffer, OutBuffer + 4, size);
 }
@@ -272,6 +251,8 @@ uint8_t  SX1262Hal::ReadRegister(uint16_t address)
  * @param buffer - data to be written (starting from the beginning of buffer)
  * @param size - number of bytes to send
  * 
+ * NB size must be less than 254
+ * 
  */
 void  SX1262Hal::WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size)
 {
@@ -284,9 +265,14 @@ void  SX1262Hal::WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t s
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, sizeof(OutBuffer));
+    spi->transfer(OutBuffer, size + 2);
 }
 
+/** read size bytes from the FIFO starting at offset
+ * 
+ * NB size must be less than 253
+ * 
+ */
 void  SX1262Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size)
 {
     uint8_t OutBuffer[size + 3];
@@ -299,30 +285,11 @@ void  SX1262Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t si
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, sizeof(OutBuffer));
+    spi->transfer(OutBuffer, size + 3);
 
     memcpy((void *)buffer, OutBuffer + 3, size);
 }
 
-/** Wait for the SX1262 busy flag to be low
- * Returns true if we reach the timeout before busy goes low
- * TODO pass in the timeout
- */
-bool SX1262Hal::WaitOnBusy()
-{
-    // printf("%s \r\n", "waitOnBusy...");
-    const unsigned int MAX_WAIT = 5000; // in us
-    const unsigned long t0 = micros();
-    while (gpio_input_bit_get(RADIO_BUSY_PORT, RADIO_BUSY_PIN) == SET)
-    {
-        if (micros() > (t0 + MAX_WAIT)) {
-            printf("busy timeout \n\r");
-            return true;
-        }
-    }
-    // printf("waitOnBusy done in %lu us\n", micros()-t0);
-    return false;
-}
 
 // void  SX1262Hal::dioISR()
 // {
@@ -338,38 +305,6 @@ bool SX1262Hal::WaitOnBusy()
 //     }
 // }
 
-void  SX1262Hal::TXenable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_reset(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_set(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
-
-void  SX1262Hal::RXenable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_set(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_reset(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
-
-void  SX1262Hal::TXRXdisable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_reset(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_reset(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
 
 // void  SX1262Hal::setIRQassignment(SX1262_InterruptAssignment_ newInterruptAssignment)
 // {

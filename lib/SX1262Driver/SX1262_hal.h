@@ -20,35 +20,42 @@ Heavily modified/simplified by Alessandro Carcione 2020 for ELRS project
 Hack around some more by James Kingdon 2021.
 */
 
-#define ICACHE_RAM_ATTR
-
 #include <stdint.h>
 #include "SX1262_Regs.h"
+
+#include "ElrsSPI.h"
+
+#ifdef GD32
+#define ICACHE_RAM_ATTR
 
 extern "C" {
 #include "gd32vf103.h"
 }
-
+#endif
 
 class SX1262Hal
 {
 
 private:
+
     void ICACHE_RAM_ATTR ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size); // TODO get rid of this method that's only used internally
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size); // TODO get rid of this method that's only used internally
 
     void readModifyWriteRegister(const uint16_t address, const uint8_t mask, const bool set);
 
+protected:
+
+    ElrsSPI *spi;   // Wrapper for using SPI, specialised for different MCUs
+
 
 public:
-    static SX1262Hal *instance;
 
-    SX1262Hal();
+    // SX1262Hal();
 
-    void init();
+    virtual void init() = 0;
     void end();
     // void SetSpiSpeed(uint32_t spiSpeed);
-    void reset();
+    virtual void reset() = 0;
 
     void ICACHE_RAM_ATTR WriteCommand(SX1262_RadioCommands_t opcode, uint8_t *buffer, uint8_t size);
     void ICACHE_RAM_ATTR fastWriteCommand(uint8_t *buffer, uint8_t size);
@@ -71,11 +78,11 @@ public:
 
     // static void ICACHE_RAM_ATTR nullCallback(void);
     
-    bool ICACHE_RAM_ATTR WaitOnBusy();
+    virtual bool ICACHE_RAM_ATTR WaitOnBusy() = 0;
     // static ICACHE_RAM_ATTR void dioISR();
     
-    void ICACHE_RAM_ATTR TXenable();
-    void ICACHE_RAM_ATTR RXenable();
-    void ICACHE_RAM_ATTR TXRXdisable();
+    virtual void ICACHE_RAM_ATTR TXenable() = 0;
+    virtual void ICACHE_RAM_ATTR RXenable() = 0;
+    virtual void ICACHE_RAM_ATTR TXRXdisable() = 0;
 
 };

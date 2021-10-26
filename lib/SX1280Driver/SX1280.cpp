@@ -1,3 +1,6 @@
+// temp until ported to C3
+#ifdef GD32
+
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
 
@@ -595,3 +598,4 @@ uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
 
     return (((uint16_t)status[0]) << 8) + status[1];
 }
+#endif // GD32
