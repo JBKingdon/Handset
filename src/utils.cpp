@@ -1,3 +1,6 @@
+#include "utils.h"
+
+#ifdef GD32
 
 extern "C" {
 
@@ -21,8 +24,6 @@ int _put_char(int ch)
 
 // ==========================================================
 // C++ functions
-
-#include "utils.h"
 
 // get_timer_value() runs at main clock / 4, so with 108MHz clock,
 // it gives 27MHz ticks
@@ -66,27 +67,59 @@ unsigned long micros(void){
  * 
  *  TODO replace with DMA
  * 
+ *  XXX TODO Move to it's own SPI abstraction layer
+ * 
  * This is the critical path for communicating with the radio
  * 
  */
-void spi1_transferBytes(uint8_t *buffer, const int nBytes)
+// void spi1_transferBytes(uint8_t *buffer, const int nBytes)
+// {
+//     gpio_bit_reset(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS low
+
+//     for(int i=0; i<nBytes; i++) {
+//         while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_TBE))
+//             ; // wait for any previous tx to complete
+
+//         spi_i2s_data_transmit(SPI1, buffer[i]);
+
+//         while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_RBNE))
+//             ; // wait for rx data to be ready
+
+//         buffer[i] = spi_i2s_data_receive(SPI1);
+//     }
+
+//     gpio_bit_set(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS high
+// }
+
+#endif // GD32
+
+#ifdef ESPC3
+
+#include <sys/time.h>
+
+
+unsigned long micros()
 {
-    gpio_bit_reset(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS low
+    struct timeval tv_now;
+    gettimeofday(&tv_now, NULL);
+    int64_t time_us = (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
 
-    for(int i=0; i<nBytes; i++) {
-        while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_TBE))
-            ; // wait for any previous tx to complete
-
-        spi_i2s_data_transmit(SPI1, buffer[i]);
-
-        while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_RBNE))
-            ; // wait for rx data to be ready
-
-        buffer[i] = spi_i2s_data_receive(SPI1);
-    }
-
-    gpio_bit_set(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS high
+    return time_us;
 }
+
+unsigned long millis()
+{
+    struct timeval tv_now;
+    gettimeofday(&tv_now, NULL);
+    int64_t time_ms = (int64_t)tv_now.tv_sec * 1000L + ((int64_t)tv_now.tv_usec / 1000);
+
+    return time_ms;
+}
+
+
+#endif // ESPC3
+
+// common code for all platforms
 
 uint8_t CalcCRC(volatile uint8_t *data, int length)
 {
@@ -123,29 +156,7 @@ void rngSeed(long newSeed)
 unsigned int rngN(unsigned int max)
 {
     unsigned long x = rng();
-    unsigned int result = (x * max) / RNG_MAX;
+    unsigned int result = (x * max) / RNG_MAX; // XXX this is wrong and needs fixing, but all rxes and txes will need to be done at the same time
     return result;
 }
 
-// // 0..255 returned
-// long rng8Bit(void)
-// {
-//     return rng() & 0b11111111;
-// }
-
-// // 0..31 returned
-// long rng5Bit(void)
-// {
-//     return rng() & 0b11111;
-// }
-
-// // 0..2 returned
-// long rng0to2(void)
-// {
-//     int randomNumber = rng() & 0b11;
-
-//     while(randomNumber == 3) {
-//         randomNumber = rng() & 0b11;
-//     }
-//     return randomNumber;
-// } 
