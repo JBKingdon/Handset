@@ -10,9 +10,9 @@
 // definitions for simpler gpio naming scheme
 
 enum ports {
-    PORTA,
-    PORTB,
-    PORTC
+    PORTA = 0,
+    PORTB = 1,
+    PORTC = 2
 };
 
 #define PA1  (PORTA << 16 | GPIO_PIN_1)
@@ -64,4 +64,5 @@ enum ports {
 #define PC15 ((PORTC << 16) | GPIO_PIN_15)
 
 
-#define PIN(x) (x & 0xFFFF)
+#define PIN(x) ((uint16_t)(x & 0xFFFF))
+// Can't do a simple Port translation macro

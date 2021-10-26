@@ -5,8 +5,10 @@
 // which board are we using
 
 // #define T_DISPLAY
-#define LONGAN_NANO
+// #define LONGAN_NANO
 // #define PCB_V1_0
+#define RX_C3
+
 
 #ifdef RADIO_E22
 
@@ -34,7 +36,7 @@
 #define MAX_PRE_PA_POWER 0
 #define DISARM_POWER (-15)
 #elif defined(RADIO_E22)
-// #define MAX_PRE_PA_POWER 22     // sx1262 actually uses signed values in dBm
+// #define MAX_PRE_PA_POWER 22  // sx1262 can be configured to scale the max power down from the commanded value
 #define MAX_PRE_PA_POWER 10     // while testing
 #define DISARM_POWER (-9)
 #else
@@ -169,12 +171,32 @@
 // Buzzer
 #define GPIO_BUZZER PA4
 
+#elif defined(RX_C3)
+
+#include "driver/gpio.h"
+
+
+#define RADIO_RESET_PIN GPIO_NUM_18
+#define RADIO_RXEN_PIN  GPIO_NUM_8
+#define RADIO_TXEN_PIN  GPIO_NUM_1
+
+#define RADIO_MOSI_PIN  GPIO_NUM_5
+#define RADIO_MISO_PIN  GPIO_NUM_4
+#define RADIO_SCK_PIN   GPIO_NUM_6
+#define RADIO_NSS_PIN   GPIO_NUM_7
+
+#define RADIO_BUSY_PIN  GPIO_NUM_19
+#define RADIO_DIO1_PIN  GPIO_NUM_10
+#define RADIO_DIO2_PIN  GPIO_NUM_2
 
 #else
 #error "define the board type in config.h"
 #endif
 
-// common to all boards
+
+#ifndef RX_C3
+
+// common to all handset boards
 
 #define RADIO_NSS_PORT GPIOB
 #define RADIO_NSS_PIN GPIO_PIN_12
@@ -185,3 +207,4 @@
 #define RADIO_DIO2_PORT GPIOB
 #define RADIO_DIO2_PIN GPIO_PIN_9
 
+#endif // !RX_C3
