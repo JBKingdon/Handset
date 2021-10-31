@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "crsf_protocol.h"
 
 #ifdef GD32
 
@@ -121,15 +122,15 @@ unsigned long millis()
 
 // common code for all platforms
 
-uint8_t CalcCRC(volatile uint8_t *data, int length)
-{
-    uint8_t crc = 0;
-    for (uint8_t i = 0; i < length; i++)
-    {
-        crc = crc8tab[crc ^ *data++];
-    }
-    return crc;
-}
+// uint8_t CalcCRC(volatile uint8_t *data, int length)
+// {
+//     uint8_t crc = 0;
+//     for (uint8_t i = 0; i < length; i++)
+//     {
+//         crc = crc8tab[crc ^ *data++];
+//     }
+//     return crc;
+// }
 
 unsigned long seed = 0;
 

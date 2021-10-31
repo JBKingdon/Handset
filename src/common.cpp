@@ -10,12 +10,28 @@ extern SX1262Driver Radio;
 
 // XXX add 250 and 300Hz modes for evaluation
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
-    {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5,  5000, TLM_RATIO_1_64,   2, 12}, // XXX needs 12 preamble
+    // {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5,  5000, TLM_RATIO_1_64,   2, 12}, // XXX needs 12 preamble
+    // {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5,  5000, TLM_RATIO_1_64,   2, 12}, // XXX needs 12 preamble
     // {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_7,  5000, TLM_RATIO_1_64,   2, 12}, // XXX needs 12 preamble
-    // {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_7,  5000, TLM_RATIO_1_64,   2, 12}, // XXX needs 12 preamble
-    {1, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF7, SX1262_LORA_CR_4_7, 10000, TLM_RATIO_1_64,   2, 12},  // XXX min preamble 10?
-    {2, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_7, 20000, TLM_RATIO_NO_TLM, 2, 12},
-    {3, RATE_25HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF9, SX1262_LORA_CR_4_7, 40000, TLM_RATIO_NO_TLM, 2, 12}
+
+    // 333, but dodgy due to the out of spec pre-amble. Maybe with tigher pfd slack or a faster SPI impl?
+    {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5, 3000, TLM_RATIO_1_64,   4,  8}, // preamble 8 works, but some crc errors. 10 and 12 don't fit with current pfd setting
+
+    // so what rate can we get with pre-amble 12?
+    // 307Hz:
+    {1, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5, 3250, TLM_RATIO_1_64,   4,  12},
+
+    // 250Hz
+    {2, RATE_250HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_6,  4000, TLM_RATIO_1_64,   4, 12},
+
+    // And then a 125Hz
+
+    // These are all based on old 1276 modes and need checking/replacing
+
+    // {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_5,  5000, TLM_RATIO_1_64,   4, 8}, // XXX needs 12 preamble
+    // {1, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF7, SX1262_LORA_CR_4_7, 10000, TLM_RATIO_1_64,   4, 8},  // XXX min preamble 10?
+    // {2, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_7, 20000, TLM_RATIO_NO_TLM, 4, 8},
+    {3, RATE_25HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF9, SX1262_LORA_CR_4_5, 40000, TLM_RATIO_NO_TLM, 4, 8} // just too tight with cr_4_7 or 6.
 };
 
 // XXX check all these values

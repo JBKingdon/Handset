@@ -8,6 +8,8 @@
 #include "SX1280_hal.h" //  only needed for MAX_PRE_PA_POWER
 #include "FHSS.h"
 #include "SimpleStore.h"
+#include "ElrsSPI.h"
+#include "OTA.h"
 
 // Next:
 //    UI improvements
@@ -74,15 +76,6 @@ extern "C" {
 
 } // extern "C"
 
-// find a better place for these
-#define RC_DATA_PACKET  0b00
-#define MSP_DATA_PACKET 0b01
-#define SYNC_PACKET     0b10
-#define TLM_PACKET      0b11
-#define RC_HIRES_DATA   0b11  // NB Same as TLM_PACKET since we don't use that value for TX -> RX packets
-
-
-#define CRSF_FRAMETYPE_LINK_STATISTICS 0x14
 
 // LCD backlight brightness levels
 #define LCD_PWM_MAX     124
@@ -118,6 +111,7 @@ uint32_t timeoutCounter = 0;
 uint32_t mismatchCounter = 0;
 uint32_t totalPackets = 0;
 int32_t cumulativeRSSI = 0;
+
 
 uint8_t paramToChange = PARAM_NONE;
 
@@ -442,21 +436,22 @@ void EXTI5_9_IRQHandler(void)
       exti_interrupt_flag_clear(EXTI_8);
 
  
+      // PING PONG test code
       // XXX Need to check for timeout, increment a counter, set the readyTo flag if this is the transmitter
-      uint16_t irqS = radio.GetIrqStatus();
+      // uint16_t irqS = radio.GetIrqStatus();
 
-      if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
-         printf("timeout\n\r");
-         radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
-         timeoutCounter++;
-         if (testModeIsTransmitter) {
-            readyToSend = true;
-         } else {
-            // for receiver, need to start another rx
-            radio.RXnb();
-         }
-         return;
-      }
+      // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
+      //    printf("timeout\n\r");
+      //    radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
+      //    timeoutCounter++;
+      //    if (testModeIsTransmitter) {
+      //       readyToSend = true;
+      //    } else {
+      //       // for receiver, need to start another rx
+      //       radio.RXnb();
+      //    }
+      //    return;
+      // }
 
       // printf("RXdone!\n\r");
 
@@ -481,40 +476,40 @@ void EXTI5_9_IRQHandler(void)
 
       // testing. If this is the transmitter we should validate the data then set the flag for the next tx
       // if this is the receiver we need to echo the packet back
-      if (testModeIsTransmitter) {
-         cumulativeRSSI += radio.GetLastPacketRSSI();
-         // printf("cr %ld\n\r", cumulativeRSSI);
-         // validate the data wasn't corrupted
-         if (memcmp((const void *)radio.RXdataBuffer, (const void *)radio.TXdataBuffer, OTA_PACKET_LENGTH) != 0)
-         {
-            mismatchCounter++;
-         }
-         // printf("setting readyToSend\n\r");
-         readyToSend = true;
-      } else {
-         // send the echo
-         // printf("sending echo\n\r");
-         radio.TXnb(radio.RXdataBuffer, OTA_PACKET_LENGTH);
-         totalPackets++;
-         if (totalPackets % 1000 == 0) {
-            printf("rx total %lu, timeouts %lu\n\r", totalPackets, timeoutCounter);
-         }
-      }
+      // if (testModeIsTransmitter) {
+      //    cumulativeRSSI += radio.GetLastPacketRSSI();
+      //    // printf("cr %ld\n\r", cumulativeRSSI);
+      //    // validate the data wasn't corrupted
+      //    if (memcmp((const void *)radio.RXdataBuffer, (const void *)radio.TXdataBuffer, OTA_PACKET_LENGTH) != 0)
+      //    {
+      //       mismatchCounter++;
+      //    }
+      //    // printf("setting readyToSend\n\r");
+      //    readyToSend = true;
+      // } else {
+      //    // send the echo
+      //    // printf("sending echo\n\r");
+      //    radio.TXnb(radio.RXdataBuffer, OTA_PACKET_LENGTH);
+      //    totalPackets++;
+      //    if (totalPackets % 1000 == 0) {
+      //       printf("rx total %lu, timeouts %lu\n\r", totalPackets, timeoutCounter);
+      //    }
+      // }
 
-      // XXX testing
-      // ProcessTLMpacket();
+
+      ProcessTLMpacket();
 
    } else if (exti_interrupt_flag_get(EXTI_9) == SET) {
       exti_interrupt_flag_clear(EXTI_9);
       // printf("TXdone!\n\r");
 
       // Testing, once tx is finished start another receive
-      radio.RXnb();
+      // radio.RXnb();
 
       // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
       // radio.GetStatus();
 
-      // uint16_t irqS = radio.GetIrqStatus();
+      uint16_t irqS = radio.GetIrqStatus();
 
       // printf("irqS %04X", irqS);
       // if (irqS & SX1262_IRQ_TX_DONE) printf(" TX_DONE");
@@ -529,10 +524,9 @@ void EXTI5_9_IRQHandler(void)
       // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) printf(" RXTX TIMEOUT");
       // printf("\n\r");
 
-      // if (irqS & SX1262_IRQ_TX_DONE) {
-         // XXX testing
-         // TXdoneISR();
-      // }
+      if (irqS & SX1262_IRQ_TX_DONE) {
+         TXdoneISR();
+      }
    }
 }
 
@@ -547,7 +541,6 @@ void EXTI5_9_IRQHandler(void)
 // ==================================================
 
 /** extract the gpio port value from a composite port/pin value
- * 
  */
 uint32_t PORT(uint32_t compositeGPIOid) {
     uint32_t p = compositeGPIOid >> 16;
@@ -709,9 +702,10 @@ void setSentSwitch(uint8_t index, uint8_t value)
 
 void ProcessTLMpacket()
 {
-   #ifndef DEBUG_SUPPRESS
-   printf("TLMpacket\n\r");
-   #endif
+   // #ifndef DEBUG_SUPPRESS
+   // printf("TLMpacket ");
+
+   // #endif
 
    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2) || defined(USE_CRC14)
 
@@ -733,11 +727,15 @@ void ProcessTLMpacket()
 
    #endif // CRC14 vs CRC8
 
+   // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio.RXdataBuffer[i]);
+   // printf("crcIn %04X crcCalc %04X\n", inCRC, calculatedCRC);
+
+
    if ((inCRC != calculatedCRC))
    {
-      #ifndef DEBUG_SUPPRESS
+      // #ifndef DEBUG_SUPPRESS
       printf("TLM sw crc!\n\r");
-      #endif
+      // #endif
       return;
    }
 
@@ -759,9 +757,9 @@ void ProcessTLMpacket()
 
    if (type != TLM_PACKET)
    {
-      #ifndef DEBUG_SUPPRESS
+      // #ifndef DEBUG_SUPPRESS
       printf("TLM type error %u\n\r", type);
-      #endif
+      // #endif
       return;
    }
 
@@ -827,9 +825,9 @@ void ProcessTLMpacket()
       #endif // USE_DYNAMIC_POWER
 
    } else {
-      #ifndef DEBUG_SUPPRESS
+      // #ifndef DEBUG_SUPPRESS
       printf("TLMheader wrong %u\n\r", TLMheader);
-      #endif
+      // #endif
    }
 }
 
@@ -1257,7 +1255,7 @@ void setup() {
 
    // configure the ADC inputs
    // Need to avoid pins A1 & 2 because of leds, and A5,6,7 and B0,1,2 because of LCD
-   // But that only leaves 3 ADC pins, so might as well use 0-3. Maybe depopulate the led? Seems to work ok with it still there.
+   // But that only leaves 3 ADC pins, so might as well use 0-3. Maybe depopulate the led? Yup, should have taken the leds off.
    // Using PA0 to PA3
    // PA6 added for battery monitoring via second ADC
    gpio_init(GPIOA, GPIO_MODE_AIN, GPIO_OSPEED_50MHZ, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_6);
@@ -1344,7 +1342,7 @@ void setup() {
 
    // enable DIO interrupts
    eclic_irq_enable(EXTI5_9_IRQn, 1, 1);
-   gpio_exti_source_select(GPIO_PORT_SOURCE_GPIOB, GPIO_PIN_SOURCE_8);
+   gpio_exti_source_select(GPIO_PORT_SOURCE_GPIOB, GPIO_PIN_SOURCE_8); // XXX these should be using constants from config
    gpio_exti_source_select(GPIO_PORT_SOURCE_GPIOB, GPIO_PIN_SOURCE_9);
    exti_init(EXTI_8, EXTI_INTERRUPT, EXTI_TRIG_RISING);
    exti_init(EXTI_9, EXTI_INTERRUPT, EXTI_TRIG_RISING);
@@ -1372,124 +1370,6 @@ void blink(uint32_t port, uint32_t pin)
 
 // ==============================
 
-/**
- * Hybrid switches packet encoding for sending over the air
- *
- * Analog channels are reduced to 10 bits to allow for switch encoding
- * Switch[0] is sent on every packet.
- * A 3 bit switch index and 2 bit value is used to send the remaining switches
- * in a round-robin fashion.
- * If any of the round-robin switches have changed
- * we take the lowest indexed one and send that, hence lower indexed switches have
- * higher priority in the event that several are changed at once.
- * 
- * Inputs: crsf.ChannelDataIn, crsf.currentSwitches
- * Outputs: Radio.TXdataBuffer, side-effects the sentSwitch value
- */
-
-void ICACHE_RAM_ATTR GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, uint16_t *adcData, uint8_t addr)
-{
-   uint8_t PacketHeaderAddr;
-   PacketHeaderAddr = (addr << 2) + RC_DATA_PACKET; // ELRS V1 RC2 doesn't use addr, but it will be overwritten by crc anyway
-   Buffer[0] = PacketHeaderAddr;
-   Buffer[1] = ((adcData[0]) >> 3);
-   Buffer[2] = ((adcData[1]) >> 3);
-   Buffer[3] = ((adcData[2]) >> 3);
-   Buffer[4] = ((adcData[3]) >> 3);
-   Buffer[5] = ((adcData[0] & 0b110) << 5) +
-               ((adcData[1] & 0b110) << 3) +
-               ((adcData[2] & 0b110) << 1) +
-               ((adcData[3] & 0b110) >> 1);
-
-
-   #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
-
-   // ELRS compatibility V1 RC2 switch format
-   // find the next switch to send
-   uint8_t nextSwitchIndex = getNextSwitchIndex();
-
-   uint8_t sentValue = currentSwitches[nextSwitchIndex];
-
-   // Actually send switchIndex - 1 in the packet, to shift down 1-7 (0b111) to 0-6 (0b110)
-   // If the two high bits are 0b11, the receiver knows it is the last switch and can use
-   // that bit to store data
-   uint8_t bitclearedSwitchIndex = nextSwitchIndex - 1;
-   // currentSwitches[] is 0-15 for index 1, 0-2 for index 2-7 // XXX this seems wrong. most switches have 3 bits available, and last switch is the multiway?
-   // Rely on currentSwitches to *only* have values in that range
-   // TODO ok, so the new switch position values are _slightly_ counterintuitive, and will need mapping from the existing 0,1,2 encoding.
-   //   case 0: return CRSF_CHANNEL_VALUE_1000;
-   //   case 5: return CRSF_CHANNEL_VALUE_2000;
-   //   case 6: // fallthrough
-   //   case 7: return CRSF_CHANNEL_VALUE_MID;
-   
-   uint8_t value = 0; // default to low position
-   switch(currentSwitches[nextSwitchIndex]) {
-      case 1:  // middle position
-        value = 7;
-        break;
-      case 2: // high position
-        value = 5;
-        break;
-   }
-
-   Buffer[6] =
-         // switch 0 is one bit sent on every packet - intended for low latency arm/disarm
-         (currentSwitches[0] / 2) << 6 |   // down-convert the arm switch to on/off, using only the highest setting for on
-         // tell the receiver which switch index this is
-         bitclearedSwitchIndex << 3 |
-         // include the switch value
-         value;
-
-   #else
-
-   // switch 0 is sent on every packet - intended for low latency arm/disarm
-   Buffer[6] = (currentSwitches[0] & 0b11) << 5; // note this leaves the top bit of byte 6 unused
-
-   // find the next switch to send
-   uint8_t nextSwitchIndex = getNextSwitchIndex() & 0b111;     // mask for paranoia
-   uint8_t sentValue = currentSwitches[nextSwitchIndex];       // avoid the possibility that the mask changes the value
-   uint8_t value = sentValue & 0b11; // mask for paranoia
-
-   // put the bits into buf[6]. nextSwitchIndex is in the range 1 through 7 so takes 3 bits
-   // currentSwitches[nextSwitchIndex] is in the range 0 through 2, takes 2 bits.
-   Buffer[6] += (nextSwitchIndex << 2) + value;
-
-   #endif // ELRS compatibility for V1 RC2
-
-   // update the sent value
-   setSentSwitch(nextSwitchIndex, sentValue);
-}
-
-/** Send 12 bit gimbal data
- * 
- */
-void ICACHE_RAM_ATTR GenerateHiResChannelData(volatile uint8_t* Buffer, uint16_t *adcData, uint8_t addr)
-{
-   uint8_t PacketHeaderAddr;
-   PacketHeaderAddr = (addr << 2) | RC_HIRES_DATA;
-   Buffer[0] = PacketHeaderAddr;
-   Buffer[1] = ((adcData[0]) >> 4);
-   Buffer[2] = ((adcData[1]) >> 4);
-   Buffer[3] = ((adcData[2]) >> 4);
-   Buffer[4] = ((adcData[3]) >> 4);
-   Buffer[5] = ((adcData[0] & 0b1111) << 4) | (adcData[1] & 0b1111);
-   Buffer[6] = ((adcData[2] & 0b1111) << 4) | (adcData[3] & 0b1111);
-
-   // switch 0 is sent on every packet - intended for low latency arm/disarm
-   Buffer[7] = (currentSwitches[0] & 0b11) << 5; // note this leaves the top bit of byte 7 unused
-
-   // find the next switch to send
-   uint8_t nextSwitchIndex = getNextSwitchIndex() & 0b111;     // mask for paranoia
-   uint8_t sentValue = currentSwitches[nextSwitchIndex];       // avoid the possibility that the mask changes the value
-   uint8_t value = sentValue & 0b11; // mask for paranoia
-
-   // put the bits into buf[7]. nextSwitchIndex is in the range 1 through 7 so takes 3 bits
-   // currentSwitches[nextSwitchIndex] is in the range 0 through 2, takes 2 bits.
-   Buffer[7] += (nextSwitchIndex << 2) + value;
-
-   // update the sent value
-   setSentSwitch(nextSwitchIndex, sentValue);
-}
 
 
 
@@ -1571,7 +1451,7 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 {
    // printf("n %u\n\r", NonceTX);
 
-   for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
+   // for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
 
   uint32_t SyncInterval;
   if (isRXconnected)
@@ -1697,8 +1577,13 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
       #ifdef USE_HIRES_DATA
       GenerateHiResChannelData(radio.TXdataBuffer, scaledADC, DeviceAddr);
       #else
-      GenerateChannelDataHybridSwitch8(radio.TXdataBuffer, scaledADC, DeviceAddr);
-      #endif
+      // GenerateChannelDataHybridSwitch8(radio.TXdataBuffer, scaledADC, DeviceAddr);
+
+      uint8_t nextSwitchIndex = getNextSwitchIndex();
+      uint8_t nextSwitchValue = currentSwitches[nextSwitchIndex];
+      setSentSwitch(nextSwitchIndex, nextSwitchValue);
+      GenerateChannelDataHybridSwitch8(radio.TXdataBuffer, scaledADC, currentSwitches, nextSwitchIndex, DeviceAddr);
+      #endif // USE_HIRES_DATA
    }
 
    ///// Next, Calculate the CRC and put it into the buffer /////
@@ -1724,8 +1609,10 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
    #endif // ELRS_OG_COMPATIBILITY
 
-
    // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // clear the rx debug pin as we're definitely not listening now
+
+   // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio.TXdataBuffer[i]);
+   // printf(", crc %04X\n", crc);
 
    radio.TXnb(radio.TXdataBuffer, OTA_PACKET_LENGTH);
 }
@@ -2255,7 +2142,6 @@ int main(void)
    printf("overriding linkRateIndex\n\r");
    linkRateIndex = 0;
 
-   // printf("XXX testing, setting radio from eeprom disabled\n\r");
    SetRFLinkRate(linkRateIndex);
 
    #ifdef USE_DYNAMIC_POWER
@@ -2268,6 +2154,8 @@ int main(void)
    delay(50);
    radio.GetStatus();
 
+
+#ifdef PING_PONG
    // XXX For testing, just go into a continuous loop here
    
    // fill the packet with some non-zero values
@@ -2312,6 +2200,7 @@ int main(void)
       // delay(5);
       // radio.GetStatus();
    }
+#endif // PING_PONG
 
    // enable the timer for the tx interrupt
    timer_enable(TIMER2);

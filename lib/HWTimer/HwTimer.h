@@ -27,6 +27,7 @@ public:
 	static void resetFreqOffset();
 	static void incFreqOffset();
 	static void decFreqOffset();
+	static int32_t getFreqOffset() { return freqOffset; };
 	static void setInterval(uint64_t newTimerInterval);
 	static void setPhaseShift(int32_t newPhaseShift);
 	static void setCallbackTick(void (*fn)());

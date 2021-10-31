@@ -7,7 +7,7 @@
 // #define T_DISPLAY
 // #define LONGAN_NANO
 // #define PCB_V1_0
-#define RX_C3
+// #define RX_C3
 
 
 #ifdef RADIO_E22
@@ -188,6 +188,9 @@
 #define RADIO_BUSY_PIN  GPIO_NUM_19
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 #define RADIO_DIO2_PIN  GPIO_NUM_2
+
+#define CRSF_TX_PIN     GPIO_NUM_9
+
 
 #else
 #error "define the board type in config.h"

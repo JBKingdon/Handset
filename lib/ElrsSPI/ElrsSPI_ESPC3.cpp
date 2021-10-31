@@ -44,10 +44,13 @@ int ElrsSPI::init()
     
     memset(&devcfg, 0, sizeof(devcfg));
     
+    // 16MHz seems to be too fast
+    // 12 looks good - maybe a small number of errors. Check again once pcb is done, might be messy wiring.
+    // 10 seems solid
     // printf("SPI clk set slow for testing\n");
-    printf("SPI clock at 16MHz\n");
-    devcfg.clock_speed_hz = 16*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
-    // devcfg.clock_speed_hz = 1*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
+    // printf("SPI clock at 16MHz\n");
+    devcfg.clock_speed_hz = 10*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
+    // devcfg.clock_speed_hz = 4*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
     devcfg.spics_io_num = pinCSS,           // CS pin
     devcfg.queue_size = 2,                  // Are we going to use queing at all?
 

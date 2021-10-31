@@ -9,10 +9,12 @@
 
 #include <stdint.h>
 
-#ifndef GD32
+#ifdef GD32
+#define ICACHE_RAM_ATTR
+#else
 #include "driver/spi_master.h"
 #define ICACHE_RAM_ATTR IRAM_ATTR
-#endif
+#endif // GD32
 
 
 class ElrsSPI

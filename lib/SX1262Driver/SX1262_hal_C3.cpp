@@ -31,7 +31,7 @@ SX1262Hal_C3::SX1262Hal_C3()
 
 void SX1262Hal_C3::init()
 {
-    // Need to setup pins for reset, busy and dios
+    // Need to setup pins for reset, busy, dios, tx and rx enable
     gpio_reset_pin(RADIO_RESET_PIN);
     gpio_set_direction(RADIO_RESET_PIN, GPIO_MODE_OUTPUT);
 
@@ -43,6 +43,12 @@ void SX1262Hal_C3::init()
 
     gpio_reset_pin(RADIO_DIO2_PIN);
     gpio_set_direction(RADIO_DIO2_PIN, GPIO_MODE_INPUT);
+
+    gpio_reset_pin(RADIO_TXEN_PIN);
+    gpio_set_direction(RADIO_TXEN_PIN, GPIO_MODE_OUTPUT);
+
+    gpio_reset_pin(RADIO_RXEN_PIN);
+    gpio_set_direction(RADIO_RXEN_PIN, GPIO_MODE_OUTPUT);
 
     // Create and init the SPI instance
 
