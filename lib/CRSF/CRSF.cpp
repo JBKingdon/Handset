@@ -916,9 +916,7 @@ void ICACHE_RAM_ATTR CRSF::sendRCFrameToFC()
 #ifndef DEBUG_CRSF_NO_OUTPUT
     //SerialOutFIFO.push(RCframeLength + 4);
     //SerialOutFIFO.pushBytes(outBuffer, RCframeLength + 4);
-    // this->_dev->write(outBuffer, RCframeLength + 4);
     uart_write_bytes(CRSF_PORT_NUM, outBuffer, RCframeLength + 4);
-    printf("crsf sent\n");
 #endif
 }
 

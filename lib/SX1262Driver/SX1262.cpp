@@ -742,6 +742,7 @@ void SX1262Driver::SetFrequency(uint32_t Reqfreq)
 
     buf[0] = SX1262_RADIO_SET_RFFREQUENCY;
 
+    // TODO do the scaling at compile time
     uint32_t freq = (double)Reqfreq * SX1262_FREQ_STEP;
     // printf("reqFreq %lu, scaledFreq %lu\n\r", Reqfreq, freq);
 
@@ -959,7 +960,7 @@ void ICACHE_RAM_ATTR SX1262Driver::GetStatus()
             printf("RX");
             break;
         case 6:
-            printf("RX");
+            printf("TX");
             break;
         default:
             printf("?");

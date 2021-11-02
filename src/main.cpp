@@ -10,6 +10,7 @@
 #include "SimpleStore.h"
 #include "ElrsSPI.h"
 #include "OTA.h"
+#include "LowPassFilter.h"
 
 // Next:
 //    UI improvements
@@ -248,6 +249,8 @@ DoublePT1filterInt rssiFilter;
 
 bool isRXconnected = false;
 
+bool alreadyFHSS = false;
+
 volatile uint8_t NonceTX = 0;
 
 uint32_t SyncPacketLastSent = 0;
@@ -306,11 +309,18 @@ void TIMER2_IRQHandler(void)
       interval = tLast == 0 ? 0 : now - tLast;
       tLast = now;
 
+      // if it hasn't already been called, check for fhss
+      if (!alreadyFHSS)
+         HandleFHSS();
+
+      alreadyFHSS = false;
+
       NonceTX++; // New - just increment the nonce on every frame
 
       #ifdef ELRS_OG_COMPATIBILITY
 
-      HandleFHSS(); // experimental - can we do fhss here?
+      // HandleFHSS(); // experimental - can we do fhss here? No, this causes jitter. 
+      //               // Better to do it in txdone, but might need a backup call in case that misses for some reason
 
       // is there a deferred packet rate change?
       if (nextLinkRate != -1 && syncSpamCounter == 0) {
@@ -318,6 +328,7 @@ void TIMER2_IRQHandler(void)
          SetRFLinkRate(nextLinkRate);
          nextLinkRate = -1;
          lcdRedrawNeeded = true;
+         // XXX Consider skipping sending a packet on this change, it's unlikely to be at the right point in time.
       }
 
       #else
@@ -399,6 +410,11 @@ void EXTI10_15_IRQHandler(void)
 
 void HandleFHSS()
 {
+   if (alreadyFHSS) return;
+
+   // flag to indicate that we've already been called for this time-slot
+   alreadyFHSS = true;
+
    #ifdef ELRS_OG_COMPATIBILITY
    uint8_t modresult = (NonceTX+1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
    #else
@@ -418,13 +434,14 @@ void TXdoneISR()
 {
    // printf("TXdone!\n\r");
 
-   // TODO do fhss from timer for both cases
-   #ifdef ELRS_OG_COMPATIBILITY
-   // fhss moved to timer
-   #else
-   HandleFHSS();
-   #endif
+   // // TODO do fhss from timer for both cases - or not. Calling FHSS from the timer causes 60us of jitter
+   // #ifdef ELRS_OG_COMPATIBILITY
+   // // fhss moved to timer
+   // #else
+   // HandleFHSS();
+   // #endif
 
+   HandleFHSS();
    HandleTLM();
 }
 
@@ -438,20 +455,20 @@ void EXTI5_9_IRQHandler(void)
  
       // PING PONG test code
       // XXX Need to check for timeout, increment a counter, set the readyTo flag if this is the transmitter
-      // uint16_t irqS = radio.GetIrqStatus();
+      uint16_t irqS = radio.GetIrqStatus();
 
-      // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
-      //    printf("timeout\n\r");
-      //    radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
-      //    timeoutCounter++;
-      //    if (testModeIsTransmitter) {
-      //       readyToSend = true;
-      //    } else {
-      //       // for receiver, need to start another rx
-      //       radio.RXnb();
-      //    }
-      //    return;
-      // }
+      if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
+         // printf("timeout\n\r");
+         radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
+         timeoutCounter++;
+         // if (testModeIsTransmitter) {
+         //    readyToSend = true;
+         // } else {
+         //    // for receiver, need to start another rx
+         //    radio.RXnb();
+         // }
+         return;
+      }
 
       // printf("RXdone!\n\r");
 
@@ -498,6 +515,8 @@ void EXTI5_9_IRQHandler(void)
 
 
       ProcessTLMpacket();
+      HandleFHSS();
+
 
    } else if (exti_interrupt_flag_get(EXTI_9) == SET) {
       exti_interrupt_flag_clear(EXTI_9);
@@ -1615,6 +1634,19 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
    // printf(", crc %04X\n", crc);
 
    radio.TXnb(radio.TXdataBuffer, OTA_PACKET_LENGTH);
+
+   // // check for variaton in the intervals between sending packets
+   // static LPF LPF_sentInterval(4);
+   // static unsigned long tSentLast = 0;
+   // unsigned long tSent = micros();
+   // unsigned long delta = tSent - tSentLast;
+   // int32_t avgDelta = LPF_sentInterval.update(delta);
+   // int32_t variance = delta - avgDelta;
+   // if (variance < 0) variance = -variance;
+   // if (variance > 10) {
+   //    printf("delta %lu avg %ld\n", delta, avgDelta);
+   // }
+   // tSentLast = tSent;
 }
 
 // Update the radio and timer for the specified air rate

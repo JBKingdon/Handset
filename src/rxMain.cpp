@@ -96,6 +96,7 @@ bool LockRFmode = false;
 LPF LPF_UplinkRSSI0(5);  // track rssi per antenna
 LPF LPF_UplinkRSSI1(5);
 
+LPF LPF_rcvInterval(4);
 
 /// LQ Calculation //////////
 LQCALC<100> LQCalc;
@@ -167,6 +168,8 @@ void TentativeConnection()
     prevOffset = 0;
     LPF_Offset.init(0);
     RFmodeLastCycled = millis(); // give another 3 sec for lock to occur
+
+    LPF_rcvInterval.init(ExpressLRS_currAirRate_Modparams->interval);
 
 #if WS2812_LED_IS_USED
     uint8_t LEDcolor[3] = {0};
@@ -243,7 +246,7 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         telemetryConfirmValue = Radio.RXdataBuffer[6] & (1 << 7);
         TelemetrySender.ConfirmCurrentPayload(telemetryConfirmValue);
         #endif
-        
+
         if (connectionState != disconnected)
         {
             crsf.sendRCFrameToFC();
@@ -336,9 +339,17 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
 bool ICACHE_RAM_ATTR HandleFHSS()
 {
-    uint8_t modresultFHSS = (NonceRX + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+    // Optimise for the case where we've already done the hop or will never hop - we want to get out as quickly as possible
+    // These conditions will have short circuit evaluation, left to right.
+    if (alreadyFHSS || (ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || (connectionState == disconnected))
+    {
+        return false;
+    }
 
-    if ((ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || alreadyFHSS == true || (modresultFHSS != 0) || (connectionState == disconnected))
+    // ok, so we might hop if we're on the right nonce, time to do the calculation
+    // uint8_t modresultFHSS = (NonceRX + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+    uint8_t modresultFHSS = (NonceRX + 0) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+    if (modresultFHSS != 0)
     {
         return false;
     }
@@ -349,12 +360,14 @@ bool ICACHE_RAM_ATTR HandleFHSS()
 
     // printf("f %u\n", freq);
 
-    // uint8_t modresultTLM = (NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval));
+    // XXX do we need this rxnb call?
 
+    // uint8_t modresultTLM = (NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval));
     // if (modresultTLM != 0 || ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) // if we are about to send a tlm response don't bother going back to rx
     // {
     //     radio.RXnb();
     // }
+
     return true;
 }
 
@@ -448,6 +461,9 @@ static void tx_task(void* arg)
     for(;;) {
         if(xQueueReceive(tx_evt_queue, &dummyData, portMAX_DELAY))
         {
+            // give fhss a chance to run before tock()
+            HandleFHSS();
+
             // start the next receive
             radio.RXnb();
         }
@@ -458,12 +474,13 @@ static void rx_task(void* arg)
 {
     uint8_t dummyData;
     for(;;) {
-        if(xQueueReceive(rx_evt_queue, &dummyData, portMAX_DELAY)) {
+        if(xQueueReceive(rx_evt_queue, &dummyData, portMAX_DELAY))
+        {
+            // unsigned long tRcv = micros();
 
-            // Need to check for timeout, increment a counter, set the readyTo flag if this is the transmitter
             uint16_t irqS = radio.GetIrqStatus();
 
-            if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)
+            if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
             {
                 timeoutCounter++;
                 // need to start another rx
@@ -474,26 +491,28 @@ static void rx_task(void* arg)
 
             // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
 
-
             radio.readRXData(); // get the data from the radio chip
 
             ProcessRFPacket();
 
+            // give fhss a chance to run before tock()
+            HandleFHSS();
+
+            // XXX what if the next frame is for telem?
             // start the next receive
             radio.RXnb();
 
-            // XXX testing
-            // uint8_t counter = radio.RXdataBuffer[0];
+            // check for variaton in the intervals between sending packets
+            // static unsigned long tRcvLast = 0;
+            // unsigned long delta = tRcv - tRcvLast;
+            // int32_t avgDelta = LPF_rcvInterval.update(delta);
+            // int32_t variance = delta - avgDelta;
+            // if (variance < 0) variance = -variance;
+            // if (variance > 10) {
+            //     printf("fhhsMod %u delta %lu avg %ld, variance %ld\n", NonceRX % ExpressLRS_currAirRate_Modparams->FHSShopInterval, delta, avgDelta, variance);
+            // }
+            // tRcvLast = tRcv;
 
-            // int8_t rssi = radio.GetLastPacketRSSI();
-            // int8_t snr = radio.GetLastPacketSNR();
-
-            // printf("packet counter %u, rssi %d snr %d\n\r", counter, rssi, snr);
-            // printf("packet counter %u, rssi %d\n\r", counter, rssi);
-
-            // send the echo
-            // printf("sending echo\n\r");
-            // radio.TXnb(radio.RXdataBuffer, OTA_PACKET_LENGTH);
             totalPackets++;            
         }
     }
@@ -615,8 +634,13 @@ void ICACHE_RAM_ATTR updatePhaseLock()
 #endif
 }
 
+/** Aligned with (approximately) the midpoint of the radio interval (not necessarily the midpoint of the radio signal since duty cycle < 1)
+ * 
+ *  Assume that the radio modem is busy doing either rx or tx during this call, so we can only do non-radio related housekeeping in here.
+ */
 void tick()
 {
+    // printf("tickIn\n");
     // static unsigned long last = 0;
     // unsigned long now = micros();
 
@@ -643,15 +667,15 @@ void tick()
 
     alreadyTLMresp = false;
     alreadyFHSS = false;
-
-    // XXX implement output
-    // crsf.RXhandleUARTout();
-
+    // printf("tickOut\n");
 }
 
+/** Aligned with (approximately) the start of the radio signal
+ * 
+ */
 void tock()
 {
-    // printf("tock\n");
+    // printf("tockIn\n");
     pfdLoop.intEvent(micros()); // our internal osc just fired
 
     // updateDiversity();
@@ -666,8 +690,10 @@ void tock()
     lastPacketCrcError = false;
     lastPacketWasTelemetry = tlmSent;
     #endif
+    // printf("tockOut\n");
 }
 
+#ifdef PINGPONG
 void pingPongTest()
 {
     unsigned long tPrev = millis();
@@ -693,12 +719,14 @@ void pingPongTest()
         // radio.GetStatus();
    }
 }
+#endif
 
 /** docs?
  */
 void lostConnection()
 {
-    printf("lost conn fc=%d fo= ", FreqCorrection);
+    // TODO pretty sure FreqCorrection isn't used
+    printf("lost conn fc=%d fo=%d\n", FreqCorrection, HwTimer::getFreqOffset());
     // printf(" fo="); Serial.println(HwTimer::getFreqOffset, DEC);
 
     RFmodeCycleMultiplier = 1;
@@ -721,8 +749,11 @@ void lostConnection()
     alreadyFHSS = false;
     // LED = false; // Make first LED cycle turn it on
 
+    // XXX is this guaranteed to complete?
+    printf("waiting for timer sync\n");fflush(stdout);
     while(micros() - pfdLoop.getIntEventTime() > 250); // time it just after the tock()
     HwTimer::stop();
+    printf("timer sync done\n");
 
     // XXX These two are potential SPI collisions if there might still be activity on the rx/tx tasks
     SetRFLinkRate(ExpressLRS_nextAirRateIndex); // also sets to initialFreq 
@@ -810,6 +841,7 @@ static void cycleRfMode()
     // Actually cycle the RF mode if not LOCK_ON_FIRST_CONNECTION
     if (LockRFmode == false && (millis() - RFmodeLastCycled) > (ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * RFmodeCycleMultiplier))
     {
+        printf("cycling\n");
         unsigned long now = millis();
         RFmodeLastCycled = now;
         lastSyncPacket = now;           // reset this variable
@@ -848,6 +880,8 @@ void app_main()
 {
     printf("ESP32-C3 FreeRTOS RX\n");
 
+    // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
+    // Neither way seems to change the fhss jitter
     HwTimer::init();
     HwTimer::setInterval(2000000);
     HwTimer::stop();
@@ -864,8 +898,8 @@ void app_main()
     rx_evt_queue = xQueueCreate(10, 0);
     tx_evt_queue = xQueueCreate(10, 0);
     //start tasks
-    xTaskCreate(rx_task, "rx_task", 2048, NULL, 10, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
-    xTaskCreate(tx_task, "tx_task", 2048, NULL,  5, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
+    xTaskCreate(rx_task, "rx_task", 2048, NULL, 16, NULL); // Task priority 1=min, max is ??? Default main task is pri 1
+    xTaskCreate(tx_task, "tx_task", 2048, NULL,  5, NULL);
 
 
     // need to attach an ISR handler to DIO1 and 2
@@ -919,10 +953,10 @@ void app_main()
 
         // This isn't great to do from here, we might get an SPI collision with the still active rx/tx tasks
         if ((connectionState != disconnected) && (ExpressLRS_nextAirRateIndex != ExpressLRS_currAirRate_Modparams->index)){ // forced change
+            printf("Air rate change req via sync\n");
             lostConnection();
             lastSyncPacket = now;           // reset this variable to stop rf mode switching and add extra time
             RFmodeLastCycled = now;         // reset this variable to stop rf mode switching and add extra time
-            printf("Air rate change req via sync\n");
             crsf.sendLinkStatisticsToFC();
             crsf.sendLinkStatisticsToFC(); // need to send twice, not sure why, seems like a BF bug?
             continue; // no point looking at all the other cases in the loop after this
@@ -932,8 +966,8 @@ void app_main()
         // again this is potentially dangerous if rx may still be in progress
         if (connectionState == tentative && (millis() - lastSyncPacket > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleAddtionalTime))
         {
-            lostConnection();
             printf("Bad sync, aborting\n");
+            lostConnection();
             RFmodeLastCycled = millis();
             lastSyncPacket = millis();
         }
@@ -942,29 +976,29 @@ void app_main()
         uint32_t localLastValidPacket = lastValidPacket; // Required to prevent race condition due to LastValidPacket getting updated from ISR
         if ((connectionState == connected) && ((int32_t)ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval < (int32_t)(millis() - localLastValidPacket)))
         {
+            printf("loop: connection lost\n");
             lostConnection();
         }
 
         // detects when we are connected
         if ((connectionState == tentative) && (abs(OffsetDx) <= 10) && (Offset < 100) && (uplinkLQ > minLqForChaos()))
         {
+            printf("loop: connected\n");
             gotConnection();
         }
 
         // If the link is looking stable we can move the timer to locked mode (and start doing loop freq compensation)
         if ((RXtimerState == tim_tentative) && ((millis() - GotConnectionMillis) > ConsiderConnGoodMillis) && (abs(OffsetDx) <= 5))
         {
-            RXtimerState = tim_locked;
             // #ifndef DEBUG_SUPPRESS
             printf("Timer Locked\n");
             // #endif
+            RXtimerState = tim_locked;
         }
-
 
         cycleRfMode();
 
-
-    }
+    } // while true
 
 }
 

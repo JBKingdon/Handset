@@ -43,12 +43,21 @@ void HwTimer::setCallbackTock(void (*fn)())
     callbackTock = fn;
 }
 
-
+extern unsigned long micros();
 
 void HwTimer::timer_task(void* arg)
 {
+    unsigned long tLast = 0;
     uint32_t dummyData;
     for(;;) {
+        // check if this is getting called too often
+        // unsigned long now = micros();
+        // unsigned long delta = now - tLast;
+        // if (delta < 1000) { // fastest expected call rate is 3000/2
+        //     printf("timer_task %lu\n", delta);
+        // }
+        // tLast = now;
+
         if(xQueueReceive(s_timer_queue, &dummyData, portMAX_DELAY))
         {
             if (running)
@@ -65,7 +74,11 @@ void HwTimer::timer_task(void* arg)
                     HwTimer::callbackTock();
                 }
                 HwTimer::isTick = !HwTimer::isTick;
+            } else {
+                printf("in timer_task when not running\n");
             } // if (running)
+        } else {
+            printf("time_task weird side\n");
         }
     }
 }
@@ -164,8 +177,8 @@ void HwTimer::decFreqOffset()
 
 void HwTimer::setPhaseShift(int32_t newPhaseShift)
 {
-    int32_t minVal = -(interval >> 2);
-    int32_t maxVal = (interval >> 2);
+    int32_t maxVal = (interval >> 2) / HWTIMER_TICKS_PER_US; // XXX it would be nice if ticks/us was a power of 2
+    int32_t minVal = -maxVal;
 
     phaseShift = constrain(newPhaseShift, minVal, maxVal) * HWTIMER_TICKS_PER_US;
 }
