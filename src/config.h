@@ -190,7 +190,7 @@
 #define RADIO_DIO2_PIN  GPIO_NUM_2
 
 #define CRSF_TX_PIN     GPIO_NUM_9
-
+#define PWM_CH1_PIN     GPIO_NUM_3
 
 #else
 #error "define the board type in config.h"

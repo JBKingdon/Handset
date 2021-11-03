@@ -4,10 +4,12 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "driver/ledc.h"
 #include "sdkconfig.h"
 
 #include "freertos/queue.h"
@@ -25,6 +27,21 @@
 #include "LowPassFilter.h"
 #include "LQCALC.h"
 #include "OTA.h"
+
+// PWM constants
+
+#define PWM_FREQ 50
+#define PWM_PERIOD (1000000/PWM_FREQ)
+
+#define PWM_TICKS 16384
+
+// standard 1000 to 2000us pulse range, gives about 90 degrees of travel
+#define PWM_MIN (PWM_TICKS * 1000 / PWM_PERIOD)
+#define PWM_MAX (PWM_TICKS * 2000 / PWM_PERIOD)
+
+
+
+#define PWM_RANGE (PWM_MAX - PWM_MIN)
 
 
 // defs for SPI
@@ -250,9 +267,14 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         if (connectionState != disconnected)
         {
             crsf.sendRCFrameToFC();
+
+            // TODO this will be different if using a native packet format instead of the reduced crsf range
+            uint32_t newDuty = ((int32_t)crsf.PackedRCdataOut.ch0 - CRSF_CHANNEL_VALUE_1000) * PWM_RANGE / CRSF_CHANNEL_VALUE_SPAN + PWM_MIN;
+            // printf("duty %lu\n", newDuty);
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, newDuty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
         }
         break;
-
     // case MSP_DATA_PACKET:
     //     currentMspConfirmValue = MspReceiver.GetCurrentConfirm();
     //     MspReceiver.ReceiveData(Radio.RXdataBuffer[1], Radio.RXdataBuffer + 2);
@@ -873,12 +895,41 @@ static void cycleRfMode()
     // } // if cycle LED
 }
 
+void setupPWM()
+{
+    ledc_timer_config_t ledc_timer;
+    memset(&ledc_timer, 0, sizeof(ledc_timer));
+    
+    ledc_timer.speed_mode       = LEDC_LOW_SPEED_MODE;
+    ledc_timer.timer_num        = LEDC_TIMER_0;
+    ledc_timer.duty_resolution  = LEDC_TIMER_14_BIT;
+    ledc_timer.freq_hz          = PWM_FREQ;  // Set output frequency in Hz
+    ledc_timer.clk_cfg          = LEDC_AUTO_CLK;
+
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel_config_t ledc_channel;
+    memset(&ledc_channel, 0, sizeof(ledc_channel));
+
+    ledc_channel.speed_mode     = LEDC_LOW_SPEED_MODE;
+    ledc_channel.channel        = LEDC_CHANNEL_0;
+    ledc_channel.timer_sel      = LEDC_TIMER_0;
+    ledc_channel.intr_type      = LEDC_INTR_DISABLE;
+    ledc_channel.gpio_num       = PWM_CH1_PIN;
+    ledc_channel.duty           = PWM_RANGE/2 + PWM_MIN; // Set duty to mid position
+    ledc_channel.hpoint         = 0;
+
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+}
+
 extern "C"
 {
 
 void app_main()
 {
     printf("ESP32-C3 FreeRTOS RX\n");
+
+    setupPWM();
 
     // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
     // Neither way seems to change the fhss jitter
