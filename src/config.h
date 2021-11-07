@@ -189,21 +189,26 @@
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 #define RADIO_DIO2_PIN  GPIO_NUM_2  // might do without this if needed?
 
-// #define CRSF_TX_PIN     GPIO_NUM_9  // need to make conditional with a #def
+#ifdef USE_PWM6
 
 #define PWM_CH1_PIN     GPIO_NUM_3
 #define PWM_CH2_PIN     GPIO_NUM_0
 #define PWM_CH3_PIN     GPIO_NUM_8  // need to free up rxen
 #define PWM_CH4_PIN     GPIO_NUM_9  // need to disable crsf output
-// #define PWM_CH5_PIN     GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
-// #define PWM_CH6_PIN     GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
-#define PWM_CH5_PIN     -1 // GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
-#define PWM_CH6_PIN     -1 // GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
+#define PWM_CH5_PIN     GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
+#define PWM_CH6_PIN     GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
+// #define PWM_CH5_PIN     -1 // GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
+// #define PWM_CH6_PIN     -1 // GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
 
+#else
+
+#define CRSF_TX_PIN     GPIO_NUM_9  // need to make conditional with a #def
+
+#endif // USE_PWM6
 
 #else
 #error "define the board type in config.h"
-#endif
+#endif // Board type
 
 
 #ifndef RX_C3

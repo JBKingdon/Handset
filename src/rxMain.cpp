@@ -28,9 +28,11 @@
 #include "LQCALC.h"
 #include "OTA.h"
 
+#ifdef USE_PWM6
+
 // PWM constants
 
-#define PWM_FREQ 50
+#define PWM_FREQ 50 // The cheap 9G servos become unstable at > 50Hz (even 75 or 100Hz is too much)
 #define PWM_PERIOD (1000000/PWM_FREQ)
 
 #define PWM_TICKS 16384
@@ -41,6 +43,8 @@
 #define PWM_RANGE (PWM_MAX - PWM_MIN)
 
 const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PWM_CH5_PIN, PWM_CH6_PIN};
+
+#endif
 
 // defs for SPI
 
@@ -197,6 +201,49 @@ void TentativeConnection()
     // the timer ISR will fire immediately and preempt any other code
 }
 
+/** Update the PWM output values from the channel data
+ * 
+ */
+void updatePWM()
+{
+    #ifdef USE_PWM6
+    for(int i=0; i<sizeof(PwmPins); i++) {
+        if (PwmPins[i] != -1) {
+            int32_t channelValue;
+            switch (i) {
+                case 0:
+                channelValue = crsf.PackedRCdataOut.ch0;
+                break;
+
+                case 1:
+                channelValue = crsf.PackedRCdataOut.ch1;
+                break;
+
+                case 2:
+                channelValue = crsf.PackedRCdataOut.ch2;
+                break;
+
+                case 3:
+                channelValue = crsf.PackedRCdataOut.ch3;
+                break;
+
+                case 4:
+                channelValue = crsf.PackedRCdataOut.ch4;
+                break;
+
+                case 5:
+                channelValue = crsf.PackedRCdataOut.ch5;
+                break;
+            }
+            // TODO this will be different if using a native packet format instead of the reduced crsf range
+            uint32_t newDuty = (channelValue - CRSF_CHANNEL_VALUE_1000) * PWM_RANGE / CRSF_CHANNEL_VALUE_SPAN + PWM_MIN;
+            // printf("duty %lu\n", newDuty);
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i, newDuty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i);
+        }
+    }
+    #endif // USE_PWM6
+}
 
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
@@ -215,9 +262,9 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
     #else
 
-    uint8_t type = radio.RXdataBuffer[0] & 0b11;
+    type = radio.RXdataBuffer[0] & 0b11;
 
-    uint16_t inCRC = ( ( (uint16_t)(radio.RXdataBuffer[0] & 0b11111100) ) << 6 ) | radio.RXdataBuffer[7];
+    inCRC = ( ( (uint16_t)(radio.RXdataBuffer[0] & 0b11111100) ) << 6 ) | radio.RXdataBuffer[7];
 
     radio.RXdataBuffer[0] = type;
     uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, 7);
@@ -286,41 +333,8 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
             crsf.sendRCFrameToFC();
             #endif
 
-            for(int i=0; i<sizeof(PwmPins); i++) {
-                if (PwmPins[i] != -1) {
-                    int32_t channelValue;
-                    switch (i) {
-                        case 0:
-                        channelValue = crsf.PackedRCdataOut.ch0;
-                        break;
+            updatePWM();
 
-                        case 1:
-                        channelValue = crsf.PackedRCdataOut.ch1;
-                        break;
-
-                        case 2:
-                        channelValue = crsf.PackedRCdataOut.ch2;
-                        break;
-
-                        case 3:
-                        channelValue = crsf.PackedRCdataOut.ch3;
-                        break;
-
-                        case 4:
-                        channelValue = crsf.PackedRCdataOut.ch4;
-                        break;
-
-                        case 5:
-                        channelValue = crsf.PackedRCdataOut.ch5;
-                        break;
-                    }
-                    // TODO this will be different if using a native packet format instead of the reduced crsf range
-                    uint32_t newDuty = (channelValue - CRSF_CHANNEL_VALUE_1000) * PWM_RANGE / CRSF_CHANNEL_VALUE_SPAN + PWM_MIN;
-                    // printf("duty %lu\n", newDuty);
-                    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i, newDuty);
-                    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i);
-                }
-            }
         }
         break;
     // case MSP_DATA_PACKET:
@@ -945,6 +959,7 @@ static void cycleRfMode()
 
 void setupPWM()
 {
+    #ifdef USE_PWM6
     ledc_timer_config_t ledc_timer;
     memset(&ledc_timer, 0, sizeof(ledc_timer));
     
@@ -973,6 +988,7 @@ void setupPWM()
             ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
         }
     }
+    #endif // USE_PWM6
 }
 
 extern "C"
@@ -985,7 +1001,6 @@ void app_main()
     setupPWM();
 
     // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
-    // Neither way seems to change the fhss jitter
     HwTimer::init();
     HwTimer::setInterval(2000000);
     HwTimer::stop();
