@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include "FHSS.h"
-#include "Serial.h"
+#include "Serial.h" // for?
 #include "config.h"
 
 uint8_t volatile FHSSptr = 0; // XXX must be 8 bit unsigned to wrap when incremented,

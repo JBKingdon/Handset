@@ -12,6 +12,14 @@ extern SX1262Driver Radio;
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
 
+    #ifdef USE_PWM6
+    // Fat packets for PWM. 125Hz
+    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_8,  8000, TLM_RATIO_1_64,   4,  12}, // check this for 11 bytes
+    {1, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_6, 20000, TLM_RATIO_1_32,   4,  12}, // check this for 11 bytes
+
+
+    #else
+
     // 333, but dodgy due to the out of spec pre-amble. Maybe with tigher pfd slack or a faster SPI impl?
     {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5, 3000, TLM_RATIO_1_64,   4,  8}, // preamble 8 works, but some crc errors. 10 and 12 don't fit with current pfd setting
 
@@ -31,15 +39,21 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // {1, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF7, SX1262_LORA_CR_4_7, 10000, TLM_RATIO_1_64,   4, 8},  // XXX min preamble 10?
     {2, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_7, 20000, TLM_RATIO_NO_TLM, 4, 8},
     {3, RATE_25HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF9, SX1262_LORA_CR_4_5, 40000, TLM_RATIO_NO_TLM, 4, 8} // just too tight with cr_4_7 or 6.
+    #endif // USE_PWM6
 };
 
 // XXX redo all these values
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
+    #ifdef USE_PWM6
+    {0, RATE_100HZ, -112,  6432,    3500,               4000,                       2000,                   5000}, // XXX update this for 12byte payload
+    {1, RATE_50HZ,  -120, 18560,    3500,               6000,                       2000,                   5000}
+    #else
     {0, RATE_200HZ, -112,  4380,    3500,               2000,                       2000,                   5000},
     {1, RATE_100HZ, -117,  8770,    3500,               4000,                       2000,                   5000},
     {2, RATE_50HZ,  -120, 17540,    3500,               6000,                       2000,                   5000},
     {3, RATE_25HZ,  -123, 17540,    3500,               12000,                      2000,                   5000}
+    #endif // USE_PWM6
 };
 #endif
 

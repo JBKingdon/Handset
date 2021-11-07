@@ -8,6 +8,8 @@
 #include "SX1280_hal.h"
 #include "SX1280.h"
 
+#include "OTA.h"
+
 extern "C" {
 #include "../../include/systick.h"
 }

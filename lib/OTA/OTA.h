@@ -2,6 +2,29 @@
 #define H_OTA
 
 #include <stdint.h>
+#include "../../src/user_config.h"
+
+#define PACKED __attribute__((packed))
+
+
+typedef struct Pwm6Payload_s {
+    unsigned int header : 2;
+    unsigned int ch0 : 11;
+    unsigned int ch1 : 11;
+    unsigned int ch2 : 11;
+    unsigned int ch3 : 11;
+    unsigned int ch4 : 11;
+    unsigned int ch5 : 11; // 66 + 2 = 68
+    unsigned int sw0 : 1;
+    unsigned int sw1 : 1;
+    unsigned int sw2 : 1;
+    unsigned int sw3 : 1;
+    unsigned int sw4 : 1;
+    unsigned int sw5 : 1; // 6 + 68 = 74
+    unsigned int crc : 14; // 14 + 74 = 88 = 11 bytes with 0 bits spare
+} PACKED Pwm6Payload_t;
+
+
 
 // expresslrs packet header types
 // 00 -> standard 4 channel data packet
@@ -18,6 +41,10 @@
 
 #define OTA_PACKET_LENGTH 9
 
+#elif defined(USE_PWM6)
+
+#define OTA_PACKET_LENGTH 11
+
 #else
 
 #define OTA_PACKET_LENGTH 8
@@ -31,10 +58,10 @@
 
 #if defined HYBRID_SWITCHES_8 or defined UNIT_TEST
 
-
 void UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, CRSF *crsf);
 void UnpackHiResChannelData(volatile uint8_t* Buffer, CRSF *crsf);
 
+void UnpackChannelDataPWM6(Pwm6Payload_t* Buffer, CRSF *crsf);
 
 #endif // HYBRID_SWITCHES_8
 
@@ -45,10 +72,13 @@ void UnpackChannelDataSeqSwitches(volatile uint8_t* Buffer, CRSF *crsf);
 
 #endif // SEQ_SWITCHES
 
-#else
+#else // not the ESPC3 (RX)
 // void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, CRSF *crsf, uint8_t addr);
 void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, const uint16_t scaledADC[], 
                                                       const uint8_t currentSwitches[], const uint8_t nextSwitchIndex, uint8_t addr);
+
+void GenerateChannelDataPWM6(Pwm6Payload_t* outputBuffer, const uint16_t scaledADC[], 
+                             const uint8_t currentSwitches[]);
 
 #endif // ESPC3
 

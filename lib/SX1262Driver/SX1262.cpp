@@ -5,7 +5,9 @@
 #define RUN_RADIO_BUFFER_TEST
 
 // get access to gnu specific pow10 function
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "SX1262_Regs.h"
 #include "SX1262_hal.h"

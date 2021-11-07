@@ -4,6 +4,8 @@
 #include "SX1262_Regs.h"
 #include "SX1262_hal.h"
 #include "../../src/user_config.h"
+// #include "crsf_protocol.h"
+#include "../OTA/OTA.h"
 
 #include <stdint.h>
 
@@ -11,11 +13,6 @@
 #error "Can't use hires data in compatibility mode (yet)"
 #endif
 
-#if defined(USE_HIRES_DATA)
-#define OTA_PACKET_LENGTH 9
-#else
-#define OTA_PACKET_LENGTH 8
-#endif // USE_HIRES_DATA
 
 #ifdef GD32
 #define ICACHE_RAM_ATTR

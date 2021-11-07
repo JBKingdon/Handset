@@ -38,11 +38,9 @@
 // standard 1000 to 2000us pulse range, gives about 90 degrees of travel
 #define PWM_MIN (PWM_TICKS * 1000 / PWM_PERIOD)
 #define PWM_MAX (PWM_TICKS * 2000 / PWM_PERIOD)
-
-
-
 #define PWM_RANGE (PWM_MAX - PWM_MIN)
 
+const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PWM_CH5_PIN, PWM_CH6_PIN};
 
 // defs for SPI
 
@@ -202,7 +200,20 @@ void TentativeConnection()
 
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
+    uint8_t type;
+    uint16_t inCRC;
+
     beginProcessing = micros();
+
+    #ifdef USE_PWM6
+
+    type = ((Pwm6Payload_t*) radio.RXdataBuffer)->header;
+    inCRC = ((Pwm6Payload_t*) radio.RXdataBuffer)->crc;
+    ((Pwm6Payload_t*) radio.RXdataBuffer)->crc = 0; // zero out the crc bits to match the sender
+
+    uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, OTA_PACKET_LENGTH-1);
+
+    #else
 
     uint8_t type = radio.RXdataBuffer[0] & 0b11;
 
@@ -210,6 +221,8 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
     radio.RXdataBuffer[0] = type;
     uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, 7);
+
+    #endif // USE_PWM6
 
     // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio.RXdataBuffer[i]);
     // printf(", inCRC %04X calcCRC %04X\n", inCRC, calculatedCRC);
@@ -228,7 +241,7 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
             lastPacketCrcError = true;
         #endif
         crcCounter++;
-        return;
+        return;     // EARLY RETURN
     }
     pfdLoop.extEvent(beginProcessing + PACKET_TO_TOCK_SLACK);
 
@@ -255,6 +268,9 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
     case RC_DATA_PACKET: //Standard RC Data Packet
         #ifdef USE_HIRES_DATA
         UnpackHiResChannelData(radio.RXdataBuffer, &crsf);
+        #elif defined(USE_PWM6)
+        UnpackChannelDataPWM6((Pwm6Payload_t*)radio.RXdataBuffer, &crsf);
+
         #else
         UnpackChannelDataHybridSwitches8(radio.RXdataBuffer, &crsf);
         #endif
@@ -266,13 +282,45 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
         if (connectionState != disconnected)
         {
+            #ifdef CRSF_TX_PIN
             crsf.sendRCFrameToFC();
+            #endif
 
-            // TODO this will be different if using a native packet format instead of the reduced crsf range
-            uint32_t newDuty = ((int32_t)crsf.PackedRCdataOut.ch0 - CRSF_CHANNEL_VALUE_1000) * PWM_RANGE / CRSF_CHANNEL_VALUE_SPAN + PWM_MIN;
-            // printf("duty %lu\n", newDuty);
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, newDuty);
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+            for(int i=0; i<sizeof(PwmPins); i++) {
+                if (PwmPins[i] != -1) {
+                    int32_t channelValue;
+                    switch (i) {
+                        case 0:
+                        channelValue = crsf.PackedRCdataOut.ch0;
+                        break;
+
+                        case 1:
+                        channelValue = crsf.PackedRCdataOut.ch1;
+                        break;
+
+                        case 2:
+                        channelValue = crsf.PackedRCdataOut.ch2;
+                        break;
+
+                        case 3:
+                        channelValue = crsf.PackedRCdataOut.ch3;
+                        break;
+
+                        case 4:
+                        channelValue = crsf.PackedRCdataOut.ch4;
+                        break;
+
+                        case 5:
+                        channelValue = crsf.PackedRCdataOut.ch5;
+                        break;
+                    }
+                    // TODO this will be different if using a native packet format instead of the reduced crsf range
+                    uint32_t newDuty = (channelValue - CRSF_CHANNEL_VALUE_1000) * PWM_RANGE / CRSF_CHANNEL_VALUE_SPAN + PWM_MIN;
+                    // printf("duty %lu\n", newDuty);
+                    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i, newDuty);
+                    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)i);
+                }
+            }
         }
         break;
     // case MSP_DATA_PACKET:
@@ -911,15 +959,20 @@ void setupPWM()
     ledc_channel_config_t ledc_channel;
     memset(&ledc_channel, 0, sizeof(ledc_channel));
 
-    ledc_channel.speed_mode     = LEDC_LOW_SPEED_MODE;
-    ledc_channel.channel        = LEDC_CHANNEL_0;
-    ledc_channel.timer_sel      = LEDC_TIMER_0;
-    ledc_channel.intr_type      = LEDC_INTR_DISABLE;
-    ledc_channel.gpio_num       = PWM_CH1_PIN;
-    ledc_channel.duty           = PWM_RANGE/2 + PWM_MIN; // Set duty to mid position
-    ledc_channel.hpoint         = 0;
+    for(int i=0; i<sizeof(PwmPins); i++)
+    {
+        if (PwmPins[i] != -1) {
+            ledc_channel.speed_mode     = LEDC_LOW_SPEED_MODE;
+            ledc_channel.channel        = (ledc_channel_t) i;
+            ledc_channel.timer_sel      = LEDC_TIMER_0;
+            ledc_channel.intr_type      = LEDC_INTR_DISABLE;
+            ledc_channel.gpio_num       = PwmPins[i];
+            ledc_channel.duty           = PWM_RANGE/2 + PWM_MIN; // Set duty to mid position
+            ledc_channel.hpoint         = 0;
 
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+            ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+        }
+    }
 }
 
 extern "C"
@@ -984,6 +1037,8 @@ void app_main()
     // hwTimer.init();
     // hwTimer.stop();
 
+    printf("pwm6 struct size is %d\n", sizeof(Pwm6Payload_t));
+
     unsigned long lastDebug = 0;
 
     // loop
@@ -996,7 +1051,7 @@ void app_main()
             uint32_t elapsedT = now - lastDebug;
             lastDebug = now;
             printf("Total packets %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalPackets, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
-            // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
+            printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
             // totalPackets = 0;
             timeoutCounter = 0;
             crcCounter = 0;
@@ -1047,7 +1102,7 @@ void app_main()
             RXtimerState = tim_locked;
         }
 
-        cycleRfMode();
+        if (RATE_MAX > 1) cycleRfMode();
 
     } // while true
 

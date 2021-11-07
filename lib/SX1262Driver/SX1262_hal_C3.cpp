@@ -47,8 +47,10 @@ void SX1262Hal_C3::init()
     gpio_reset_pin(RADIO_TXEN_PIN);
     gpio_set_direction(RADIO_TXEN_PIN, GPIO_MODE_OUTPUT);
 
+    #ifdef RADIO_RXEN_PIN
     gpio_reset_pin(RADIO_RXEN_PIN);
     gpio_set_direction(RADIO_RXEN_PIN, GPIO_MODE_OUTPUT);
+    #endif
 
     // Create and init the SPI instance
 

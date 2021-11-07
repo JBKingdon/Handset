@@ -11,11 +11,11 @@
 #error "Can't use hires data in compatibility mode (yet)"
 #endif
 
-#if defined(USE_HIRES_DATA)
-#define OTA_PACKET_LENGTH 9
-#else
-#define OTA_PACKET_LENGTH 8
-#endif // USE_HIRES_DATA
+// #if defined(USE_HIRES_DATA)
+// #define OTA_PACKET_LENGTH 9
+// #else
+// #define OTA_PACKET_LENGTH 8
+// #endif // USE_HIRES_DATA
 
 
 #define ICACHE_RAM_ATTR

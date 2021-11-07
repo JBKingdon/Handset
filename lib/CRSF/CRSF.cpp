@@ -9,7 +9,7 @@
 // #include "../../lib/FIFO/FIFO.h"
 // #include "telemetry_protocol.h"
 
-//#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
+#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
 
 #ifdef PLATFORM_ESP32
 HardwareSerial SerialPort(1);
@@ -106,6 +106,8 @@ void CRSF::Begin()
     // Serial.println("About to start CRSF task...");
     printf("About to start CRSF task...\n");
 
+    #ifdef CRSF_TX_PIN
+
     uart_config_t uart_config;
     memset(&uart_config, 0, sizeof(uart_config));
     uart_config.baud_rate = CRSF_RX_BAUDRATE;
@@ -135,6 +137,7 @@ void CRSF::Begin()
     //     uart_write_bytes(ECHO_UART_PORT_NUM, (const char *) data, len);
     // }
 
+    #endif // CRSF_TX_PIN
 
 #if CRSF_TX_MODULE
     UARTcurrentBaud = CRSF_OPENTX_FAST_BAUDRATE;
@@ -890,7 +893,7 @@ void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToFC()
     uint8_t crc = crsf_crc.calc(&outBuffer[2], LinkStatisticsFrameLength + 1);
 
     outBuffer[LinkStatisticsFrameLength + 3] = crc;
-#ifndef DEBUG_CRSF_NO_OUTPUT
+#if !defined(DEBUG_CRSF_NO_OUTPUT) && defined(CRSF_TX_PIN)
     // SerialOutFIFO.push(LinkStatisticsFrameLength + 4);
     // SerialOutFIFO.pushBytes(outBuffer, LinkStatisticsFrameLength + 4);
     //this->_dev->write(outBuffer, LinkStatisticsFrameLength + 4);

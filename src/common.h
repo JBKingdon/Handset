@@ -103,7 +103,11 @@ typedef struct expresslrs_rf_pref_params_s
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 // XXX change this to N_RATES
+#ifdef USE_PWM6
+#define RATE_MAX 2
+#else
 #define RATE_MAX 4
+#endif
 #define RATE_DEFAULT 0
 typedef struct expresslrs_mod_settings_s
 {

@@ -6,8 +6,9 @@
  * be sent over the radio link.
  */
 
-#include "OTA.h"
+#include <stdio.h>
 
+#include "OTA.h"
 #include "crsf_protocol.h"
 
 // /**
@@ -175,6 +176,46 @@ void ICACHE_RAM_ATTR GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, 
   Buffer[6] += (nextSwitchIndex << 2) + value;
 }
 
+void ICACHE_RAM_ATTR GenerateChannelDataPWM6(Pwm6Payload_t* outputBuffer, const uint16_t scaledADC[], 
+                                             const uint8_t currentSwitches[])
+{
+    outputBuffer->header = RC_DATA_PACKET;
+
+    outputBuffer->ch0 = scaledADC[0]; // assuming scaledADC holds 11 bit CRSF values already
+    outputBuffer->ch1 = scaledADC[1];
+    outputBuffer->ch2 = scaledADC[2];
+    outputBuffer->ch3 = scaledADC[3];
+
+
+    // Need to fake up 4 and 5 for testing as we don't have physical analog inputs for them
+    // Use switch D to map adc0 onto 4 or 5
+    switch (currentSwitches[3])
+    {
+        case 0:
+            outputBuffer->ch4 = CRSF_CHANNEL_VALUE_MID;
+            outputBuffer->ch5 = CRSF_CHANNEL_VALUE_MID;
+            break;
+
+        case 1:
+            outputBuffer->ch4 = scaledADC[0];
+            outputBuffer->ch5 = CRSF_CHANNEL_VALUE_MID;
+            outputBuffer->ch0 = CRSF_CHANNEL_VALUE_MID;
+            break;
+
+        case 2:
+            outputBuffer->ch5 = scaledADC[0];
+            outputBuffer->ch4 = CRSF_CHANNEL_VALUE_MID;
+            outputBuffer->ch0 = CRSF_CHANNEL_VALUE_MID;
+            break;
+
+        default:
+            printf("unexpected switch value %d\n\r", currentSwitches[3]);
+    }
+
+    // TODO add the switches
+}
+
+
 // TODO replace with IS_RX
 #ifdef ESPC3
 
@@ -276,6 +317,40 @@ void ICACHE_RAM_ATTR UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, 
     }
     #endif // normal crossfire protocol
 }
+
+void UnpackChannelDataPWM6(Pwm6Payload_t *buffer, CRSF *crsf)
+{
+    // static uint32_t debugCounter = 0;
+
+    // The analog channels
+    crsf->PackedRCdataOut.ch0 = buffer->ch0;
+    crsf->PackedRCdataOut.ch1 = buffer->ch1;
+    crsf->PackedRCdataOut.ch2 = buffer->ch2;
+    crsf->PackedRCdataOut.ch3 = buffer->ch3;
+    crsf->PackedRCdataOut.ch4 = buffer->ch4;
+    crsf->PackedRCdataOut.ch5 = buffer->ch5;
+
+    // if (debugCounter++ % 200 == 0) {
+    //     printf("ch0 %u\n", buffer->ch0);
+    //     printf("ch1 %u\n", buffer->ch1);
+    //     printf("ch2 %u\n", buffer->ch2);
+    //     printf("ch3 %u\n", buffer->ch3);
+    //     printf("ch4 %u\n", buffer->ch4);
+    //     printf("ch5 %u\n", buffer->ch5);
+    // }
+
+
+    // Switches
+    crsf->PackedRCdataOut.ch6  = N_to_CRSF(1, buffer->sw0);
+    crsf->PackedRCdataOut.ch7  = N_to_CRSF(1, buffer->sw1);
+    crsf->PackedRCdataOut.ch8  = N_to_CRSF(1, buffer->sw2);
+    crsf->PackedRCdataOut.ch9  = N_to_CRSF(1, buffer->sw3);
+    crsf->PackedRCdataOut.ch10 = N_to_CRSF(1, buffer->sw4);
+    crsf->PackedRCdataOut.ch11 = N_to_CRSF(1, buffer->sw5);
+    // crsf->PackedRCdataOut.ch12 = N_to_CRSF(1, buffer->sw6);
+    // crsf->PackedRCdataOut.ch13 = N_to_CRSF(1, buffer->sw7);
+}
+
 
 #endif // ESPC3
 

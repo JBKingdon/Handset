@@ -729,9 +729,11 @@ void ProcessTLMpacket()
    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2) || defined(USE_CRC14)
 
    uint16_t inCRC = radio.RXdataBuffer[0] & 0b11111100;
-   inCRC = (inCRC << 6) + radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
+   // inCRC = (inCRC << 6) + radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
+   inCRC = (inCRC << 6) + radio.RXdataBuffer[7];   // receiver is hard coded to 8 byte telem at the moment
    radio.RXdataBuffer[0] &= 0b11;   // remove the OTA crc bits before calculating the crc
-   uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, OTA_PACKET_LENGTH-1);
+   // uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, OTA_PACKET_LENGTH-1);
+   uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, 7);
 
    #elif (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_DEV_16fbd1d011d060f56dcc9b3a33d9eead819cf440)
    // TODO drop this compat level at some point
@@ -1495,7 +1497,6 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
       GenerateSyncPacketData();
       SyncPacketLastSent = millis();
       //Serial.println("sync");
-      //Serial.println(Radio.currFreq);
   }
   else
   {
@@ -1595,6 +1596,8 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
       #ifdef USE_HIRES_DATA
       GenerateHiResChannelData(radio.TXdataBuffer, scaledADC, DeviceAddr);
+      #elif defined USE_PWM6
+      GenerateChannelDataPWM6((Pwm6Payload_t*)radio.TXdataBuffer, scaledADC, currentSwitches);
       #else
       // GenerateChannelDataHybridSwitch8(radio.TXdataBuffer, scaledADC, DeviceAddr);
 
@@ -1609,12 +1612,19 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2) || defined(USE_CRC14)
 
+   #ifdef USE_PWM6
+   // zero the crc bits
+   ((Pwm6Payload_t*)radio.TXdataBuffer)->crc = 0;
+   uint16_t crc = ota_crc.calc(radio.TXdataBuffer, OTA_PACKET_LENGTH-1); // -1 subs off the last complete byte of the crc field, but includes the mixed byte
+   ((Pwm6Payload_t*)radio.TXdataBuffer)->crc = crc;
+   #else
    // need to clear the crc bits of the first byte before calculating the crc
    radio.TXdataBuffer[0] &= 0b11;
 
    uint16_t crc = ota_crc.calc(radio.TXdataBuffer, OTA_PACKET_LENGTH-1);
    radio.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
    radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc & 0xFF;
+   #endif // USE_PWM6
 
    #elif (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_DEV_16fbd1d011d060f56dcc9b3a33d9eead819cf440)
 
