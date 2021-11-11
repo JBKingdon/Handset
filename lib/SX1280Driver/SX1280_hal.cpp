@@ -21,15 +21,7 @@ Modified and adapted by Alessandro Carcione for ELRS project
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
 #include <stdio.h>
-// #include <SPI.h>
-// #include "../../src/utils.h"
 #include <string.h> // for memcpy
-
-extern "C" {
-// #include "../../include/systick.h"  // what's this for?
-}
-
-SX1280Hal *SX1280Hal::instance = nullptr;
 
 // void  SX1280Hal::nullCallback(void){};
 
@@ -38,7 +30,6 @@ SX1280Hal *SX1280Hal::instance = nullptr;
 
 SX1280Hal::SX1280Hal()
 {
-    instance = this;
 }
 
 void SX1280Hal::end()
@@ -82,7 +73,6 @@ void SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
 {
     WaitOnBusy();
 
-    // spi1_transferBytes(buffer, size);
     spi->transfer(buffer, size);
 }
 
@@ -206,25 +196,4 @@ void  SX1280Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t si
 //         //Serial.println("HalTXdone");
 //         TXdoneCallback();
 //     }
-// }
-
-
-// void  SX1280Hal::setIRQassignment(SX1280_InterruptAssignment_ newInterruptAssignment)
-// {
-
-//     // if (InterruptAssignment == newInterruptAssignment)
-//     // {
-//     //     return;
-//     // }
-//     // else
-//     // {
-//     if (newInterruptAssignment == SX1280_INTERRUPT_TX_DONE)
-//     {
-//         this->InterruptAssignment = SX1280_INTERRUPT_TX_DONE;
-//     }
-//     else if (newInterruptAssignment == SX1280_INTERRUPT_RX_DONE)
-//     {
-//         this->InterruptAssignment = SX1280_INTERRUPT_RX_DONE;
-//     }
-//     //}
 // }

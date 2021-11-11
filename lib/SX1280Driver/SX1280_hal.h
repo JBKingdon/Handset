@@ -22,30 +22,10 @@ And again by James Kingdon 2021 for ELRS project
 
 // #define ICACHE_RAM_ATTR
 
-// E28-20 max is -2
-// #define MAX_PRE_PA_POWER -2
-
-// E28-27 max is 0
-// #define MAX_PRE_PA_POWER 0
-
-// temporary hack to allow esp-C3 to compile until I port the radio libs
-// #ifdef GD32
-
 #include <stdint.h>
 #include "SX1280_Regs.h"
 
 #include "ElrsSPI.h"
-
-// #include "SX1280.h"
-// #include <SPI.h>
-
-
-// extern "C" {
-// #include "gd32vf103.h"
-// }
-
-// #define GPIO_PIN_BUSY   foo
-// #define GPIO_PORT_BUSY  bar
 
 enum SX1280_InterruptAssignment_
 {
@@ -71,8 +51,6 @@ protected:
     ElrsSPI *spi;   // Wrapper for using SPI, specialised for different MCUs
 
 public:
-    static SX1280Hal *instance;
-
     SX1280Hal();
 
     void end();
@@ -112,5 +90,3 @@ public:
     // static void (*TXdoneCallback)(); //function pointer for callback
     // static void (*RXdoneCallback)(); //function pointer for callback
 };
-
-// #endif // GD32

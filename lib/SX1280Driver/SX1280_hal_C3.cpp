@@ -16,7 +16,6 @@
 
 SX1280Hal_C3::SX1280Hal_C3()
 {
-    instance = this;
 }
 
 // void SX1280Hal_C3::end()
@@ -97,20 +96,6 @@ bool  SX1280Hal_C3::WaitOnBusy()
     // printf("waitOnBusy done in %lu us\n", micros()-t0);
     return false;
 }
-
-// void  SX1280Hal_C3::dioISR()
-// {
-//     if (instance->InterruptAssignment == SX1280_INTERRUPT_RX_DONE)
-//     {
-//         //Serial.println("HalRXdone");
-//         RXdoneCallback();
-//     }
-//     else if (instance->InterruptAssignment == SX1280_INTERRUPT_TX_DONE)
-//     {
-//         //Serial.println("HalTXdone");
-//         TXdoneCallback();
-//     }
-// }
 
 void  SX1280Hal_C3::TXenable()
 {

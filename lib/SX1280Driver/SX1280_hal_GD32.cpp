@@ -10,23 +10,14 @@
 
 #include "../../src/utils.h"
 
-
 extern "C" {
 #include "../../include/systick.h"
 }
 
 #include "SX1280_hal_GD32.h"
 
-// SX1280Hal *SX1280Hal::instance = nullptr;
-
-// void  SX1280Hal::nullCallback(void){};
-
-// void (*SX1280Hal::TXdoneCallback)() = &nullCallback;
-// void (*SX1280Hal::RXdoneCallback)() = &nullCallback;
-
 SX1280Hal_GD32::SX1280Hal_GD32()
 {
-    instance = this;
 }
 
 // void SX1280Hal_GD32::end()
@@ -61,7 +52,6 @@ void  SX1280Hal_GD32::reset(void)
         printf("SX1280 Ready!\n\r");
     }
 }
-
 
 /** Wait for the SX1280 busy flag to be low
  * Returns true if we reach the timeout before busy goes low
