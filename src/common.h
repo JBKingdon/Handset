@@ -69,7 +69,8 @@ typedef enum
     RATE_50HZ = 5,
     RATE_25HZ = 6,
     RATE_4HZ = 7,
-    RATE_ENUM_MAX = 8
+    // RATE_ENUM_MAX = 8
+    RATE_LAST = RATE_4HZ
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 #else
 typedef enum
@@ -83,8 +84,8 @@ typedef enum
     RATE_125HZ = 6,
     RATE_100HZ = 7,
     RATE_50HZ  = 8,
-    RATE_25HZ  = 9
-
+    RATE_25HZ  = 9,
+    RATE_LAST = RATE_25HZ
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 #endif // ELRS_OG_COMPATIBILITY
 

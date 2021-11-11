@@ -1,5 +1,5 @@
 // temp until ported to C3
-#ifdef GD32
+// #ifdef GD32
 
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
@@ -19,8 +19,25 @@ extern "C" {
 #include <stdio.h>
 #include <math.h>
 
+#ifdef GD32
 
-SX1280Hal hal;
+extern "C" {
+#include "../../include/systick.h"
+}
+
+#include "SX1280_hal_GD32.h"
+SX1280Hal_GD32 hal;
+
+#else // not GD32
+
+#include "SX1280_hal_C3.h"
+extern void delay(uint32_t x); // TODO find a home for this
+#include "SX1280_hal_C3.h"
+SX1280Hal_C3 hal;
+
+#endif // GD32
+
+
 /////////////////////////////////////////////////////////////////
 SX1280Driver *SX1280Driver::instance = NULL;
 //InterruptAssignment_ InterruptAssignment = NONE;
@@ -218,6 +235,10 @@ void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
     // Serial.print("SetPower raw: ");
     // Serial.println(buf[0]);
     return;
+}
+
+void SX1280Driver::setRxTimeout(uint32_t t) {
+    printf("setRxTimeout not impl\n\r");
 }
 
 
@@ -600,4 +621,4 @@ uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
 
     return (((uint16_t)status[0]) << 8) + status[1];
 }
-#endif // GD32
+// #endif // GD32

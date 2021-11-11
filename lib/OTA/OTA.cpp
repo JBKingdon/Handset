@@ -367,7 +367,6 @@ void UnpackChannelDataPWM6(Pwm6Payload_t *buffer, CRSF *crsf)
  * 
  * XXX This requires an extra byte in the OTA packet and hence new modes and timings
  * 
- *
  * Input: Buffer
  * Output: crsf->PackedRCdataOut
  */
@@ -395,7 +394,7 @@ void ICACHE_RAM_ATTR UnpackHiResChannelData(volatile uint8_t* Buffer, CRSF *crsf
 
     switch (switchIndex) {
         case 0:   // we should never get index 0 here since that is the low latency switch
-            Serial.println("BAD switchIndex 0");
+            printf("BAD switchIndex 0\n");
             break;
         case 1:
             crsf->PackedHiResRCdataOut.aux2 = switchValue;

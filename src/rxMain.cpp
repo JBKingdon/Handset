@@ -14,7 +14,7 @@
 
 #include "freertos/queue.h"
 
-// #include "user_config.h"
+#include "user_config.h"
 #include "config.h"
 
 #include "common.h"
@@ -57,8 +57,19 @@ const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PW
 
 #define PACKET_TO_TOCK_SLACK 200 // Desired buffer time between Packet ISR and Tock ISR
 
+#ifdef RADIO_E22
 
 SX1262Driver radio;
+
+#elif defined (RADIO_E28_12) || defined(RADIO_E28_20) || defined(RADIO_E28_27)
+
+SX1280Driver radio;
+
+#else
+error("must define a radio module")
+
+#endif // RADIO_*
+
 CRSF crsf;
 GENERIC_CRC14 ota_crc(ELRS_CRC14_POLY);
 PFD pfdLoop;
@@ -171,7 +182,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.LinkStatistics.active_antenna = antenna;
     crsf.LinkStatistics.uplink_SNR = radio.LastPacketSNR;
     crsf.LinkStatistics.uplink_Link_quality = uplinkLQ;
-    crsf.LinkStatistics.rf_Mode = (uint8_t)RATE_4HZ - (uint8_t)ExpressLRS_currAirRate_Modparams->enum_rate;
+    crsf.LinkStatistics.rf_Mode = (uint8_t)RATE_LAST - (uint8_t)ExpressLRS_currAirRate_Modparams->enum_rate;
     //Serial.println(crsf.LinkStatistics.uplink_RSSI_1);
 }
 
@@ -189,6 +200,8 @@ void TentativeConnection()
     RFmodeLastCycled = millis(); // give another 3 sec for lock to occur
 
     LPF_rcvInterval.init(ExpressLRS_currAirRate_Modparams->interval);
+
+    ExpressLRS_nextAirRateIndex = ExpressLRS_currAirRate_Modparams->index;
 
 #if WS2812_LED_IS_USED
     uint8_t LEDcolor[3] = {0};
@@ -264,10 +277,10 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
     type = radio.RXdataBuffer[0] & 0b11;
 
-    inCRC = ( ( (uint16_t)(radio.RXdataBuffer[0] & 0b11111100) ) << 6 ) | radio.RXdataBuffer[7];
+    inCRC = ( ( (uint16_t)(radio.RXdataBuffer[0] & 0b11111100) ) << 6 ) | radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
 
     radio.RXdataBuffer[0] = type;
-    uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, 7);
+    uint16_t calculatedCRC = ota_crc.calc(radio.RXdataBuffer, OTA_PACKET_LENGTH-1);
 
     #endif // USE_PWM6
 
@@ -277,12 +290,12 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
     if (inCRC != calculatedCRC)
     {
         #ifndef DEBUG_SUPPRESS
-        // printf("CRC error on RF packet: ");
-        // for (int i = 0; i < 8; i++)
-        // {
-        //     printf("%02X ", radio.RXdataBuffer[i]);
-        // }
-        // printf("\n");
+        printf("CRC error on RF packet: ");
+        for (int i = 0; i < OTA_PACKET_LENGTH; i++)
+        {
+            printf("%02X ", radio.RXdataBuffer[i]);
+        }
+        printf("\n");
         #endif
         #if defined(PRINT_RX_SCOREBOARD)
             lastPacketCrcError = true;
@@ -363,46 +376,85 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         break;
 
     case SYNC_PACKET: //sync packet from master
-         indexIN = (radio.RXdataBuffer[3] & 0b11000000) >> 6;
-         TLMrateIn = (radio.RXdataBuffer[3] & 0b00111000) >> 3;
-         SwitchEncMode = (radio.RXdataBuffer[3] & 0b00000110) >> 1;
 
-         if (SwitchEncModeExpected == SwitchEncMode && radio.RXdataBuffer[4] == UID[3] && radio.RXdataBuffer[5] == UID[4] && radio.RXdataBuffer[6] == UID[5])
-         {
-             lastSyncPacket = millis();
+       radio.TXdataBuffer[3] = ((ExpressLRS_currAirRate_Modparams->index & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
+
+
+        #ifdef ELRS_OG_COMPATIBILITY
+        indexIN = (radio.RXdataBuffer[3] & 0b11000000) >> 6;
+        TLMrateIn = (radio.RXdataBuffer[3] & 0b00111000) >> 3;
+        SwitchEncMode = (radio.RXdataBuffer[3] & 0b00000110) >> 1;
+
+        if (SwitchEncModeExpected == SwitchEncMode && radio.RXdataBuffer[4] == UID[3] && radio.RXdataBuffer[5] == UID[4] && radio.RXdataBuffer[6] == UID[5])
+        #else
+        indexIN = ((radio.RXdataBuffer[3] & 0b11100000) >> 5);
+        TLMrateIn = ((radio.RXdataBuffer[3] & 0b00011100) >> 2);
+        // SwitchEncMode = (radio.RXdataBuffer[3] & 0b00000110) >> 1;
+        SwitchEncMode = HYBRID_SWITCHES_8; // fixed when not running in compatibility mode
+
+        if (radio.RXdataBuffer[5] == UID[4] && radio.RXdataBuffer[6] == UID[5])
+        #endif
+        {
+            lastSyncPacket = millis();
             #if defined(PRINT_RX_SCOREBOARD)
-             Serial.write('s');
+            Serial.write('s');
             #endif
 
-             if (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn)
-             { // change link parameters if required
+            if (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn)
+            { // change link parameters if required
                 #ifndef DEBUG_SUPPRESS
-                 printf("New TLMrate: %u\n", TLMrateIn);
+                printf("New TLMrate: %u\n", TLMrateIn);
                 #endif
-                 ExpressLRS_currAirRate_Modparams->TLMinterval = (expresslrs_tlm_ratio_e)TLMrateIn;
+                ExpressLRS_currAirRate_Modparams->TLMinterval = (expresslrs_tlm_ratio_e)TLMrateIn;
                 //  telemBurstValid = false;
-             }
+            }
 
-             if (ExpressLRS_currAirRate_Modparams->index != (expresslrs_tlm_ratio_e)indexIN)
-             { // change link parameters if required
-                ExpressLRS_nextAirRateIndex = indexIN;
-                printf("changing index from %d to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
-             }
+            #ifdef ELRS_OG_COMPATIBILITY
 
-             if (connectionState == disconnected
+            if (connectionState == disconnected
                 || NonceRX != radio.RXdataBuffer[2]
                 || FHSSgetCurrIndex() != radio.RXdataBuffer[1]-1) // XXX don't forget this one when fixing the offsets
-             {
-                 //Serial.print(NonceRX, DEC); Serial.write('x'); Serial.println(Radio.RXdataBuffer[2], DEC);
-                 FHSSsetCurrIndex(radio.RXdataBuffer[1]-1); // XXX take the +1 off the transmitter and stop messing around
-                 NonceRX = radio.RXdataBuffer[2];
-                 TentativeConnection();
-                 doStartTimer = true;
-             }
-         } else {
-             printf("rejected sync pkt\n");
-         }
-         break;
+            {
+                //Serial.print(NonceRX, DEC); Serial.write('x'); Serial.println(Radio.RXdataBuffer[2], DEC);
+                FHSSsetCurrIndex(radio.RXdataBuffer[1]-1); // XXX take the +1 off the transmitter and stop messing around
+                NonceRX = radio.RXdataBuffer[2];
+                TentativeConnection();
+                doStartTimer = true;
+            }
+
+            #else // not ELRS_OG_COMPATIBILITY
+
+            if (connectionState == disconnected
+                || NonceRX != (radio.RXdataBuffer[2] + 1)
+                || FHSSgetCurrIndex() != radio.RXdataBuffer[1])
+            {
+                //Serial.print(NonceRX, DEC); Serial.write('x'); Serial.println(Radio.RXdataBuffer[2], DEC);
+                FHSSsetCurrIndex(radio.RXdataBuffer[1]); // XXX take the +1 off the transmitter and stop messing around
+                NonceRX = radio.RXdataBuffer[2] + 1;
+                TentativeConnection();
+                doStartTimer = true;
+            }
+
+            #endif // ELRS_OG_COMPATIBILITY
+
+            // if (ExpressLRS_currAirRate_Modparams->index != (expresslrs_tlm_ratio_e)indexIN)
+            if (ExpressLRS_currAirRate_Modparams->index != indexIN)
+            { // change link parameters if required
+                ExpressLRS_nextAirRateIndex = indexIN;
+                printf("changing index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
+            }
+
+
+        } else {
+            printf("rejected sync pkt:");
+            if (SwitchEncModeExpected != SwitchEncMode) printf(" switch mode");
+            #ifdef ELRS_OG_COMPATIBILITY
+            if (radio.RXdataBuffer[4] != UID[3]) printf(" uid3");
+            #endif
+            if (radio.RXdataBuffer[6] != UID[5]) printf(" uid5");
+            printf("\n");
+        }
+        break;
 
     default:
         break;
@@ -462,18 +514,30 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     uint8_t maxLength;
     uint8_t packageIndex;
     #endif
-    // uint8_t modresult = (NonceRX) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
-    uint8_t modresult = (NonceRX + 1) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
 
-    if ((connectionState == disconnected) || (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) || (alreadyTLMresp == true) || (modresult != 0))
+    // don't bother sending tlm if disconnected or TLM is off
+    if ((connectionState == disconnected) || (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) || (alreadyTLMresp == true))
     {
-        return false; // don't bother sending tlm if disconnected or TLM is off
+        return false;
+    }
+    #ifdef ELRS_OG_COMPATIBILITY
+    const uint8_t modresult = (NonceRX + 1) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
+    #else
+    const uint8_t modresult = (NonceRX) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
+    #endif
+    if (modresult != 0)
+    {
+        return false;
     }
 
     alreadyTLMresp = true;
     radio.TXdataBuffer[0] = 0b11; // tlm packet
 
+    #ifdef ELRS_OG_COMPATIBILITY
     radio.TXdataBuffer[1] = 1; // ELRS_TELEMETRY_TYPE_LINK; XXX 
+    #else
+    radio.TXdataBuffer[1] = CRSF_FRAMETYPE_LINK_STATISTICS;
+    #endif
 
     // OpenTX RSSI as -dBm is fine and supports +dBm values as well
     // but the value in linkstatistics is "positivized" (inverted polarity)
@@ -481,53 +545,11 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     radio.TXdataBuffer[3] = -crsf.LinkStatistics.uplink_RSSI_2;
     radio.TXdataBuffer[4] = crsf.LinkStatistics.uplink_SNR;
     radio.TXdataBuffer[5] = crsf.LinkStatistics.uplink_Link_quality;
-    // radio.TXdataBuffer[6] = MspReceiver.GetCurrentConfirm() ? 1 : 0; XXX
 
-    // switch (NextTelemetryType)
-    // {
-    //     case ELRS_TELEMETRY_TYPE_LINK:
-    //         #ifdef ENABLE_TELEMETRY
-    //         NextTelemetryType = ELRS_TELEMETRY_TYPE_DATA;
-    //         // Start the count at 1 because the next will be DATA and doing +1 before checking
-    //         // against Max below is for some reason 10 bytes more code
-    //         telemetryBurstCount = 1;
-    //         #else
-    //         NextTelemetryType = ELRS_TELEMETRY_TYPE_LINK;
-    //         #endif
-    //         Radio.TXdataBuffer[1] = ELRS_TELEMETRY_TYPE_LINK;
+    // XXX add the active antenna indicator
 
-    //         // OpenTX RSSI as -dBm is fine and supports +dBm values as well
-    //         // but the value in linkstatistics is "positivized" (inverted polarity)
-    //         Radio.TXdataBuffer[2] = -crsf.LinkStatistics.uplink_RSSI_1;
-    //         Radio.TXdataBuffer[3] = -crsf.LinkStatistics.uplink_RSSI_2;
-    //         Radio.TXdataBuffer[4] = crsf.LinkStatistics.uplink_SNR;
-    //         Radio.TXdataBuffer[5] = crsf.LinkStatistics.uplink_Link_quality;
-    //         Radio.TXdataBuffer[6] = MspReceiver.GetCurrentConfirm() ? 1 : 0;
 
-    //         break;
-    //     #ifdef ENABLE_TELEMETRY
-    //     case ELRS_TELEMETRY_TYPE_DATA:
-    //         if (telemetryBurstCount < telemetryBurstMax)
-    //         {
-    //             telemetryBurstCount++;
-    //         }
-    //         else
-    //         {
-    //             NextTelemetryType = ELRS_TELEMETRY_TYPE_LINK;
-    //         }
-
-    //         TelemetrySender.GetCurrentPayload(&packageIndex, &maxLength, &data);
-    //         Radio.TXdataBuffer[1] = (packageIndex << ELRS_TELEMETRY_SHIFT) + ELRS_TELEMETRY_TYPE_DATA;
-    //         Radio.TXdataBuffer[2] = maxLength > 0 ? *data : 0;
-    //         Radio.TXdataBuffer[3] = maxLength >= 1 ? *(data + 1) : 0;
-    //         Radio.TXdataBuffer[4] = maxLength >= 2 ? *(data + 2) : 0;
-    //         Radio.TXdataBuffer[5] = maxLength >= 3 ? *(data + 3): 0;
-    //         Radio.TXdataBuffer[6] = maxLength >= 4 ? *(data + 4): 0;
-    //         break;
-    //     #endif
-    // }
-
-    uint16_t crc = ota_crc.calc(radio.TXdataBuffer, 7);
+    uint16_t crc = ota_crc.calc(radio.TXdataBuffer, 7); // XXX hard coded packet length - does it matter?
     radio.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
     radio.TXdataBuffer[7] = crc & 0xFF;
 
@@ -562,6 +584,10 @@ static void rx_task(void* arg)
         {
             // unsigned long tRcv = micros();
 
+
+            // only using timeouts on E22 for now
+            #ifdef RADIO_E22
+
             uint16_t irqS = radio.GetIrqStatus();
 
             if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
@@ -572,6 +598,8 @@ static void rx_task(void* arg)
 
                 continue;
             }
+
+            #endif // RADIO_E22
 
             // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
 
@@ -655,11 +683,11 @@ void SetRFLinkRate(uint8_t index)
 
     isRXconnected = false;
 
-#ifdef USE_DYNAMIC_POWER
-    // The dynamic power thresholds are relative to the rx sensitivity, so need to be updated
-    dynamicPowerRSSIIncreaseThreshold = RFperf->RXsensitivity + DYN_POWER_INCREASE_MARGIN;
-    dynamicPowerRSSIDecreaseThreshold = dynamicPowerRSSIIncreaseThreshold + DYN_POWER_DECREASE_MARGIN;
-#endif
+// #ifdef USE_DYNAMIC_POWER
+//     // The dynamic power thresholds are relative to the rx sensitivity, so need to be updated
+//     dynamicPowerRSSIIncreaseThreshold = RFperf->RXsensitivity + DYN_POWER_INCREASE_MARGIN;
+//     dynamicPowerRSSIDecreaseThreshold = dynamicPowerRSSIIncreaseThreshold + DYN_POWER_DECREASE_MARGIN;
+// #endif
 
     // if (UpdateRFparamReq)
     //    UpdateRFparamReq = false;
@@ -833,7 +861,9 @@ void lostConnection()
     alreadyFHSS = false;
     // LED = false; // Make first LED cycle turn it on
 
-    // XXX is this guaranteed to complete?
+    // XXX is this guaranteed to complete? 
+    // At the moment it can hang. Need to make sure that tock() runs at a higher priority than whatever calls this function.
+    // This only gets called from the event loop which should be running at min priority, so how does this hang?
     printf("waiting for timer sync\n");fflush(stdout);
     while(micros() - pfdLoop.getIntEventTime() > 250); // time it just after the tock()
     HwTimer::stop();
@@ -998,7 +1028,7 @@ void app_main()
 {
     printf("ESP32-C3 FreeRTOS RX\n");
 
-    setupPWM();
+    setupPWM(); // does nothing if pwm not being used
 
     // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
     HwTimer::init();
@@ -1052,7 +1082,7 @@ void app_main()
     // hwTimer.init();
     // hwTimer.stop();
 
-    printf("pwm6 struct size is %d\n", sizeof(Pwm6Payload_t));
+    // printf("pwm6 struct size is %d\n", sizeof(Pwm6Payload_t));
 
     unsigned long lastDebug = 0;
 

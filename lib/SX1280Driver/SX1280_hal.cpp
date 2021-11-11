@@ -14,22 +14,19 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 Maintainer: Miguel Luis, Gregory Cristian and Matthieu Verdy
 
 Modified and adapted by Alessandro Carcione for ELRS project 
+
 */
-
-// temporary hack to allow esp-C3 to compile until I port the radio libs
-#ifdef GD32
-
 
 #include "../../src/config.h"
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
 #include <stdio.h>
 // #include <SPI.h>
-#include "../../src/utils.h"
+// #include "../../src/utils.h"
 #include <string.h> // for memcpy
 
 extern "C" {
-#include "../../include/systick.h"
+// #include "../../include/systick.h"  // what's this for?
 }
 
 SX1280Hal *SX1280Hal::instance = nullptr;
@@ -51,26 +48,6 @@ void SX1280Hal::end()
     // detachInterrupt(GPIO_PIN_DIO1);
 }
 
-void SX1280Hal::init()
-{
-    // all pin/spi setup done in main.cpp
-}
-
-void  SX1280Hal::reset(void)
-{
-    gpio_bit_set(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(50);
-    gpio_bit_reset(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(100);
-    gpio_bit_set(RADIO_RESET_PORT, RADIO_RESET_PIN);
-    delay(50);
-
-    if (WaitOnBusy()) {
-        printf("WARNING SX1280 busy didn't go low\n\r");
-    } else {
-        printf("SX1280 Ready!\n\r");
-    }
-}
 
 void SX1280Hal::WriteCommand(const SX1280_RadioCommands_t command, const uint8_t val)
 {
@@ -78,10 +55,11 @@ void SX1280Hal::WriteCommand(const SX1280_RadioCommands_t command, const uint8_t
 
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, 2);
+    // spi1_transferBytes(buffer, 2);
+    spi->transfer(buffer, 2);
 }
 
-// TODO add a fastWrite command that just takes a buffer and size
+// TODO get rid of all uses and remove this function
 void SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uint8_t size)
 {
     uint8_t OutBuffer[size + 1];
@@ -91,19 +69,21 @@ void SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t *buffer, ui
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, size+1);
+    // spi1_transferBytes(OutBuffer, size+1);
+    spi->transfer(OutBuffer, size+1);
 }
 
 /** faster version of Writecommand.
- * The command is passed in the first byte of buffer
- * size includes the command
- * contents of buffer will be overwritten
+ * The command is passed in the first byte of the buffer.
+ * size includes the command.
+ * Contents of buffer will be overwritten
 */
 void SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
 {
     WaitOnBusy();
 
-    spi1_transferBytes(buffer, size);
+    // spi1_transferBytes(buffer, size);
+    spi->transfer(buffer, size);
 }
 
 
@@ -119,7 +99,8 @@ void SX1280Hal::ReadCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uin
         OutBuffer[0] = (uint8_t)command;
         OutBuffer[1] = 0x00;
         OutBuffer[2] = 0x00;
-        spi1_transferBytes(OutBuffer, 3);
+        // spi1_transferBytes(OutBuffer, 3);
+        spi->transfer(OutBuffer, 3);
         buffer[0] = OutBuffer[0];
     }
     else
@@ -127,7 +108,8 @@ void SX1280Hal::ReadCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uin
         OutBuffer[0] = (uint8_t)command;
         OutBuffer[1] = 0x00;
         memcpy(OutBuffer + 2, buffer, size);
-        spi1_transferBytes(OutBuffer, sizeof(OutBuffer));
+        // spi1_transferBytes(OutBuffer, sizeof(OutBuffer));
+        spi->transfer(OutBuffer, sizeof(OutBuffer));
         memcpy(buffer, OutBuffer + 2, size);
     }
 }
@@ -143,9 +125,9 @@ void  SX1280Hal::WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size)
     memcpy(OutBuffer + 3, buffer, size);
 
     WaitOnBusy();
-    // digitalWrite(GPIO_PIN_NSS, LOW);
-    spi1_transferBytes(OutBuffer, (uint8_t)sizeof(OutBuffer));
-    // digitalWrite(GPIO_PIN_NSS, HIGH);
+
+    // spi1_transferBytes(OutBuffer, (uint8_t)sizeof(OutBuffer));
+    spi->transfer(OutBuffer, (uint8_t)sizeof(OutBuffer));
 }
 
 void  SX1280Hal::WriteRegister(uint16_t address, uint8_t value)
@@ -165,12 +147,10 @@ void  SX1280Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
     memcpy(OutBuffer + 4, buffer, size);
 
     WaitOnBusy();
-    // digitalWrite(GPIO_PIN_NSS, LOW);
 
-    spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    // spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    spi->transfer(OutBuffer, uint8_t(sizeof(OutBuffer)));
     memcpy(buffer, OutBuffer + 4, size);
-
-    // digitalWrite(GPIO_PIN_NSS, HIGH);
 }
 
 uint8_t  SX1280Hal::ReadRegister(uint16_t address)
@@ -182,13 +162,6 @@ uint8_t  SX1280Hal::ReadRegister(uint16_t address)
 
 void  SX1280Hal::WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size)
 {
-    // uint8_t localbuf[size];
-
-    // for (int i = 0; i < size; i++) // todo check if this is the right want to handle volatiles
-    // {
-    //     localbuf[i] = buffer[i];
-    // }
-
     uint8_t OutBuffer[size + 2];
 
     OutBuffer[0] = SX1280_RADIO_WRITE_BUFFER;
@@ -198,9 +171,8 @@ void  SX1280Hal::WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t s
 
     WaitOnBusy();
 
-    // digitalWrite(GPIO_PIN_NSS, LOW);
-    spi1_transferBytes(OutBuffer, (uint8_t)sizeof(OutBuffer));
-    // digitalWrite(GPIO_PIN_NSS, HIGH);
+    // spi1_transferBytes(OutBuffer, (uint8_t)sizeof(OutBuffer));
+    spi->transfer(OutBuffer, (uint8_t)sizeof(OutBuffer));
 }
 
 void  SX1280Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size)
@@ -215,30 +187,12 @@ void  SX1280Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t si
 
     WaitOnBusy();
 
-    spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    // spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    spi->transfer(OutBuffer, uint8_t(sizeof(OutBuffer)));
 
     memcpy((void *)buffer, OutBuffer + 3, size);
 }
 
-/** Wait for the SX1280 busy flag to be low
- * Returns true if we reach the timeout before busy goes low
- * TODO pass in the timeout
- */
-bool  SX1280Hal::WaitOnBusy()
-{
-    // printf("%s \r\n", "waitOnBusy...");
-    const uint MAX_WAIT = 1000; // in us
-    const unsigned long t0 = micros();
-    while (gpio_input_bit_get(RADIO_BUSY_PORT, RADIO_BUSY_PIN) == SET)
-    {
-        if (micros() > (t0 + MAX_WAIT)) {
-            printf("busy timeout \n");
-            return true;
-        }
-    }
-    // printf("waitOnBusy done in %lu us\n", micros()-t0);
-    return false;
-}
 
 // void  SX1280Hal::dioISR()
 // {
@@ -254,38 +208,6 @@ bool  SX1280Hal::WaitOnBusy()
 //     }
 // }
 
-void  SX1280Hal::TXenable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_reset(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_set(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
-
-void  SX1280Hal::RXenable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_set(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_reset(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
-
-void  SX1280Hal::TXRXdisable()
-{
-    #if defined(RADIO_RXEN_PIN)
-    gpio_bit_reset(RADIO_RXEN_PORT, RADIO_RXEN_PIN);
-    #endif
-
-    #if defined(RADIO_TXEN_PIN)
-    gpio_bit_reset(RADIO_TXEN_PORT, RADIO_TXEN_PIN);
-    #endif
-}
 
 // void  SX1280Hal::setIRQassignment(SX1280_InterruptAssignment_ newInterruptAssignment)
 // {
@@ -306,5 +228,3 @@ void  SX1280Hal::TXRXdisable()
 //     }
 //     //}
 // }
-
-#endif // GD32

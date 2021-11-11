@@ -11,6 +11,7 @@
 #include "ElrsSPI.h"
 #include "OTA.h"
 #include "LowPassFilter.h"
+#include "crsf_protocol.h"
 
 // Next:
 //    UI improvements
@@ -453,14 +454,14 @@ void EXTI5_9_IRQHandler(void)
       exti_interrupt_flag_clear(EXTI_8);
 
  
-      // PING PONG test code
-      // XXX Need to check for timeout, increment a counter, set the readyTo flag if this is the transmitter
+      // only using timeouts on sx1262 for now
+      #ifdef RADIO_E22
       uint16_t irqS = radio.GetIrqStatus();
-
       if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) {
          // printf("timeout\n\r");
          radio.ClearIrqStatus(SX1262_IRQ_RX_TX_TIMEOUT);
          timeoutCounter++;
+         // PING PONG test code
          // if (testModeIsTransmitter) {
          //    readyToSend = true;
          // } else {
@@ -469,6 +470,7 @@ void EXTI5_9_IRQHandler(void)
          // }
          return;
       }
+      #endif // RADIO_E22
 
       // printf("RXdone!\n\r");
 
@@ -528,8 +530,6 @@ void EXTI5_9_IRQHandler(void)
       // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
       // radio.GetStatus();
 
-      uint16_t irqS = radio.GetIrqStatus();
-
       // printf("irqS %04X", irqS);
       // if (irqS & SX1262_IRQ_TX_DONE) printf(" TX_DONE");
       // if (irqS & SX1262_IRQ_RX_DONE) printf(" RX_DONE");
@@ -543,9 +543,14 @@ void EXTI5_9_IRQHandler(void)
       // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) printf(" RXTX TIMEOUT");
       // printf("\n\r");
 
+      #ifdef RADIO_E22
+      uint16_t irqS = radio.GetIrqStatus();
       if (irqS & SX1262_IRQ_TX_DONE) {
          TXdoneISR();
       }
+      #else
+      TXdoneISR();
+      #endif
    }
 }
 
@@ -2130,12 +2135,11 @@ int main(void)
    // need to do this before calling checkForChargeMode()
    adc_software_trigger_enable(ADC1, ADC_REGULAR_CHANNEL);
 
-// prototype setup needs to skup startup checks
-#ifndef LONGAN_NANO
+   // prototype setup needs to skip startup checks
+   #ifndef LONGAN_NANO
    checkForChargeMode();
-
    runSafetyChecks();
-#endif
+   #endif
 
    LCD_Clear(DARKBLUE);
    BACK_COLOR = DARKBLUE;
@@ -2190,14 +2194,15 @@ int main(void)
    updateDynPowerFilter();
    #endif
 
+   #ifdef RADIO_E22
    delay(50);
    printf("setting FS\n\r");
    radio.SetMode(SX1262_MODE_FS);
    delay(50);
    radio.GetStatus();
+   #endif // RADIO_E22
 
-
-#ifdef PING_PONG
+   #ifdef PING_PONG
    // XXX For testing, just go into a continuous loop here
    
    // fill the packet with some non-zero values
@@ -2242,7 +2247,7 @@ int main(void)
       // delay(5);
       // radio.GetStatus();
    }
-#endif // PING_PONG
+   #endif // PING_PONG
 
    // enable the timer for the tx interrupt
    timer_enable(TIMER2);

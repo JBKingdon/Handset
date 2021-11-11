@@ -8,10 +8,8 @@
 #include "freertos/queue.h"
 #include "driver/timer.h"
 
-
 // TODO this doesn't quite work, you can't call setInterval before init, and mustn't call init multiple times
 // It feels like a non-static impl with a constructor would be better
-
 
 
 #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
@@ -47,7 +45,7 @@ extern unsigned long micros();
 
 void HwTimer::timer_task(void* arg)
 {
-    unsigned long tLast = 0;
+    // unsigned long tLast = 0;
     uint32_t dummyData;
     for(;;) {
         // check if this is getting called too often
@@ -101,7 +99,7 @@ void HwTimer::init()
     if (!running)
     {
         s_timer_queue = xQueueCreate(2, 0);
-        xTaskCreate(timer_task, "timer_task", 2048, NULL, 15, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
+        xTaskCreate(timer_task, "timer_task", 2048, NULL, 20, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
 
         // timer_init(interval >> 1); // Run at twice the commanded frequency for tick/tock interleave
 

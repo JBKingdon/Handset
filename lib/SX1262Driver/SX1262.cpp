@@ -536,11 +536,13 @@ void ICACHE_RAM_ATTR SX1262Driver::Config(const SX1262_RadioLoRaBandwidths_t bw,
 */
 uint16_t SX1262Driver::convertPowerToMw(int power)
 {
+    uint16_t mw = 0; // default value if the radio module isn't recognised
+
     // convert from dBm to mW
     #if defined(RADIO_E22)
-    uint16_t mw = pow10(float(power)/10.0f);
+    mw = pow10(float(power)/10.0f);
     #else
-    #error("must define a radio module")
+    printf("unknown radio module\n\r");
     #endif
 
     return mw;

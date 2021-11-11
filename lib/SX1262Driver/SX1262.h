@@ -89,7 +89,7 @@ public:
     
     ////////////////Configuration Functions/////////////
     SX1262Driver();
-    static SX1262Driver *instance;
+    static SX1262Driver *instance;  // XXX get rid of this
     void Begin();
     void End();
     void SetMode(SX1262_RadioOperatingModes_t OPmode);

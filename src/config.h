@@ -4,6 +4,7 @@
 
 // which board are we using
 
+// XXX moved to platformio.ini
 // #define T_DISPLAY
 // #define LONGAN_NANO
 // #define PCB_V1_0
@@ -154,11 +155,19 @@
 #define RADIO_BUSY_PORT GPIOA
 #define RADIO_BUSY_PIN  GPIO_PIN_12
 
+#define RADIO_BUSY  PA12
+
+
 #define RADIO_RESET_PORT GPIOA
 #define RADIO_RESET_PIN GPIO_PIN_11
 
+#define RADIO_RESET PA11
+
+
 #define RADIO_RXEN_PORT GPIOB
 #define RADIO_RXEN_PIN GPIO_PIN_11
+
+
 
 #define RADIO_TXEN_PORT GPIOA
 #define RADIO_TXEN_PIN GPIO_PIN_8
@@ -202,7 +211,12 @@
 
 #else
 
-#define CRSF_TX_PIN     GPIO_NUM_9  // need to make conditional with a #def
+// #define CRSF_TX_PIN     GPIO_NUM_9  // need to make conditional with a #def
+
+// Test with gpio 12 and 13 which should be the unused qio spi pins
+// gpio 12 works.
+// Can't test 13, it's not mapped to a pin on the devboard.
+#define CRSF_TX_PIN     GPIO_NUM_12  // need to make conditional with a #def
 
 #endif // USE_PWM6
 
@@ -218,8 +232,12 @@
 #define RADIO_NSS_PORT GPIOB
 #define RADIO_NSS_PIN GPIO_PIN_12
 
+#define RADIO_NSS PB12
+
+
 #define RADIO_DIO1_PORT GPIOB
 #define RADIO_DIO1_PIN GPIO_PIN_8
+
 
 #define RADIO_DIO2_PORT GPIOB
 #define RADIO_DIO2_PIN GPIO_PIN_9

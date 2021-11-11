@@ -11,14 +11,9 @@
 #error "Can't use hires data in compatibility mode (yet)"
 #endif
 
-// #if defined(USE_HIRES_DATA)
-// #define OTA_PACKET_LENGTH 9
-// #else
-// #define OTA_PACKET_LENGTH 8
-// #endif // USE_HIRES_DATA
-
-
-#define ICACHE_RAM_ATTR
+#ifdef ESPC3
+#define ICACHE_RAM_ATTR IRAM_ATTR
+#endif
 
 void ICACHE_RAM_ATTR TXnbISR();
 
@@ -50,7 +45,7 @@ public:
     /////////////////////////////
 
     ///////////Radio Variables////////
-    volatile uint8_t TXdataBuffer[256];
+    volatile uint8_t TXdataBuffer[256]; // XXX get rid of these
     volatile uint8_t RXdataBuffer[256];
 
     uint8_t TXbuffLen;
@@ -89,7 +84,7 @@ public:
 
     ////////////////Configuration Functions/////////////
     SX1280Driver();
-    static SX1280Driver *instance;
+    static SX1280Driver *instance;  // XXX get rid of this
     void Begin();
     void End();
     void SetMode(SX1280_RadioOperatingModes_t OPmode);
@@ -103,6 +98,7 @@ public:
     void ICACHE_RAM_ATTR SetFrequency(uint32_t freq);
     void ICACHE_RAM_ATTR SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr);
     void SetOutputPower(int8_t power);
+    void setRxTimeout(uint32_t t);
 
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();

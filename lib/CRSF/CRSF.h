@@ -114,6 +114,9 @@ public:
     static volatile crsfPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
     static volatile crsf_sensor_battery_s TLMbattSensor;
 
+    static volatile crsf_elrs_channels_hiRes_s PackedHiResRCdataOut;
+
+
     /// UART Handling ///
     static uint32_t GoodPktsCountResult; // need to latch the results
     static uint32_t BadPktsCountResult; // need to latch the results

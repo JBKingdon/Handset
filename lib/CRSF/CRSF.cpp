@@ -9,7 +9,7 @@
 // #include "../../lib/FIFO/FIFO.h"
 // #include "telemetry_protocol.h"
 
-#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
+// #define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
 
 #ifdef PLATFORM_ESP32
 HardwareSerial SerialPort(1);
@@ -63,6 +63,7 @@ uint8_t CRSF::nextSwitchIndex = 0; // for round-robin sequential switches
 volatile uint8_t CRSF::ParameterUpdateData[2] = {0};
 
 volatile crsf_channels_s CRSF::PackedRCdataOut;
+volatile crsf_elrs_channels_hiRes_s CRSF::PackedHiResRCdataOut;
 volatile crsfPayloadLinkstatistics_s CRSF::LinkStatistics;
 volatile crsf_sensor_battery_s CRSF::TLMbattSensor;
 

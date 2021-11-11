@@ -229,6 +229,21 @@ typedef struct crsf_channels_s
     unsigned ch15 : 11;
 } PACKED crsf_channels_t;
 
+// hires packet for carrying 12 bit gimbal data
+typedef struct crsf_elrs_channels_hiRes_s {
+    // 56 bits of data (12 bits per channel * 4 channels + 2 bits per switch * 4 switches) = 7 bytes.
+    unsigned int chan0 : 12;
+    unsigned int chan1 : 12;
+    unsigned int chan2 : 12;
+    unsigned int chan3 : 12;
+    unsigned int aux1 : 2;
+    unsigned int aux2 : 2;
+    unsigned int aux3 : 2;
+    unsigned int aux4 : 2;
+} PACKED crsf_elrs_channels_hiRes_t;
+
+
+
 /**
  * Define the shape of a standard packet
  * A 'standard' header followed by the packed channels
