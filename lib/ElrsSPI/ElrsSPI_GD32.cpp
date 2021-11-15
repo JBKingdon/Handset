@@ -15,9 +15,10 @@ extern "C" {
 }
 
 #include "../../src/config_constants.h"
+#include "../../src/config.h"
 
 // need a header for this, and probably a better place for the impl
-uint32_t PORT(uint32_t compositeGPIOid);
+uint32_t PORT(uint32_t compositeGPIOid, const char* caller);
 
 
 /** Constructor
@@ -26,16 +27,31 @@ uint32_t PORT(uint32_t compositeGPIOid);
 ElrsSPI::ElrsSPI(uint32_t _pinMosi, uint32_t _pinMiso, uint32_t _pinSCK, uint32_t _pinCSS) : 
     pinMosi{_pinMosi}, pinMiso{_pinMiso}, pinSCK{_pinSCK}, pinCSS{_pinCSS}
 {
-    // printf("pinCSS is %08lX\n\r", pinCSS);
+    printf("pinCSS is %08lX\n\r", pinCSS);
 } 
+
+/** alternative constructor for dual modems - not yet implemented
+ */
+ElrsSPI::ElrsSPI(uint32_t pinCSS2)
+{
+    printf("dual modem not supported for GD32");
+    while(true) {}
+}
+
+
+
+uint32_t safePORT(uint32_t compositePin)
+{
+    return (compositePin < 3) ? PORT(compositePin,"safePORT") : -1;
+}
 
 void ElrsSPI::debug()
 {
     printf("pinMosi %lX:%u, pinMiso %lX:%u, pinSCK %lX:%u, pinCSS %lX:%u\n", 
-        PORT(pinMosi), PIN(pinMosi), 
-        PORT(pinMiso), PIN(pinMiso),
-        PORT(pinSCK), PIN(pinSCK),
-        PORT(pinCSS), PIN(pinCSS)
+        safePORT(pinMosi), PIN(pinMosi), 
+        safePORT(pinMiso), PIN(pinMiso),
+        safePORT(pinSCK), PIN(pinSCK),
+        safePORT(pinCSS), PIN(pinCSS)
     );
 }
 
@@ -46,7 +62,9 @@ int ElrsSPI::init()
 {
     spi_parameter_struct spi_init_struct;
 
-    gpio_bit_set(PORT(pinCSS), PIN(pinCSS)); // set NSS high
+    printf("init: pinCSS is %08lX\n\r", pinCSS);
+
+    gpio_bit_set(PORT(pinCSS, "spi::init"), PIN(pinCSS)); // set NSS high
     spi_struct_para_init(&spi_init_struct);
 
     /* SPI0 parameter config */
@@ -75,11 +93,18 @@ int ElrsSPI::init()
 /**
  * Send nBytes over SPI. Return data will overwrite the original contents
  * of buffer.
+ * @return 0 on success, -1 on failure
  */
-void ElrsSPI::transfer(uint8_t *buffer, const uint8_t nBytes)
+int8_t ElrsSPI::transfer(uint8_t *buffer, const uint8_t nBytes)
 {
+    // printf("transfer: pinCSS is %08lX\n\r", pinCSS);
 
-    gpio_bit_reset(PORT(pinCSS), PIN(pinCSS)); // set NSS low
+    // tx is failing with a bad value for pinCSS being passed from here to PORT().
+    // suggests that something is calling transfer before this instance has been properly setup, but how?
+    // Try working around it for now with the constant for pinCSS
+
+    // gpio_bit_reset(PORT(pinCSS, "spi::transfer"), PIN(pinCSS)); // set NSS low
+    gpio_bit_reset(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS low
 
     for(int i=0; i<nBytes; i++) {
         while (0 == spi_i2s_flag_get(SPI1, SPI_FLAG_TBE))
@@ -93,7 +118,11 @@ void ElrsSPI::transfer(uint8_t *buffer, const uint8_t nBytes)
         buffer[i] = spi_i2s_data_receive(SPI1);
     }
 
-    gpio_bit_set(PORT(pinCSS), PIN(pinCSS)); // set NSS high
+    // gpio_bit_set(PORT(pinCSS, "spi::transfer"), PIN(pinCSS)); // set NSS high
+    gpio_bit_set(RADIO_NSS_PORT, RADIO_NSS_PIN); // set NSS high
+
+    // XXX add error checking and return code
+    return 0;
 
 }
 

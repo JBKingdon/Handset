@@ -28,6 +28,7 @@ Modified and adapted by Alessandro Carcione for ELRS project
 // void (*SX1280Hal::TXdoneCallback)() = &nullCallback;
 // void (*SX1280Hal::RXdoneCallback)() = &nullCallback;
 
+
 SX1280Hal::SX1280Hal()
 {
 }
@@ -103,6 +104,7 @@ void SX1280Hal::ReadCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uin
         memcpy(buffer, OutBuffer + 2, size);
     }
 }
+
 
 void  SX1280Hal::WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 {

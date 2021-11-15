@@ -139,6 +139,7 @@ void HwTimer::stop()
         timer_pause(TIMER_GROUP_0, TIMER_0);
         // timer1_detachInterrupt();
         running = false;
+        timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
     }
 }
 

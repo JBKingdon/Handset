@@ -29,12 +29,14 @@ SX1280Hal_GD32::SX1280Hal_GD32()
 
 void SX1280Hal_GD32::init()
 {
+    printf("sx1280hal gd32 init start\n\r");
     // The mosi, miso and sck pins are hard coded and setup in main(), but we
     // need to pass in nss for use by the library
     spi = new ElrsSPI(0, 0, 0, RADIO_NSS);
 
     // spi->init(); // the code in init is currently duplicated in main for the tx
     // spi->debug();
+    printf("sx1280hal gd32 init end\n\r");
 }
 
 void  SX1280Hal_GD32::reset(void)
@@ -60,7 +62,7 @@ void  SX1280Hal_GD32::reset(void)
 bool  SX1280Hal_GD32::WaitOnBusy()
 {
     // printf("%s \r\n", "waitOnBusy...");
-    const uint MAX_WAIT = 1000; // in us
+    const uint32_t MAX_WAIT = 1000; // in us
     const unsigned long t0 = micros();
     while (gpio_input_bit_get(RADIO_BUSY_PORT, RADIO_BUSY_PIN) == SET)
     {

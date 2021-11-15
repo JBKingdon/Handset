@@ -13,11 +13,13 @@
 class SX1280Hal_C3 : public SX1280Hal
 {
 private:
-
+    
 protected:
 
 public:
     SX1280Hal_C3();
+    SX1280Hal_C3(uint32_t cssPin);
+
 
     virtual void init() override;
     // void end();

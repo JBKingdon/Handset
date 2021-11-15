@@ -14,14 +14,16 @@
 #else
 #include "driver/spi_master.h"
 #define ICACHE_RAM_ATTR IRAM_ATTR
-#endif // GD32
+#endif // GD32 vs C3
 
 
 class ElrsSPI
 {
     private:
 
-    uint32_t pinMosi, pinMiso, pinSCK, pinCSS;
+    uint32_t pinMosi, pinMiso, pinSCK, pinCSS;  // XXX not sure these are actually needed
+
+    bool isPrimary;
 
     #ifndef GD32
     spi_device_handle_t spiHandle;
@@ -30,8 +32,11 @@ class ElrsSPI
     public:
 
     ElrsSPI(uint32_t pinMosi, uint32_t pinMiso, uint32_t pinSCK, uint32_t pinCSS);
+    ElrsSPI(uint32_t pinCSS2);
+
     int init();
-    void ICACHE_RAM_ATTR transfer(uint8_t *buffer, const uint8_t nBytes);
+    // void addSecondDevice(uint32_t pinCSS2);
+    int8_t ICACHE_RAM_ATTR transfer(uint8_t *buffer, const uint8_t nBytes);
 
     // print to stdout 
     void debug();

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h> // for abort()
 #include "config.h"
 #include "utils.h"
 #include "SX1280.h"
@@ -566,22 +567,23 @@ void EXTI5_9_IRQHandler(void)
 
 /** extract the gpio port value from a composite port/pin value
  */
-uint32_t PORT(uint32_t compositeGPIOid) {
-    uint32_t p = compositeGPIOid >> 16;
-    switch (p) {
-        case PORTA:
-            return GPIOA;
-        case PORTB:
-            return GPIOB;
-        case PORTC:
-            return GPIOC;
-        default:
-            printf("XXX bad port id %lu\n\r", p);
-            while(true);
-    }
+uint32_t PORT(uint32_t compositeGPIOid, const char * caller) {
+   uint32_t p = compositeGPIOid >> 16;
+   switch (p) {
+      case PORTA:
+         return GPIOA;
+      case PORTB:
+         return GPIOB;
+      case PORTC:
+         return GPIOC;
+      default:
+         printf("XXX bad port id %08lX, %08lX caller %s\n\r", p, compositeGPIOid, caller);
+         abort();
+         while(true);
+   }
 
-    // can't get here, but suppresses compiler warning
-    return 0;
+   // can't get here, but suppresses compiler warning
+   return 0;
 }
 
 
@@ -594,9 +596,9 @@ uint32_t PORT(uint32_t compositeGPIOid) {
 void beep(uint32_t duration)
 {
    #ifdef GPIO_BUZZER
-   gpio_bit_set(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+   gpio_bit_set(PORT(GPIO_BUZZER, "beep"), PIN(GPIO_BUZZER));
    delay(duration);
-   gpio_bit_reset(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+   gpio_bit_reset(PORT(GPIO_BUZZER, "beep"), PIN(GPIO_BUZZER));
    #endif
 }
 
@@ -630,7 +632,7 @@ bool handleBeeps(uint16_t interval, uint16_t duration, uint32_t currentTime)
    if (duration == 0) {
       // make sure the beeper is off
       if (beeperActive) {
-         gpio_bit_reset(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+         gpio_bit_reset(PORT(GPIO_BUZZER, "handleBeeps"), PIN(GPIO_BUZZER));
          beeperActive = false;
       }
       return false;
@@ -642,7 +644,7 @@ bool handleBeeps(uint16_t interval, uint16_t duration, uint32_t currentTime)
       if (!beeperActive) {
          // start the beeper
          beepStartTime = currentTime;
-         gpio_bit_set(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+         gpio_bit_set(PORT(GPIO_BUZZER, "handleBeeps"), PIN(GPIO_BUZZER));
          beeperActive = true;
       }
       return true;
@@ -651,7 +653,7 @@ bool handleBeeps(uint16_t interval, uint16_t duration, uint32_t currentTime)
    if (currentTime > (beepStartTime + duration)) {
       if (beeperActive) {
          // stop the beeper
-         gpio_bit_reset(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+         gpio_bit_reset(PORT(GPIO_BUZZER, "handleBeeps"), PIN(GPIO_BUZZER));
          beeperActive = false;
       }
       return false;
@@ -1317,24 +1319,24 @@ void setup() {
    // pins for the rc switches
 
    #ifdef SWA_HIGH
-   gpio_init(PORT(SWA_HIGH), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWA_HIGH));
-   gpio_init(PORT(SWA_LOW), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWA_LOW));
+   gpio_init(PORT(SWA_HIGH, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWA_HIGH));
+   gpio_init(PORT(SWA_LOW, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWA_LOW));
 
-   gpio_init(PORT(SWB_HIGH), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWB_HIGH));
-   gpio_init(PORT(SWB_LOW), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWB_LOW));
+   gpio_init(PORT(SWB_HIGH, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWB_HIGH));
+   gpio_init(PORT(SWB_LOW, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWB_LOW));
 
-   gpio_init(PORT(SWC_HIGH), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWC_HIGH));
-   gpio_init(PORT(SWC_LOW), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWC_LOW));
+   gpio_init(PORT(SWC_HIGH, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWC_HIGH));
+   gpio_init(PORT(SWC_LOW, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWC_LOW));
 
-   gpio_init(PORT(SWD_HIGH), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWD_HIGH));
-   gpio_init(PORT(SWD_LOW), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWD_LOW));
+   gpio_init(PORT(SWD_HIGH, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWD_HIGH));
+   gpio_init(PORT(SWD_LOW, "setupSW*"), GPIO_MODE_IPU, GPIO_OSPEED_2MHZ, PIN(SWD_LOW));
    #else
    #error "Switch defs needed"
    #endif
 
    #ifdef GPIO_BUZZER
-   gpio_init(PORT(GPIO_BUZZER), GPIO_MODE_OUT_PP, GPIO_OSPEED_50MHZ, PIN(GPIO_BUZZER));
-   gpio_bit_reset(PORT(GPIO_BUZZER), PIN(GPIO_BUZZER));
+   gpio_init(PORT(GPIO_BUZZER, "setupBUZZ"), GPIO_MODE_OUT_PP, GPIO_OSPEED_50MHZ, PIN(GPIO_BUZZER));
+   gpio_bit_reset(PORT(GPIO_BUZZER, "setupBUZZ"), PIN(GPIO_BUZZER));
    #endif
 
    uart_config();
@@ -1712,8 +1714,8 @@ void SetRFLinkRate(uint8_t index)
  */
 uint32_t getSwitchState(uint32_t pin_high, uint32_t pin_low)
 {
-   uint8_t hi = gpio_input_bit_get(PORT(pin_high), PIN(pin_high));
-   uint8_t low = gpio_input_bit_get(PORT(pin_low), PIN(pin_low));
+   uint8_t hi = gpio_input_bit_get(PORT(pin_high, "getSwitchState"), PIN(pin_high));
+   uint8_t low = gpio_input_bit_get(PORT(pin_low, "getSwitchState"), PIN(pin_low));
    uint32_t s = SWITCH_MID;   // if neither pin is pulled low it's in the middle position
    if (hi == 0) {       // switch positions are active low
       s = SWITCH_HIGH;
@@ -2107,7 +2109,11 @@ int main(void)
    // uint32_t t0, t1=0;
    // unsigned int nSamples = 0;
 
+   printf("calling setup\n\r");
+
    setup();
+
+   printf("setup complete\n\r");
 
    Lcd_Init();
    LCD_Clear(DARKBLUE);
@@ -2185,8 +2191,8 @@ int main(void)
    }
 
    // XXX testing
-   printf("overriding linkRateIndex\n\r");
-   linkRateIndex = 0;
+   // printf("overriding linkRateIndex\n\r");
+   // linkRateIndex = 0;
 
    SetRFLinkRate(linkRateIndex);
 

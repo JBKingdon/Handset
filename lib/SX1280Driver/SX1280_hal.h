@@ -27,12 +27,6 @@ And again by James Kingdon 2021 for ELRS project
 
 #include "ElrsSPI.h"
 
-enum SX1280_InterruptAssignment_
-{
-    SX1280_INTERRUPT_NONE,
-    SX1280_INTERRUPT_RX_DONE,
-    SX1280_INTERRUPT_TX_DONE
-};
 
 enum SX1280_BusyState_
 {
@@ -44,17 +38,20 @@ class SX1280Hal
 {
 
 private:
-    // volatile SX1280_InterruptAssignment_ InterruptAssignment = SX1280_INTERRUPT_NONE;
     //SX1280_BusyState_ BusyState = SX1280_NOT_BUSY;
 
 protected:
     ElrsSPI *spi;   // Wrapper for using SPI, specialised for different MCUs
+    bool isSecondRadio; // this is ugly. Get rid of it and make the code more symmetric
+
 
 public:
     SX1280Hal();
 
     void end();
     // void SetSpiSpeed(uint32_t spiSpeed);
+
+    ElrsSPI * getSPI() { return spi; }
 
     void ICACHE_RAM_ATTR WriteCommand(SX1280_RadioCommands_t opcode, uint8_t *buffer, uint8_t size);
     void ICACHE_RAM_ATTR fastWriteCommand(uint8_t *buffer, uint8_t size);
