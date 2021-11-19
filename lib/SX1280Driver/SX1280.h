@@ -86,6 +86,11 @@ public:
     SX1280Driver();
     SX1280Driver(const uint32_t cssPin);
 
+    void hardwareInit();
+    void reset();
+
+    void checkVersion();
+
     void Begin();
     void End();
     void SetMode(SX1280_RadioOperatingModes_t OPmode);

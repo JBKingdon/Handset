@@ -133,7 +133,7 @@ typedef struct expresslrs_mod_settings_s
 #define RATE_DEFAULT 0
 #else
 
-#ifdef USE_HIRES_DATA
+#if defined(USE_HIRES_DATA) || 1
 #define RATE_MAX 4  // actually the number of rates, so the max value is RATE_MAX-1
 #define RATE_DEFAULT 1
 #else

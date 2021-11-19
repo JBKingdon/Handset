@@ -9,8 +9,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "freertos/task.h"
+
 #include "freertos/FreeRTOS.h"
 #include "driver/spi_master.h"
+
+#include "../../src/config.h"
+#include "../../src/utils.h"
 
 
 ElrsSPI::ElrsSPI(uint32_t _pinMosi, uint32_t _pinMiso, uint32_t _pinSCK, uint32_t _pinCSS) : 
@@ -30,6 +35,86 @@ void ElrsSPI::debug()
 {
     printf("pinMosi %u, pinMiso %u, pinSCK %u, pinCSS %u\n", pinMosi, pinMiso, pinSCK, pinCSS);
 }
+
+
+/** Perform a special reset sequence to try and get around the
+ * limitations of having two sx1280 with a single reset line.
+ * 
+ * This will be called after setting up the bus and primary device.
+ * 
+ * send the low pulse on the shared reset line,
+ * Assert the secondary CSS line
+ * send a single SPI transaction using the primary device.
+ * 
+ * Note that this is a terrible hack and will cause the MISO lines
+ * to fight if the 1280s reply with different values. A safety resistor
+ * would be a good idea.
+ * 
+ */
+void ElrsSPI::doubleReset()
+{
+    printf("doubleReset start\n");
+
+    // enable the secondary CS pin for output
+    gpio_reset_pin(RADIO2_NSS_PIN);
+    gpio_set_direction(RADIO2_NSS_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(RADIO2_NSS_PIN, 1);
+
+
+    // perform the reset
+    gpio_set_level(RADIO_RESET_PIN, 1);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+    gpio_set_level(RADIO_RESET_PIN, 0);    
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    gpio_set_level(RADIO_RESET_PIN, 1);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+
+    // wait for busy x 2
+
+    const unsigned int MAX_WAIT = 5000; // in us
+    unsigned long t0 = micros();
+
+    gpio_num_t busyPin = RADIO_BUSY_PIN;
+    
+    while (gpio_get_level(busyPin) == 1)
+    {
+        if (micros() > (t0 + MAX_WAIT)) {
+            printf("busy timeout on R1\n");
+        }
+    }
+
+    t0 = micros();
+    busyPin = RADIO2_BUSY_PIN;
+
+    while (gpio_get_level(busyPin) == 1)
+    {
+        if (micros() > (t0 + MAX_WAIT)) {
+            printf("busy timeout on R2\n");
+        }
+    }
+
+
+    // send the SPI command
+    int32_t tmp = 0;
+    uint8_t * buffer = (uint8_t*)&tmp;
+    buffer[0] = 0x03; // get packet type, length 3
+
+    // assert the secondary radio's CS pin
+    gpio_set_level(RADIO2_NSS_PIN, 0);
+
+    transfer(buffer, 3);
+
+    gpio_set_level(RADIO2_NSS_PIN, 1);
+
+    // reset the pin for later use
+    gpio_reset_pin(RADIO2_NSS_PIN);
+
+
+    printf("doubleReset end\n");
+}
+
+
+
 
 /**
  * Perform any setup required to use SPI
@@ -73,6 +158,10 @@ int ElrsSPI::init()
 
     ret=spi_bus_add_device(SPI2_HOST, &devcfg, &spiHandle);
     ESP_ERROR_CHECK(ret);
+
+    if (isPrimary) {
+        doubleReset();
+    }
 
     char const *spiType;
     if (isPrimary) {

@@ -1494,9 +1494,9 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
          (  (syncSpamCounter != 0 && (millis() - lastLinkRateChangeTime > 300)) ||  // if we're trying to notify the rx of changing packet rate, just do it, otherwise...
             (
                ((millis() - SyncPacketLastSent) > SyncInterval) && // ...has enough time passed?
-               (radio.currFreq == GetInitialFreq()) &&             // we're on the sync frequency
+               (radio.currFreq == GetInitialFreq())                // we're on the sync frequency
                // sync just after we changed freqs (helps with hwTimer.init() being in sync from the get go)
-               (NonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval == 1)
+               && (NonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval == 1)
             )
          )
       )
@@ -2156,6 +2156,9 @@ int main(void)
 
    // Try connecting to the radio
    radio.currFreq = GetInitialFreq();
+
+   // radio.hardwareInit();
+   // radio.reset();
    radio.Begin();
 
    #ifdef DISARM_POWER

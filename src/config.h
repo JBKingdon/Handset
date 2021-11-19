@@ -10,6 +10,10 @@
 // #define PCB_V1_0
 // #define RX_C3
 
+// Not sure where best to set this, but it uses a set of modes tuned for the fullD rx code
+// Which sounds like an unnecessary thing anyway, so try and get rid of this long term
+#define FULL_DIVERSITY_MODES
+
 
 #ifdef RADIO_E22
 
@@ -205,10 +209,11 @@
 
 #ifdef USE_SECOND_RADIO
 
-#define RADIO2_NSS_PIN  GPIO_NUM_1
-#define RADIO2_BUSY_PIN GPIO_NUM_9  // problematical pin, used for strapping
-#define RADIO2_DIO1_PIN GPIO_NUM_3
-#define RADIO2_DIO2_PIN GPIO_NUM_8  // problematical pin, used for strapping
+// #define RADIO2_RESET_PIN GPIO_NUM_8
+#define RADIO2_NSS_PIN   GPIO_NUM_1
+#define RADIO2_BUSY_PIN  GPIO_NUM_12
+#define RADIO2_DIO1_PIN  GPIO_NUM_3
+#define RADIO2_DIO2_PIN  GPIO_NUM_0
 
 #endif // USE_SECOND_RADIO
 
@@ -216,8 +221,8 @@
 
 #define PWM_CH1_PIN     GPIO_NUM_3
 #define PWM_CH2_PIN     GPIO_NUM_0
-#define PWM_CH3_PIN     GPIO_NUM_8
-#define PWM_CH4_PIN     GPIO_NUM_9
+#define PWM_CH3_PIN     GPIO_NUM_8  // strapping pin, should be ok for output
+#define PWM_CH4_PIN     GPIO_NUM_9  // problematical pin, used for strapping
 #define PWM_CH5_PIN     GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
 #define PWM_CH6_PIN     GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
 // #define PWM_CH5_PIN     -1 // GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
@@ -225,12 +230,8 @@
 
 #else // not using pwm
 
-// #define CRSF_TX_PIN     GPIO_NUM_9  // need to make conditional with a #def
-
-// Test with gpio 12 and 13 which should be the unused qio spi pins
-// gpio 12 works.
-// Can't test 13, it's not mapped to a pin on the devboard.
-#define CRSF_TX_PIN     GPIO_NUM_12  // need to make conditional with a #def
+#define CRSF_TX_PIN     GPIO_NUM_9
+#define LED2812_PIN     GPIO_NUM_8
 
 #endif // USE_PWM6
 

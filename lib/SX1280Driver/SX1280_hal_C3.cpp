@@ -90,6 +90,7 @@ void SX1280Hal_C3::init()
     }
 }
 
+// NB reset for double 1280 is hard-coded into the SPI class
 void SX1280Hal_C3::reset(void)
 {
     gpio_set_level(RADIO_RESET_PIN, 1);
@@ -100,9 +101,9 @@ void SX1280Hal_C3::reset(void)
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
     if (WaitOnBusy()) {
-        printf("WARNING SX1262 busy didn't go low after reset\n\r");
+        printf("WARNING SX1280 busy didn't go low after reset\n\r");
     } else {
-        printf("SX1262 Ready!\n\r");
+        printf("SX1280 Ready!\n\r");
     }
 
 }

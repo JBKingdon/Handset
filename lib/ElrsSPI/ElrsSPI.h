@@ -23,6 +23,9 @@ class ElrsSPI
 
     uint32_t pinMosi, pinMiso, pinSCK, pinCSS;  // XXX not sure these are actually needed
 
+    void doubleReset();
+
+
     bool isPrimary;
 
     #ifndef GD32

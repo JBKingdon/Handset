@@ -153,6 +153,10 @@ void HwTimer::resume()
     }
 }
 
+/** Set the interval between callbacks
+ * 
+ * @param newTimerInterval interval in us
+ */
 void HwTimer::setInterval(uint64_t newTimerInterval)
 {
     interval = newTimerInterval * HWTIMER_TICKS_PER_US;

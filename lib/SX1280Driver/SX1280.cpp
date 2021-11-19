@@ -136,23 +136,43 @@ void SX1280Driver::setupLora()
     #endif
 }
 
-void SX1280Driver::Begin()
+void SX1280Driver::hardwareInit()
 {
     hal->init();
+}
+
+void SX1280Driver::reset()
+{
+    hal->reset();
+}
+
+void SX1280Driver::checkVersion()
+{
+    uint16_t firmwareRev = (((hal->ReadRegister(REG_LR_FIRMWARE_VERSION_MSB)) << 8) | (hal->ReadRegister(REG_LR_FIRMWARE_VERSION_MSB + 1)));
+    printf("Firmware Revision: %u (%X)\n\r", firmwareRev, firmwareRev);
+    if (firmwareRev != 0xA9B7) {
+        printf("WARNING: firmware not the expected value of 0xA9B7\n\r");
+    }
+}
+
+
+void SX1280Driver::Begin()
+{
     // hal->TXdoneCallback = &SX1280Driver::TXnbISR;
     // hal->RXdoneCallback = &SX1280Driver::RXnbISR;
+    hardwareInit();
 
     // don't call reset() from the secondary or we wipe out the settings on the primary radio
-    if (isPrimary)
-    {
-        printf("reset\n\r");
-        hal->reset();
-    } else {
-        #ifdef ESPC3
-        // delay(50);
-        vTaskDelay(50);
-        #endif
-    }
+    // if (isPrimary)
+    // {
+    //     printf("reset moved to spi impl\n\r");
+    //     // hal->reset();
+    // } else {
+    //     #ifdef ESPC3
+    //     // delay(50);
+    //     vTaskDelay(50/portTICK_PERIOD_MS);
+    //     #endif
+    // }
 
     // expected value is 43447 (A9B7) (TODO add list of other good values as we see them)
     uint16_t firmwareRev = (((hal->ReadRegister(REG_LR_FIRMWARE_VERSION_MSB)) << 8) | (hal->ReadRegister(REG_LR_FIRMWARE_VERSION_MSB + 1)));

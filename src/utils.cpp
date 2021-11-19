@@ -96,25 +96,29 @@ unsigned long micros(void){
 
 #ifdef ESPC3
 
-#include <sys/time.h>
+// #include <sys/time.h>
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 
-
-unsigned long micros()
+// XXX should this return a 64 bit value?
+unsigned long IRAM_ATTR micros()
 {
-    struct timeval tv_now;
-    gettimeofday(&tv_now, NULL);
-    unsigned long time_us = (unsigned long)tv_now.tv_sec * 1000000L + (unsigned long)tv_now.tv_usec;
+    // struct timeval tv_now;
+    // gettimeofday(&tv_now, NULL);
+    // unsigned long time_us = (unsigned long)tv_now.tv_sec * 1000000L + (unsigned long)tv_now.tv_usec;
 
-    return time_us;
+    // return time_us;
+    return esp_timer_get_time();
 }
 
-unsigned long millis()
+unsigned long IRAM_ATTR millis()
 {
-    struct timeval tv_now;
-    gettimeofday(&tv_now, NULL);
-    int64_t time_ms = (int64_t)tv_now.tv_sec * 1000L + ((int64_t)tv_now.tv_usec / 1000);
+    // struct timeval tv_now;
+    // gettimeofday(&tv_now, NULL);
+    // const unsigned long time_ms = tv_now.tv_sec * 1000L + (tv_now.tv_usec / 1000);
 
-    return time_ms;
+    // return time_ms;
+    return esp_timer_get_time() / 1000;
 }
 
 
