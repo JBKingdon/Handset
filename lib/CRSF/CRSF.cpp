@@ -131,13 +131,6 @@ void CRSF::Begin()
     // Configure a temporary buffer for the incoming data
     // uint8_t *data = (uint8_t *) malloc(BUF_SIZE);
 
-    // while (1) {
-    //     // Read data from the UART
-    //     int len = uart_read_bytes(ECHO_UART_PORT_NUM, data, BUF_SIZE, 20 / portTICK_RATE_MS);
-    //     // Write data back to the UART
-    //     uart_write_bytes(ECHO_UART_PORT_NUM, (const char *) data, len);
-    // }
-
     #endif // CRSF_TX_PIN
 
 #if CRSF_TX_MODULE

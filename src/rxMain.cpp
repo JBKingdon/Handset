@@ -81,7 +81,8 @@ PFD pfdLoop;
 uint8_t ExpressLRS_nextAirRateIndex = 0;
 
 
-uint32_t timeoutCounter = 0;
+uint32_t timeout1Counter = 0;
+uint32_t timeout2Counter = 0;
 uint32_t mismatchCounter = 0;
 uint32_t totalPackets = 0;
 uint32_t totalRX1Events = 0;
@@ -89,7 +90,8 @@ uint32_t totalRX2Events = 0;
 uint32_t totalMatches = 0;
 uint32_t totalRX2 = 0;
 int32_t cumulativeRSSI = 0;
-uint32_t crcCounter = 0;
+uint32_t crc1Counter = 0;
+uint32_t crc2Counter = 0;
 uint32_t errCounter = 0;
 
 static xQueueHandle rx_evt_queue = NULL;
@@ -162,7 +164,7 @@ void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
 
 
 // XXX TODO move this somewhere sensible
-void delay(uint32_t millis)
+void ICACHE_RAM_ATTR delay(uint32_t millis)
 {
     if (millis < 30) {
         esp_rom_delay_us(millis*1000);
@@ -339,7 +341,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
         #if defined(PRINT_RX_SCOREBOARD)
             lastPacketCrcError = true;
         #endif
-        crcCounter++;
+        // crcCounter++;
         return 0;     // EARLY RETURN
     }
 
@@ -615,7 +617,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 }
 
 
-static void tx_task(void* arg)
+static void ICACHE_RAM_ATTR tx_task(void* arg)
 {
     uint8_t dummyData;
     for(;;) {
@@ -633,7 +635,7 @@ static void tx_task(void* arg)
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r1 timeout\n");
                 radio1.RXnb();
-                timeoutCounter++;
+                timeout1Counter++;
             } else {
                 printf("!!! tx_task irqs %04X\n", irqs);
             }
@@ -641,7 +643,7 @@ static void tx_task(void* arg)
     }
 }
 
-static void tx2_task(void* arg)
+static void ICACHE_RAM_ATTR tx2_task(void* arg)
 {
     uint8_t dummyData;
     for(;;) {
@@ -660,7 +662,7 @@ static void tx2_task(void* arg)
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r2 timeout\n");
                 radio2->RXnb();
-                timeoutCounter++;
+                timeout2Counter++;
             } else {
                 printf("!!! tx2_task irqs %04X\n", irqs);
             }
@@ -680,7 +682,7 @@ static void tx2_task(void* arg)
  *   start receive (for either or both modems)
  * 
  */
-static void rx_task(void* arg)
+static void ICACHE_RAM_ATTR rx_task(void* arg)
 {
     uint32_t radioID;
     for(;;) {
@@ -719,6 +721,8 @@ static void rx_task(void* arg)
                         if (processResult) {
                             antenna = 0;
                             getRFlinkInfo();
+                        } else {
+                            crc1Counter++;
                         }
                     } else {
                         // grab the rssi, otherwise the unused channel gets very slow update
@@ -745,6 +749,8 @@ static void rx_task(void* arg)
                         if (processResult) {
                             antenna = 1;
                             getRFlinkInfo();
+                        } else {
+                            crc2Counter++;
                         }
                     } else {
                         // grab the rssi, otherwise the unused channel gets very slow update
@@ -941,7 +947,7 @@ void ICACHE_RAM_ATTR updatePhaseLock()
  * 
  *  Assume that the radio modem is busy doing either rx or tx during this call, so we can only do non-radio related housekeeping in here.
  */
-void tick()
+void ICACHE_RAM_ATTR tick()
 {
     // printf("tickIn\n");
     // static unsigned long last = 0;
@@ -980,7 +986,7 @@ void tick()
 /** Aligned with (approximately) the start of the radio signal
  * 
  */
-void tock()
+void ICACHE_RAM_ATTR tock()
 {
     // printf("tockIn\n");
     // pfdLoop.intEvent(micros()); // our internal osc just fired
@@ -1247,6 +1253,31 @@ void initLeds()
     // Clear LED strip (turn off all LEDs)
     ESP_ERROR_CHECK(strip->clear(strip, 100));
 
+    for(int i=0; i<255; i++)
+    {
+        strip->set_pixel(strip, 0, 0, 0, i);
+        strip->set_pixel(strip, 1, i, 0, 0);
+        strip->refresh(strip, 1);
+        delay(1);
+    }
+
+    for(int i=0; i<255; i++)
+    {
+        strip->set_pixel(strip, 0, i, 0, 255-i);
+        strip->set_pixel(strip, 1, 255-i, 0, i);
+        strip->refresh(strip, 1);
+        delay(2);
+    }
+
+    for(int i=0; i<256; i++)
+    {
+        strip->set_pixel(strip, 0, 255-i, 0, 0);
+        strip->set_pixel(strip, 1, 0, 0, 255-i);
+        strip->refresh(strip, 1);
+        delay(5);
+    }
+
+
     // printf("set red\n");
 
     // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, brightness, 0, 0));
@@ -1391,11 +1422,11 @@ void app_main()
             uint32_t elapsedT = now - lastDebug;
             lastDebug = now;
             // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
-            printf("rx1Events %u, rx2Events %u, LQ %u, crcErrors/s %u\n", totalRX1Events, totalRX2Events, uplinkLQ, crcCounter*1000/elapsedT);
+            printf("rx1Events %u, rx2Events %u, LQ %u, crc1Errors/s %u, crc2Errors/s %u\n", totalRX1Events, totalRX2Events, uplinkLQ, crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
             int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
             int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
             printf("rss1 %d, rssi2 %d\n", rssiDBM0, rssiDBM1);
-            // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
+            printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
 
             uint32_t delta1 = totalRX1Events - lastRX1Events;
             uint32_t delta2 = totalRX2Events - lastRX2Events;
@@ -1403,16 +1434,26 @@ void app_main()
             lastRX1Events = totalRX1Events;
             lastRX2Events = totalRX2Events;
 
-            uint32_t green1 = delta1 * LED_BRIGHTNESS / (delta1 + delta2 + timeoutCounter + crcCounter);
-            uint32_t green2 = delta2 * LED_BRIGHTNESS / (delta1 + delta2 + timeoutCounter + crcCounter);
+            uint32_t totalPackets = delta1 + delta2 + timeout1Counter + crc1Counter + timeout2Counter + crc2Counter + 1;
 
-            strip->set_pixel(strip, 0, 0, green1, 0);
-            strip->set_pixel(strip, 1, 0, green2, 0);
+            uint32_t green1 = delta1 * LED_BRIGHTNESS / totalPackets;
+            uint32_t green2 = delta2 * LED_BRIGHTNESS / totalPackets;
+
+            uint32_t red1 = crc1Counter * LED_BRIGHTNESS / totalPackets;
+            uint32_t red2 = crc2Counter * LED_BRIGHTNESS / totalPackets;
+
+            uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / totalPackets;
+            uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / totalPackets;
+
+            strip->set_pixel(strip, 0, red1, green1, blue1);
+            strip->set_pixel(strip, 1, red2, green2, blue2);
             strip->refresh(strip, 10);
 
             // totalPackets = 0;
-            timeoutCounter = 0;
-            crcCounter = 0;
+            timeout1Counter = 0;
+            crc1Counter = 0;
+            timeout2Counter = 0;
+            crc2Counter = 0;
 
             if (connectionState == tentative)
             {
