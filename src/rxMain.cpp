@@ -30,6 +30,12 @@
 #include "LQCALC.h"
 #include "OTA.h"
 
+#include "driver/rmt.h"
+#include "led_strip.h"
+
+#define LED_BRIGHTNESS 64
+
+
 #ifdef USE_PWM6
 
 // PWM constants
@@ -147,6 +153,12 @@ bool isRXconnected = false;
 #if defined(PRINT_RX_SCOREBOARD)
 static bool lastPacketCrcError;
 #endif
+
+led_strip_t *strip = nullptr;
+
+// forward refs
+void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
+
 
 
 // XXX TODO move this somewhere sensible
@@ -621,6 +633,7 @@ static void tx_task(void* arg)
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r1 timeout\n");
                 radio1.RXnb();
+                timeoutCounter++;
             } else {
                 printf("!!! tx_task irqs %04X\n", irqs);
             }
@@ -647,6 +660,7 @@ static void tx2_task(void* arg)
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r2 timeout\n");
                 radio2->RXnb();
+                timeoutCounter++;
             } else {
                 printf("!!! tx2_task irqs %04X\n", irqs);
             }
@@ -1210,6 +1224,61 @@ void setupPWM()
     #endif // USE_PWM6
 }
 
+void initLeds()
+{
+    // const uint32_t brightness = 64;
+
+    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(LED2812_PIN, RMT_CHANNEL_0);
+    // set counter clock to 40MHz
+    config.clk_div = 2;
+    config.tx_config.loop_count = 0;
+
+    ESP_ERROR_CHECK(rmt_config(&config));
+    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
+
+    // install ws2812 driver
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(2, (led_strip_dev_t)config.channel);
+    strip = led_strip_new_rmt_ws2812(&strip_config);
+    if (!strip) {
+        printf("install WS2812 driver failed\n");
+        return;
+    }
+
+    // Clear LED strip (turn off all LEDs)
+    ESP_ERROR_CHECK(strip->clear(strip, 100));
+
+    // printf("set red\n");
+
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, brightness, 0, 0));
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, 0, brightness, 0));
+    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
+
+    // delay(1000);
+
+    // printf("set green\n");
+
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 0, brightness, 0));
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, 0, 0, brightness));
+
+    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
+
+    // delay(1000);
+
+    // printf("set blue\n");
+
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 0, 0, brightness));
+    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, brightness, 0, 0));
+
+    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
+
+}
+
+void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue)
+{
+    strip->set_pixel(strip, index, red, green, blue);
+    strip->refresh(strip, 100);
+}
+
 extern "C"
 {
 
@@ -1218,6 +1287,8 @@ void app_main()
     printf("ESP32-C3 FreeRTOS RX\n");
 
     setupPWM(); // does nothing if pwm not being used
+
+    initLeds();
 
     // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
     HwTimer::init();
@@ -1233,8 +1304,21 @@ void app_main()
     radio2->currFreq = GetInitialFreq();
 
 
-    radio1.Begin();
-    radio2->Begin();
+    if (radio1.Begin() == 0) {
+        // set led green
+        setLedColour(0, 0, LED_BRIGHTNESS, 0);
+    } else {
+        // set led red
+        setLedColour(0, LED_BRIGHTNESS, 0, 0);
+    }
+
+    if (radio2->Begin() == 0) {
+        // set led green
+        setLedColour(1, 0, LED_BRIGHTNESS, 0);
+    } else {
+        // set led red
+        setLedColour(1, LED_BRIGHTNESS, 0, 0);
+    }
 
     radio1.SetOutputPower(DISARM_POWER);
     radio2->SetOutputPower(DISARM_POWER);
@@ -1281,12 +1365,17 @@ void app_main()
 
     FHSSrandomiseFHSSsequence();
 
+    delay(100);
+    strip->clear(strip, 10);
+
     radio1.RXnb();
     radio2->RXnb();
     crsf.Begin();
 
     unsigned long lastDebug = 0;
     unsigned long prevTime = 0;
+
+    uint32_t lastRX1Events = 0, lastRX2Events = 0;
 
     // loop
     while(true) {
@@ -1307,11 +1396,24 @@ void app_main()
             int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
             printf("rss1 %d, rssi2 %d\n", rssiDBM0, rssiDBM1);
             // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
+
+            uint32_t delta1 = totalRX1Events - lastRX1Events;
+            uint32_t delta2 = totalRX2Events - lastRX2Events;
+
+            lastRX1Events = totalRX1Events;
+            lastRX2Events = totalRX2Events;
+
+            uint32_t green1 = delta1 * LED_BRIGHTNESS / (delta1 + delta2 + timeoutCounter + crcCounter);
+            uint32_t green2 = delta2 * LED_BRIGHTNESS / (delta1 + delta2 + timeoutCounter + crcCounter);
+
+            strip->set_pixel(strip, 0, 0, green1, 0);
+            strip->set_pixel(strip, 1, 0, green2, 0);
+            strip->refresh(strip, 10);
+
             // totalPackets = 0;
             timeoutCounter = 0;
             crcCounter = 0;
 
-            // if ((connectionState == tentative) && (abs(OffsetDx) <= 10) && (Offset < 100) && (uplinkLQ > minLqForChaos()))
             if (connectionState == tentative)
             {
                 printf("tentative:");
@@ -1320,7 +1422,6 @@ void app_main()
                 if (uplinkLQ <= minLqForChaos()) printf(" lq %u", uplinkLQ);
                 printf("\n");
             }
-
         }
 
         // This isn't great to do from here, we might get an SPI collision with the still active rx/tx tasks

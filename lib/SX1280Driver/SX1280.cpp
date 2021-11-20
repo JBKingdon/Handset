@@ -155,9 +155,13 @@ void SX1280Driver::checkVersion()
     }
 }
 
-
-void SX1280Driver::Begin()
+/** Initialise the radio module
+ * @return 0 for success, -1 for failure
+ */
+int32_t SX1280Driver::Begin()
 {
+    int32_t result = 0;
+
     // hal->TXdoneCallback = &SX1280Driver::TXnbISR;
     // hal->RXdoneCallback = &SX1280Driver::RXnbISR;
     hardwareInit();
@@ -179,6 +183,7 @@ void SX1280Driver::Begin()
     printf("Firmware Revision: %u (%X)\n\r", firmwareRev, firmwareRev);
     if (firmwareRev != 0xA9B7) {
         printf("WARNING: firmware not the expected value of 0xA9B7\n\r");
+        result = -1;
     }
 
     #ifdef USE_FLRC
@@ -193,6 +198,8 @@ void SX1280Driver::Begin()
     // Using dual dios for rx and tx done
     // TODO need to be able to configure if the timeout irq is on dio1 or dio2
     this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_RX_DONE, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_TX_TIMEOUT, SX1280_IRQ_RADIO_NONE);
+
+    return result;
 }
 
 
