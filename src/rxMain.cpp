@@ -1,6 +1,10 @@
 /**
  * Initial test code for C3 based receivers
  * 
+ * TODO:
+ *   Fix SPI collisions
+ *   Add code to detect if a modem stops talking to us. There should always be one of txdone, rxdone or timeout in every frame
+ *   Add linkstatus packets -> FC
  */
 
 #include <stdio.h>
@@ -142,7 +146,7 @@ LPF LPF_UplinkRSSI1(5);
 LPF LPF_rcvInterval(4);
 
 /// LQ Calculation //////////
-LQCALC<100> LQCalc;
+LQCALC<100> lqRadio1, lqRadio2, lqEffective;
 uint8_t uplinkLQ;
 
 uint8_t scanIndex = RATE_DEFAULT;
@@ -293,13 +297,25 @@ void updatePWM()
     #endif // USE_PWM6
 }
 
+bool hasValidCRC(uint8_t *rxBuffer)
+{
+    const uint8_t type = rxBuffer[0] & 0b11;
+    const uint16_t inCRC = ( ( (uint16_t)(rxBuffer[0] & 0b11111100) ) << 6 ) | rxBuffer[OTA_PACKET_LENGTH-1];
+
+    rxBuffer[0] = type; // NB this destroys the original CRC data, so you can only call this function once per buffer
+
+    uint16_t calculatedCRC = ota_crc.calc(rxBuffer, OTA_PACKET_LENGTH-1);
+
+    return (inCRC == calculatedCRC);
+}
+
 /**
  * @return 1 if packet passed crc check, 0 otherwise
  */
 uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketReceived)
 {
     uint8_t type;
-    uint16_t inCRC;
+    // uint16_t inCRC;
 
     // uint32_t beginProcessing;
     // uint32_t doneProcessing;
@@ -318,37 +334,35 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
     type = rxBuffer[0] & 0b11;
 
-    inCRC = ( ( (uint16_t)(rxBuffer[0] & 0b11111100) ) << 6 ) | rxBuffer[OTA_PACKET_LENGTH-1];
+    // inCRC = ( ( (uint16_t)(rxBuffer[0] & 0b11111100) ) << 6 ) | rxBuffer[OTA_PACKET_LENGTH-1];
 
-    rxBuffer[0] = type;
-    uint16_t calculatedCRC = ota_crc.calc(rxBuffer, OTA_PACKET_LENGTH-1);
+    // rxBuffer[0] = type;
+    // uint16_t calculatedCRC = ota_crc.calc(rxBuffer, OTA_PACKET_LENGTH-1);
 
     #endif // USE_PWM6
 
     // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", rxBuffer[i]);
     // printf(", inCRC %04X calcCRC %04X\n", inCRC, calculatedCRC);
 
-    if (inCRC != calculatedCRC)
-    {
-        #ifndef DEBUG_SUPPRESS
-        // printf("CRC error on RF packet: ");
-        // for (int i = 0; i < OTA_PACKET_LENGTH; i++)
-        // {
-        //     printf("%02X ", rxBuffer[i]);
-        // }
-        // printf("\n");
-        #endif
-        #if defined(PRINT_RX_SCOREBOARD)
-            lastPacketCrcError = true;
-        #endif
-        // crcCounter++;
-        return 0;     // EARLY RETURN
-    }
+    // if (!hasValidCRC(rxBuffer))
+    // // if (inCRC != calculatedCRC)
+    // {
+    //     #ifndef DEBUG_SUPPRESS
+    //     // printf("CRC error on RF packet: ");
+    //     // for (int i = 0; i < OTA_PACKET_LENGTH; i++)
+    //     // {
+    //     //     printf("%02X ", rxBuffer[i]);
+    //     // }
+    //     // printf("\n");
+    //     #endif
+    //     #if defined(PRINT_RX_SCOREBOARD)
+    //         lastPacketCrcError = true;
+    //     #endif
+    //     // crcCounter++;
+    //     return 0;     // EARLY RETURN
+    // }
 
-    // XXX if we're currently processing the second packet of a frame, this could introduce a lot
-    // of jitter. Perhaps we should only adjust pfd on first packets?
-    // XXX How about recording packet arrival time in the ISRs and then passing the appropriate one as a param?
-    // pfdLoop.extEvent(beginProcessing + PACKET_TO_TOCK_SLACK);
+    // uses the time the packet was received so as to reduce jitter
     pfdLoop.extEvent(tPacketReceived + PACKET_TO_TOCK_SLACK);
 
 #ifdef HYBRID_SWITCHES_8
@@ -488,7 +502,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
         break;
     }
 
-    LQCalc.add(); // Received a packet, that's the definition of LQ
+    // LQCalc.add(); // Received a packet, that's the definition of LQ
     // Extend sync duration since we've received a packet at this rate
     // but do not extend it indefinitely
     RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow;
@@ -499,7 +513,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     #endif
 
     if (doStartTimer)
-        HwTimer::resume(); // will throw an interrupt immediately
+        HwTimer::resume(); // will throw an interrupt immediately (JBK: not sure if this is true across all impls)
 
     return 1;
 }
@@ -577,6 +591,9 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     }
 
     // printf("telem...\n");
+
+    // XXX Use the radio with the best LQ for sending telem
+
     SX1280Driver *sendingRadio = &radio1;
     SX1280Driver *otherRadio = radio2;
 
@@ -634,6 +651,7 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                 radio2->RXnb();
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r1 timeout\n");
+                // XXX would it be safer to set a flag and move the actual rxnb() call to tock?
                 radio1.RXnb();
                 timeout1Counter++;
             } else {
@@ -661,6 +679,7 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 radio2->RXnb();
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r2 timeout\n");
+                // XXX would it be safer to set a flag and move the actual rxnb() call to tock?
                 radio2->RXnb();
                 timeout2Counter++;
             } else {
@@ -690,7 +709,6 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
         {
             // unsigned long tRcv = micros();
 
-
             // timeouts for sx1280 are currently routed into the tx_tasks
             #ifdef RADIO_E22
 
@@ -708,31 +726,38 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
             #endif // RADIO_E22
 
             // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
-            uint8_t processResult = 0;
+            // uint8_t processResult = 0;
 
             switch (radioID) {
                 case 1:
-                    if (!packetReceived)
+                    radio1.readRXData(); // get the data from the radio chip
+                    if (hasValidCRC((uint8_t*)radio1.RXdataBuffer))
                     {
-                        radio1.readRXData(); // get the data from the radio chip
-                        processResult = ProcessRFPacket((uint8_t*)radio1.RXdataBuffer, tPacketR1);
-                        totalRX1Events++;
-
-                        if (processResult) {
-                            antenna = 0;
-                            getRFlinkInfo();
+                        if (!packetReceived)
+                        {
+                            ProcessRFPacket((uint8_t*)radio1.RXdataBuffer, tPacketR1);
+                            totalRX1Events++;
+                            packetReceived = true;
+                            HandleFHSS();
+                            lqEffective.add();
                         } else {
-                            crc1Counter++;
+                            // Skip at most 1 packet
+                            // During startup the timer isn't running, so we can't rely on packetReceived being cleared in tick()
+                            packetReceived = false;
                         }
-                    } else {
-                        // grab the rssi, otherwise the unused channel gets very slow update
+
+                        lqRadio1.add();
                         antenna = 0;
                         getRFlinkInfo();
+
+                    } else {
+                        // failed CRC check
+                        crc1Counter++;
                     }
                     
                     // start the next receive
                     if (connectionState != connected || !isTelemetryFrame()) {
-                        radio1.RXnb();  // includes clearing the irq
+                        radio1.RXnb();  // includes clearing the irqs
                     } else {
                         radio1.ClearIrqStatus(SX1280_IRQ_RX_DONE);
                     }
@@ -740,26 +765,32 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     break;
 
                 case 2:
-                    if (!packetReceived)
+                    radio2->readRXData(); // get the data from the radio chip
+                    if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
                     {
-                        radio2->readRXData(); // get the data from the radio chip
-                        processResult = ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2); 
-                        totalRX2Events++;
-
-                        if (processResult) {
-                            antenna = 1;
-                            getRFlinkInfo();
+                        if (!packetReceived)
+                        {
+                            ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2); 
+                            totalRX2Events++;
+                            packetReceived = true;
+                            HandleFHSS();
+                            lqEffective.add();                            
                         } else {
-                            crc2Counter++;
+                            // Skip at most 1 packet
+                            packetReceived = false;
                         }
-                    } else {
-                        // grab the rssi, otherwise the unused channel gets very slow update
+
+                        lqRadio2.add();
                         antenna = 1;
                         getRFlinkInfo();
-                    }
 
+                    } else {
+                        // failed CRC check
+                        crc2Counter++;
+                    }
+                    
                     if (connectionState != connected || !isTelemetryFrame()) {
-                        radio2->RXnb();  // includes clearing the irq
+                        radio2->RXnb();  // includes clearing the irqs
                     } else {
                         radio2->ClearIrqStatus(SX1280_IRQ_RX_DONE);
                     }
@@ -770,11 +801,11 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     printf("unexpected radioID %u\n", radioID);
             }
 
-            packetReceived = (processResult == 1);
+            // packetReceived = (processResult == 1);
 
             // give fhss a chance to run before tock()
-            if (processResult == 1)
-                HandleFHSS();
+            // if (processResult == 1)
+            //     HandleFHSS();
 
             // check for variaton in the intervals between sending packets
             // static unsigned long tRcvLast = 0;
@@ -901,7 +932,7 @@ void ICACHE_RAM_ATTR updatePhaseLock()
         Offset = LPF_Offset.update(RawOffset);
         OffsetDx = LPF_OffsetDx.update(RawOffset - prevRawOffset);
 
-        if (RXtimerState == tim_locked && LQCalc.currentIsSet())
+        if (RXtimerState == tim_locked && (lqRadio1.currentIsSet() || lqRadio2.currentIsSet()))
         {
             if (NonceRX % 8 == 0) //limit rate of freq offset adjustment slightly
             {
@@ -973,10 +1004,13 @@ void ICACHE_RAM_ATTR tick()
     // }
 
     // Save the LQ value before the inc() reduces it by 1
-    uplinkLQ = LQCalc.getLQ();
+    uplinkLQ = lqEffective.getLQ();
     // Only advance the LQI period counter if we didn't send Telemetry this period
-    if (!alreadyTLMresp)
-        LQCalc.inc();
+    if (!alreadyTLMresp) {
+        lqRadio1.inc();
+        lqRadio2.inc();
+        lqEffective.inc();
+    }
 
     alreadyTLMresp = false;
     alreadyFHSS = false;
@@ -996,10 +1030,12 @@ void ICACHE_RAM_ATTR tock()
     HandleFHSS();
     HandleSendTelemetryResponse();
 
+    // XXX Add a hail-mary check here if the radios haven't been talking and kick off new RXnb calls
+
 
     #if defined(PRINT_RX_SCOREBOARD)
     static bool lastPacketWasTelemetry = false;
-    if (!LQCalc.currentIsSet() && !lastPacketWasTelemetry)
+    if (!(lqRadio1.currentIsSet() || lqRadio2.currentIsSet()) && !lastPacketWasTelemetry)
         Serial.write(lastPacketCrcError ? '.' : '_');
     lastPacketCrcError = false;
     lastPacketWasTelemetry = tlmSent;
@@ -1056,7 +1092,8 @@ void lostConnection()
     prevOffset = 0;
     GotConnectionMillis = 0;
     uplinkLQ = 0;
-    LQCalc.reset();
+    lqRadio1.reset();
+    lqRadio2.reset();
     LPF_Offset.init(0);
     LPF_OffsetDx.init(0);
     alreadyTLMresp = false;
@@ -1166,7 +1203,8 @@ static void cycleRfMode()
         lastSyncPacket = now;           // reset this variable
         SetRFLinkRate(scanIndex % RATE_MAX); // switch between rates
         linkStatstoFCLastSent = now;
-        LQCalc.reset();
+        lqRadio1.reset();
+        lqRadio2.reset();
         printf("%u\n", ExpressLRS_currAirRate_Modparams->interval);
         scanIndex++;
         getRFlinkInfo();
@@ -1253,54 +1291,43 @@ void initLeds()
     // Clear LED strip (turn off all LEDs)
     ESP_ERROR_CHECK(strip->clear(strip, 100));
 
-    for(int i=0; i<255; i++)
+    // gratuitous startup test
+
+    // ramp red
+    for(int i=0; i<256; i++)
     {
-        strip->set_pixel(strip, 0, 0, 0, i);
+        strip->set_pixel(strip, 0, i, 0, 0);
         strip->set_pixel(strip, 1, i, 0, 0);
         strip->refresh(strip, 1);
         delay(1);
     }
 
-    for(int i=0; i<255; i++)
+    // transition to green
+    for(int i=0; i<256; i++)
     {
-        strip->set_pixel(strip, 0, i, 0, 255-i);
-        strip->set_pixel(strip, 1, 255-i, 0, i);
+        strip->set_pixel(strip, 0, 255-i, i, 0);
+        strip->set_pixel(strip, 1, 255-i, i, 0);
+        strip->refresh(strip, 1);
+        delay(1);
+    }
+
+    // transition to blue
+    for(int i=0; i<256; i++)
+    {
+        strip->set_pixel(strip, 0, 0, 255-i, i);
+        strip->set_pixel(strip, 1, 0, 255-i, i);
+        strip->refresh(strip, 1);
+        delay(1);
+    }
+
+    // ramp down
+    for(int i=0; i<256; i++)
+    {
+        strip->set_pixel(strip, 0, 0, 0, 255-i);
+        strip->set_pixel(strip, 1, 0, 0, 255-i);
         strip->refresh(strip, 1);
         delay(2);
     }
-
-    for(int i=0; i<256; i++)
-    {
-        strip->set_pixel(strip, 0, 255-i, 0, 0);
-        strip->set_pixel(strip, 1, 0, 0, 255-i);
-        strip->refresh(strip, 1);
-        delay(5);
-    }
-
-
-    // printf("set red\n");
-
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, brightness, 0, 0));
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, 0, brightness, 0));
-    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
-
-    // delay(1000);
-
-    // printf("set green\n");
-
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 0, brightness, 0));
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, 0, 0, brightness));
-
-    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
-
-    // delay(1000);
-
-    // printf("set blue\n");
-
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 0, 0, brightness));
-    // ESP_ERROR_CHECK(strip->set_pixel(strip, 1, brightness, 0, 0));
-
-    // ESP_ERROR_CHECK(strip->refresh(strip, 100));
 
 }
 
@@ -1396,14 +1423,15 @@ void app_main()
 
     FHSSrandomiseFHSSsequence();
 
-    delay(100);
-    strip->clear(strip, 10);
-
     radio1.RXnb();
     radio2->RXnb();
     crsf.Begin();
 
+    delay(500);
+    strip->clear(strip, 10);
+
     unsigned long lastDebug = 0;
+    unsigned long lastLEDUpdate = 0;
     unsigned long prevTime = 0;
 
     uint32_t lastRX1Events = 0, lastRX2Events = 0;
@@ -1417,16 +1445,10 @@ void app_main()
             printf("big gap %u to %u\n", prevTime, now);
         }
         prevTime = now;
-        if (lastDebug + 1000 < now)
+
+        if (lastLEDUpdate + 100 < now)
         {
-            uint32_t elapsedT = now - lastDebug;
-            lastDebug = now;
-            // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
-            printf("rx1Events %u, rx2Events %u, LQ %u, crc1Errors/s %u, crc2Errors/s %u\n", totalRX1Events, totalRX2Events, uplinkLQ, crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
-            int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
-            int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
-            printf("rss1 %d, rssi2 %d\n", rssiDBM0, rssiDBM1);
-            printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
+            lastLEDUpdate = now;
 
             uint32_t delta1 = totalRX1Events - lastRX1Events;
             uint32_t delta2 = totalRX2Events - lastRX2Events;
@@ -1434,13 +1456,18 @@ void app_main()
             lastRX1Events = totalRX1Events;
             lastRX2Events = totalRX2Events;
 
-            uint32_t totalPackets = delta1 + delta2 + timeout1Counter + crc1Counter + timeout2Counter + crc2Counter + 1;
+            uint32_t totalPackets = delta1 + delta2 + timeout1Counter + timeout2Counter + crc1Counter + crc2Counter + 1;
 
-            uint32_t green1 = delta1 * LED_BRIGHTNESS / totalPackets;
-            uint32_t green2 = delta2 * LED_BRIGHTNESS / totalPackets;
+            uint32_t brightness1 = delta1 * LED_BRIGHTNESS / totalPackets;
+            uint32_t brightness2 = delta2 * LED_BRIGHTNESS / totalPackets;
 
-            uint32_t red1 = crc1Counter * LED_BRIGHTNESS / totalPackets;
-            uint32_t red2 = crc2Counter * LED_BRIGHTNESS / totalPackets;
+            uint32_t green1 = lqRadio1.getLQ() * brightness1 / 100;
+            uint32_t green2 = lqRadio2.getLQ() * brightness2 / 100;
+
+            // uint32_t red1 = (crc1Counter * brightness1 / totalPackets) + (brightness1 - green1);
+            // uint32_t red2 = (crc2Counter * brightness2 / totalPackets) + (brightness2 - green2);
+            uint32_t red1 = (brightness1 - green1);
+            uint32_t red2 = (brightness2 - green2);
 
             uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / totalPackets;
             uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / totalPackets;
@@ -1448,6 +1475,23 @@ void app_main()
             strip->set_pixel(strip, 0, red1, green1, blue1);
             strip->set_pixel(strip, 1, red2, green2, blue2);
             strip->refresh(strip, 10);
+
+            // printf("delta %u bright %u green %u\n", delta1, brightness1, green1);
+        }
+
+        if (lastDebug + 1000 < now)
+        {
+            uint32_t elapsedT = now - lastDebug;
+            lastDebug = now;
+            // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
+            printf("rx1Events %u, rx2Events %u, LQ1 %u, LQ2 %u, LQC %u, crc1Errors/s %u, crc2Errors/s %u\n", 
+                    totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
+                    crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
+
+            int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
+            int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
+            printf("rss1 %d, rssi2 %d\n", rssiDBM0, rssiDBM1);
+            printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
 
             // totalPackets = 0;
             timeout1Counter = 0;
