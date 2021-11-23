@@ -32,6 +32,7 @@ public:
 	static void setPhaseShift(int32_t newPhaseShift);
 	static void setCallbackTick(void (*fn)());
 	static void setCallbackTock(void (*fn)());
+	static bool isRunning() { return running; }
 
 	static void inline nullCallback(void);
 };

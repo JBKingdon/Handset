@@ -39,6 +39,8 @@
 
 #define LED_BRIGHTNESS 64
 
+// #define PRINT_RX_SCOREBOARD 1
+
 
 #ifdef USE_PWM6
 
@@ -108,6 +110,9 @@ volatile uint8_t NonceRX = 0; // nonce that we THINK we are up to.
 bool alreadyFHSS = false;
 bool alreadyTLMresp = false;
 volatile bool packetReceived = false;
+
+bool radio1Timedout = false;
+bool radio2Timedout = false;
 
 // uint32_t beginProcessing;
 // uint32_t doneProcessing;
@@ -433,7 +438,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
         {
             lastSyncPacket = millis();
             #if defined(PRINT_RX_SCOREBOARD)
-            Serial.write('s');
+            printf("s");
             #endif
 
             if (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn)
@@ -508,9 +513,9 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow;
 
     // doneProcessing = micros();
-    #if defined(PRINT_RX_SCOREBOARD)
-    if (type != SYNC_PACKET) Serial.write('R');
-    #endif
+    // #if defined(PRINT_RX_SCOREBOARD)
+    // if (type != SYNC_PACKET) printf("R");
+    // #endif
 
     if (doStartTimer)
         HwTimer::resume(); // will throw an interrupt immediately (JBK: not sure if this is true across all impls)
@@ -562,6 +567,11 @@ bool ICACHE_RAM_ATTR HandleFHSS()
 
 bool ICACHE_RAM_ATTR isTelemetryFrame()
 {
+    if (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM)
+    {
+        return false;
+    }
+
     #ifdef ELRS_OG_COMPATIBILITY
     const uint8_t modresult = (NonceRX + 1) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
     #else
@@ -579,8 +589,8 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     uint8_t packageIndex;
     #endif
 
-    // don't bother sending tlm if disconnected or TLM is off
-    if ((connectionState == disconnected) || (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) || (alreadyTLMresp == true))
+    // short circuit evaluation, so put the most likely conditions for the critical path first
+    if (alreadyTLMresp || (connectionState == disconnected) || (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM))
     {
         return false;
     }
@@ -651,9 +661,14 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                 radio2->RXnb();
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r1 timeout\n");
-                // XXX would it be safer to set a flag and move the actual rxnb() call to tock?
-                radio1.RXnb();
                 timeout1Counter++;
+                // If we're connected it's safer to restart the receive from tock(), but
+                // if we're not connected then the hwtimer isn't running and tock won't be called
+                if (HwTimer::isRunning()) {
+                    radio1Timedout = true;
+                } else {
+                    radio1.RXnb();
+                }
             } else {
                 printf("!!! tx_task irqs %04X\n", irqs);
             }
@@ -679,9 +694,13 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 radio2->RXnb();
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r2 timeout\n");
-                // XXX would it be safer to set a flag and move the actual rxnb() call to tock?
-                radio2->RXnb();
                 timeout2Counter++;
+                if (HwTimer::isRunning()) {
+                    radio2Timedout = true;
+                } else {
+                    radio2->RXnb();
+                }
+
             } else {
                 printf("!!! tx2_task irqs %04X\n", irqs);
             }
@@ -691,7 +710,6 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
 
 /** Handle received packets
  * 
- * The following might not be needed now that we're not getting telem related spi collisions...
  * 
  * Instead of passing the radioID via the queue, use an eventDescriptor instead?
  * 
@@ -740,6 +758,9 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                             packetReceived = true;
                             HandleFHSS();
                             lqEffective.add();
+                            #if defined(PRINT_RX_SCOREBOARD)
+                            printf("1");
+                            #endif
                         } else {
                             // Skip at most 1 packet
                             // During startup the timer isn't running, so we can't rely on packetReceived being cleared in tick()
@@ -753,6 +774,9 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     } else {
                         // failed CRC check
                         crc1Counter++;
+                        #ifdef PRINT_RX_SCOREBOARD
+                        lastPacketCrcError = true;
+                        #endif
                     }
                     
                     // start the next receive
@@ -775,6 +799,9 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                             packetReceived = true;
                             HandleFHSS();
                             lqEffective.add();                            
+                            #if defined(PRINT_RX_SCOREBOARD)
+                            printf("2");
+                            #endif
                         } else {
                             // Skip at most 1 packet
                             packetReceived = false;
@@ -787,6 +814,9 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     } else {
                         // failed CRC check
                         crc2Counter++;
+                        #ifdef PRINT_RX_SCOREBOARD
+                        lastPacketCrcError = true;
+                        #endif
                     }
                     
                     if (connectionState != connected || !isTelemetryFrame()) {
@@ -1030,15 +1060,28 @@ void ICACHE_RAM_ATTR tock()
     HandleFHSS();
     HandleSendTelemetryResponse();
 
+    if (!alreadyTLMresp) // if we're doing telem then the receivers will be restarted after anyway.
+    {
+        if (radio1Timedout) {
+            radio1.RXnb();
+            radio1Timedout = false;
+        }
+
+        if (radio2Timedout) {
+            radio2->RXnb();
+            radio2Timedout = false;
+        }
+    }
+
     // XXX Add a hail-mary check here if the radios haven't been talking and kick off new RXnb calls
 
 
     #if defined(PRINT_RX_SCOREBOARD)
     static bool lastPacketWasTelemetry = false;
     if (!(lqRadio1.currentIsSet() || lqRadio2.currentIsSet()) && !lastPacketWasTelemetry)
-        Serial.write(lastPacketCrcError ? '.' : '_');
+        printf(lastPacketCrcError ? "X" : "_");
     lastPacketCrcError = false;
-    lastPacketWasTelemetry = tlmSent;
+    lastPacketWasTelemetry = alreadyTLMresp;
     #endif
     // printf("tockOut\n");
 }
@@ -1209,8 +1252,8 @@ static void cycleRfMode()
         scanIndex++;
         getRFlinkInfo();
         crsf.sendLinkStatisticsToFC();
-        delay(100);
-        crsf.sendLinkStatisticsToFC(); // need to send twice, not sure why, seems like a BF bug?
+        // delay(100);
+        // crsf.sendLinkStatisticsToFC(); // need to send twice, not sure why, seems like a BF bug?
 
         radio1.RXnb();
         #ifdef USE_SECOND_RADIO
@@ -1342,6 +1385,7 @@ extern "C"
 
 void app_main()
 {
+    uart_set_baudrate(UART_NUM_0, 921600);
     printf("ESP32-C3 FreeRTOS RX\n");
 
     setupPWM(); // does nothing if pwm not being used
@@ -1483,6 +1527,10 @@ void app_main()
         {
             uint32_t elapsedT = now - lastDebug;
             lastDebug = now;
+            #if defined(PRINT_RX_SCOREBOARD)
+            printf("\n");
+            #endif
+
             // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
             printf("rx1Events %u, rx2Events %u, LQ1 %u, LQ2 %u, LQC %u, crc1Errors/s %u, crc2Errors/s %u\n", 
                     totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
