@@ -1477,6 +1477,9 @@ uint32_t scaleRollData(uint16_t raw_adc_roll)
 
 void ICACHE_RAM_ATTR SendRCdataToRF()
 {
+   // static to persist across calls
+   static uint8_t syncPacketIndex = 1;
+
    // printf("n %u\n\r", NonceTX);
 
    // for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
@@ -1489,6 +1492,12 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalDisconnected;
   }
 
+   // safety check to make sure that if the mode is changed to one with a smaller fhss interval we don't get
+   // stuck with syncPacketIndex > the new interval
+  if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval) {
+     syncPacketIndex = 1;
+  }
+
 
   if ((syncWhenArmed || !isArmed()) &&    // send sync packets when not armed, or always if syncWhenArmed is true
          (  (syncSpamCounter != 0 && (millis() - lastLinkRateChangeTime > 300)) ||  // if we're trying to notify the rx of changing packet rate, just do it, otherwise...
@@ -1496,13 +1505,14 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
                ((millis() - SyncPacketLastSent) > SyncInterval) && // ...has enough time passed?
                (radio.currFreq == GetInitialFreq())                // we're on the sync frequency
                // sync just after we changed freqs (helps with hwTimer.init() being in sync from the get go)
-               && (NonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval == 1)
+               && ((NonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval) == syncPacketIndex)
             )
          )
       )
   {
       GenerateSyncPacketData();
       SyncPacketLastSent = millis();
+      // syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
       //Serial.println("sync");
   }
   else
@@ -2157,9 +2167,10 @@ int main(void)
    // Try connecting to the radio
    radio.currFreq = GetInitialFreq();
 
-   // radio.hardwareInit();
-   // radio.reset();
+   radio.hardwareInit();
+   radio.reset();
    radio.Begin();
+
 
    #ifdef DISARM_POWER
    radio.SetOutputPower(DISARM_POWER);
