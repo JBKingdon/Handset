@@ -99,7 +99,7 @@ void HwTimer::init()
     if (!running)
     {
         s_timer_queue = xQueueCreate(2, 0);
-        xTaskCreate(timer_task, "timer_task", 2048, NULL, 20, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
+        xTaskCreate(timer_task, "timer_task", 4096, NULL, 20, NULL); // Tpriority 1=min, max is ??? Default main task is pri 1
 
         // timer_init(interval >> 1); // Run at twice the commanded frequency for tick/tock interleave
 
@@ -153,7 +153,10 @@ void HwTimer::resume()
     }
 }
 
-/** Set the interval between callbacks
+/** Set the interval between tick() callbacks
+ * 
+ *  NB The actual timer interval will be half of the given value so that
+ *  we get an interrupt for both tick and tock.
  * 
  * @param newTimerInterval interval in us
  */

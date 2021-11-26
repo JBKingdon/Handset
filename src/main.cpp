@@ -34,6 +34,8 @@
 // Uncomment to enable some debug output on the LCD
 // #define DEBUG_STATUS
 
+#define USE_SYNC_SPAM
+
 // The RSSI dB delta relative to the rx sensitivity at which the TX power will be increased
 // So if the RXsensitivity is -105 and DYN_POWER_INCREASE_MARGIN is 25, power will be increased
 // if rssi is below -80
@@ -102,18 +104,6 @@ enum EDITABLE_PARAMS {
    PARAM_SYNC_WHEN_ARMED,
    PARAM_N_PARAMS // must be last
 };
-
-volatile bool readyToSend;
-#ifdef LONGAN_NANO
-const bool testModeIsTransmitter = false;
-#else
-const bool testModeIsTransmitter = true;
-#endif // LONGAN_NANO
-
-uint32_t timeoutCounter = 0;
-uint32_t mismatchCounter = 0;
-uint32_t totalPackets = 0;
-int32_t cumulativeRSSI = 0;
 
 
 uint8_t paramToChange = PARAM_NONE;
@@ -255,6 +245,10 @@ bool alreadyFHSS = false;
 
 volatile uint8_t NonceTX = 0;
 
+uint32_t timerNonce = 0;   // incremented every time the hwtimer fires, and scaled by rfModeDivisor to get the NonceTX
+// XXX divisor would be more efficient if specified as a bit shift
+uint32_t rfModeDivisor = 1; // Since the hwTimer now runs at a fixed 1kHz we need to a factor to scale to the packet rate
+
 uint32_t SyncPacketLastSent = 0;
 uint32_t LastTLMpacketRecvMillis = 0;
 
@@ -311,56 +305,57 @@ void TIMER2_IRQHandler(void)
       interval = tLast == 0 ? 0 : now - tLast;
       tLast = now;
 
-      // if it hasn't already been called, check for fhss
-      if (!alreadyFHSS)
-         HandleFHSS();
+      timerNonce++;
 
-      alreadyFHSS = false;
-
-      NonceTX++; // New - just increment the nonce on every frame
-
-      #ifdef ELRS_OG_COMPATIBILITY
-
-      // HandleFHSS(); // experimental - can we do fhss here? No, this causes jitter. 
-      //               // Better to do it in txdone, but might need a backup call in case that misses for some reason
-
-      // is there a deferred packet rate change?
-      if (nextLinkRate != -1 && syncSpamCounter == 0) {
-         // printf("nextLinkRate set %d\n\r", nextLinkRate);
-         SetRFLinkRate(nextLinkRate);
-         nextLinkRate = -1;
-         lcdRedrawNeeded = true;
-         // XXX Consider skipping sending a packet on this change, it's unlikely to be at the right point in time.
-      }
-
-      #else
-      // fhss is in txdone
-      #endif // ELRS_OG_COMPATIBILITY
-
-      // Check if we're due for a telemetry packet
-      if (((uint8_t)ExpressLRS_currAirRate_Modparams->TLMinterval > 0) && thisFrameIsTelemetry())
+      if (timerNonce % rfModeDivisor == 0)
       {
-         // This frame is for telem, so don't attempt to transmit
-         // The rx was started from the txdone isr, so nothing to do here
+         // if it hasn't already been called, check for fhss
+         if (!alreadyFHSS)
+            HandleFHSS();
 
-      } else {
-         // This is a normal RC frame. We don't expect to still be waiting for telemetry when we get here
-         if (waitingForTelemetry) {
-            missedTelemetryPackets++;
-            waitingForTelemetry = false;
+         alreadyFHSS = false;
+
+         // NonceTX++; // New - just increment the nonce on every frame
+         NonceTX = timerNonce / rfModeDivisor;
+
+         #ifdef USE_SYNC_SPAM
+
+         // is there a deferred packet rate change?
+         if (nextLinkRate != -1 && syncSpamCounter == 0) {
+            // printf("nextLinkRate set %d\n\r", nextLinkRate);
+            SetRFLinkRate(nextLinkRate);
+            nextLinkRate = -1;
+            lcdRedrawNeeded = true;
+            // XXX Consider skipping sending a packet on this change, it's unlikely to be at the right point in time.
          }
 
-         if ((missedTelemetryPackets > DYN_POWER_MISSED_TELEM_PACKET_THRESHOLD) && (radio.currPWR < radioPower) && isArmed())
+         #endif // USE_SYNC_SPAM
+
+         // Check if we're due for a telemetry packet
+         if (((uint8_t)ExpressLRS_currAirRate_Modparams->TLMinterval > 0) && thisFrameIsTelemetry())
          {
-            // We didn't get telemetry packets so we have no rssi/lq info for dynamic power
-            // Switch to the full configured tx power
-            missedTelemetryPackets = 0;
-            radio.SetOutputPower(radioPower);
-         }
+            // This frame is for telem, so don't attempt to transmit
+            // The rx was started from the txdone isr, so nothing to do here
 
-         SendRCdataToRF();
-      }
-   }
+         } else {
+            // This is a normal RC frame. We don't expect to still be waiting for telemetry when we get here
+            if (waitingForTelemetry) {
+               missedTelemetryPackets++;
+               waitingForTelemetry = false;
+            }
+
+            if ((missedTelemetryPackets > DYN_POWER_MISSED_TELEM_PACKET_THRESHOLD) && (radio.currPWR < radioPower) && isArmed())
+            {
+               // We didn't get telemetry packets so we have no rssi/lq info for dynamic power
+               // Switch to the full configured tx power
+               missedTelemetryPackets = 0;
+               radio.SetOutputPower(radioPower);
+            }
+
+            SendRCdataToRF();
+         }
+      } // if timerNonce mod divisor == 0
+   } // if timer interrupt flag set
 }
 
 /**
@@ -475,47 +470,10 @@ void EXTI5_9_IRQHandler(void)
 
       // printf("RXdone!\n\r");
 
-      // XXX testing, needed for continuous receive mode
-      // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
-
       // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
 
       // TODO move to the event loop?
       radio.readRXData();  // get the data from the radio chip
-
-      // XXX testing
-      // uint8_t counter = radio.RXdataBuffer[0];
-
-      // int8_t rssi = radio.GetLastPacketRSSI();
-      // int8_t snr = radio.GetLastPacketSNR();
-
-      // printf("packet counter %u, rssi %d snr %d\n\r", counter, rssi, snr);
-      // printf("packet counter %u, rssi %d\n\r", counter, rssi);
-
-      // delayMicros(50);
-
-      // testing. If this is the transmitter we should validate the data then set the flag for the next tx
-      // if this is the receiver we need to echo the packet back
-      // if (testModeIsTransmitter) {
-      //    cumulativeRSSI += radio.GetLastPacketRSSI();
-      //    // printf("cr %ld\n\r", cumulativeRSSI);
-      //    // validate the data wasn't corrupted
-      //    if (memcmp((const void *)radio.RXdataBuffer, (const void *)radio.TXdataBuffer, OTA_PACKET_LENGTH) != 0)
-      //    {
-      //       mismatchCounter++;
-      //    }
-      //    // printf("setting readyToSend\n\r");
-      //    readyToSend = true;
-      // } else {
-      //    // send the echo
-      //    // printf("sending echo\n\r");
-      //    radio.TXnb(radio.RXdataBuffer, OTA_PACKET_LENGTH);
-      //    totalPackets++;
-      //    if (totalPackets % 1000 == 0) {
-      //       printf("rx total %lu, timeouts %lu\n\r", totalPackets, timeoutCounter);
-      //    }
-      // }
-
 
       ProcessTLMpacket();
       HandleFHSS();
@@ -524,25 +482,6 @@ void EXTI5_9_IRQHandler(void)
    } else if (exti_interrupt_flag_get(EXTI_9) == SET) {
       exti_interrupt_flag_clear(EXTI_9);
       // printf("TXdone!\n\r");
-
-      // Testing, once tx is finished start another receive
-      // radio.RXnb();
-
-      // radio.ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
-      // radio.GetStatus();
-
-      // printf("irqS %04X", irqS);
-      // if (irqS & SX1262_IRQ_TX_DONE) printf(" TX_DONE");
-      // if (irqS & SX1262_IRQ_RX_DONE) printf(" RX_DONE");
-      // if (irqS & SX1262_IRQ_PREAMBLE_DETECTED) printf(" PREAMBLE");
-      // if (irqS & SX1262_IRQ_SYNCWORD_VALID) printf(" SYNCWORD");
-      // if (irqS & SX1262_IRQ_HEADER_VALID) printf(" HEADER VALID");
-      // if (irqS & SX1262_IRQ_HEADER_ERROR) printf(" HEADER ERROR");
-      // if (irqS & SX1262_IRQ_CRC_ERROR) printf(" CRC ERROR");
-      // if (irqS & SX1262_IRQ_CAD_DONE) printf(" CAD DONE");
-      // if (irqS & SX1262_IRQ_CAD_DETECTED) printf(" CAD DETECTED");
-      // if (irqS & SX1262_IRQ_RX_TX_TIMEOUT) printf(" RXTX TIMEOUT");
-      // printf("\n\r");
 
       #ifdef RADIO_E22
       uint16_t irqS = radio.GetIrqStatus();
@@ -558,7 +497,6 @@ void EXTI5_9_IRQHandler(void)
 // something like this for switches - or maybe just poll them
 // void EXTI10_15_IRQHandler(void)
 // {
-
 // }
 
 } // extern "C"
@@ -933,25 +871,33 @@ void GenerateSyncPacketData()
    radio.TXdataBuffer[2] = NonceTX;
    #endif //ELRS_OG_COMPATIBILITY
 
-   #ifdef ELRS_OG_COMPATIBILITY
-
-   uint8_t SwitchEncMode = 0b01; // handset only supports hybrid8, so this is the only possible value
-   uint8_t Index;
+   // send either the current or next index if using sync spamming on rate change
+   uint8_t rateIndex;
+   #ifdef USE_SYNC_SPAM
    if (syncSpamCounter != 0 && nextLinkRate != -1) {
       // Notify the RX that we're going to change packet rate
-      Index = (nextLinkRate & 0b11);
+      rateIndex = (nextLinkRate & 0b11);
       syncSpamCounter--;
    } else {
       // Send the current packet rate
-      Index = (ExpressLRS_currAirRate_Modparams->index & 0b11);
+      rateIndex = (ExpressLRS_currAirRate_Modparams->index & 0b11);
    }
+   #else
+   // Send the current packet rate
+   rateIndex = (ExpressLRS_currAirRate_Modparams->index & 0b11);
+   #endif
+
+
+   #ifdef ELRS_OG_COMPATIBILITY
+
+   uint8_t SwitchEncMode = 0b01; // handset only supports hybrid8, so this is the only possible value
    uint8_t TLMrate = (ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111);
-   radio.TXdataBuffer[3] = (Index << 6) + (TLMrate << 3) + (SwitchEncMode << 1);
+   radio.TXdataBuffer[3] = (rateIndex << 6) + (TLMrate << 3) + (SwitchEncMode << 1);
 
    radio.TXdataBuffer[4] = UID[3];
 
    #else // not ELRS_OG_COMPATIBILITY
-   radio.TXdataBuffer[3] = ((ExpressLRS_currAirRate_Modparams->index & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
+   radio.TXdataBuffer[3] = ((rateIndex & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
 
    #ifdef SEND_TX_POWER_IN_SYNC
 
@@ -1484,19 +1430,20 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
    // for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
 
-  uint32_t SyncInterval;
-  if (isRXconnected)
-  {
-    SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalConnected;
-  } else {
-    SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalDisconnected;
-  }
+   uint32_t SyncInterval;
+   if (isRXconnected)
+   {
+      SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalConnected;
+   } else {
+      SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalDisconnected;
+   }
 
    // safety check to make sure that if the mode is changed to one with a smaller fhss interval we don't get
    // stuck with syncPacketIndex > the new interval
-  if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval) {
-     syncPacketIndex = 1;
-  }
+   // Also sets the index to 1 if we're trying to establish a new connection as it seems to help avoid an initial 'slip' connection
+   if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval || connectionState == connectionState_e::disconnected) {
+      syncPacketIndex = 1;
+   }
 
 
   if ((syncWhenArmed || !isArmed()) &&    // send sync packets when not armed, or always if syncWhenArmed is true
@@ -1512,7 +1459,9 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   {
       GenerateSyncPacketData();
       SyncPacketLastSent = millis();
-      // syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+      if (connectionState == connectionState_e::connected) {
+         syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+      }
       //Serial.println("sync");
   }
   else
@@ -1699,7 +1648,9 @@ void SetRFLinkRate(uint8_t index)
    }
 
 
-   setTimerISRInterval(ModParams->interval);
+   // setTimerISRInterval(ModParams->interval);
+   // This is only going to work if interval is an exact multiple of 1000
+   rfModeDivisor = ModParams->interval / 1000; // XXX replace interval with divisor
 
    ExpressLRS_currAirRate_Modparams = ModParams;
    ExpressLRS_currAirRate_RFperfParams = RFperf;
@@ -2222,53 +2173,7 @@ int main(void)
    radio.GetStatus();
    #endif // RADIO_E22
 
-   #ifdef PING_PONG
-   // XXX For testing, just go into a continuous loop here
    
-   // fill the packet with some non-zero values
-   radio.TXdataBuffer[0] = 0;
-   for(int i=1; i<OTA_PACKET_LENGTH; i++) radio.TXdataBuffer[i] = i+127;
-
-   if (testModeIsTransmitter) {
-      readyToSend = true;
-      radio.setRxTimeout(1000000/15); // XXX move the scaling inside the setRxTimeout function
-   } else {
-      // start the receiver
-      printf("calling RXnb\n\r");
-      radio.RXnb();
-   }
-
-   unsigned long tPrev = millis();
-   uint32_t lastTotalP = 0;
-
-   while (true)
-   {
-      if (testModeIsTransmitter && readyToSend) {
-         // printf("sending ping\n\r");
-         radio.TXdataBuffer[0]++;
-         totalPackets++;
-         radio.TXnb(radio.TXdataBuffer, OTA_PACKET_LENGTH);
-         readyToSend = false;
-         if (totalPackets % 100 == 0) {
-            unsigned long now = millis();
-            unsigned long elapsed = now - tPrev;
-            uint32_t nPackets = totalPackets - lastTotalP;
-            uint32_t rate = (nPackets * 2000) / elapsed; // factor of 2 for ping + echo
-            int32_t averageRSSI = cumulativeRSSI / (int32_t)nPackets;
-            printf("total: %lu, timeouts: %lu, errors: %lu, rate %lu pkts/s, average RSSI %ld\n\r", totalPackets, timeoutCounter, mismatchCounter, rate, averageRSSI);
-            tPrev = now; lastTotalP = totalPackets;
-            cumulativeRSSI = 0;
-         }
-      // } else {
-      }
-      // delay(500);
-      // printf("setting fs\n\r");
-      // radio.SetMode(SX1262_MODE_FS);
-      // delay(5);
-      // radio.GetStatus();
-   }
-   #endif // PING_PONG
-
    // enable the timer for the tx interrupt
    timer_enable(TIMER2);
 
@@ -2461,10 +2366,10 @@ int main(void)
                      radio.SetOutputPower(radioPower); // update immediately so the user can override low power disarm if needed
                      break;
                   case PARAM_RATE:
-                     #ifdef ELRS_OG_COMPATIBILITY
+                     #ifdef USE_SYNC_SPAM
                      // defer the change until we've sent some sync packets to kick the rx to the new setting
                      nextLinkRate = (encValue - 100) / 2;
-                     syncSpamCounter = 3;
+                     syncSpamCounter = 1;
                      lastLinkRateChangeTime = millis();
                      #else
                      SetRFLinkRate((encValue - 100) / 2);
