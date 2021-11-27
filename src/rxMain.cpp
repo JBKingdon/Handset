@@ -39,7 +39,7 @@
 
 #define LED_BRIGHTNESS 64
 
-#define PRINT_RX_SCOREBOARD 1
+// #define PRINT_RX_SCOREBOARD 1
 
 
 #ifdef USE_PWM6
@@ -122,7 +122,7 @@ static xQueueHandle tx2_evt_queue = NULL;
 
 volatile uint8_t NonceRX = 0; // nonce that we THINK we are up to.
 
-uint32_t timerNonce = 0;   // incremented every time the hwtimer fires, and scaled by rfModeDivisor to get the NonceTX
+uint16_t timerNonce = 0;   // incremented every time the hwtimer fires, and scaled by rfModeDivisor to get the NonceTX
 // XXX divisor would be more efficient if specified as a bit shift
 uint32_t rfModeDivisor = 1; // Since the hwTimer now runs at a fixed 1kHz we need to a factor to scale to the packet rate
 
@@ -478,28 +478,40 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
             #else // not ELRS_OG_COMPATIBILITY
 
+            uint16_t newTimerNonce = (rxBuffer[1] << 8) + rxBuffer[2] + 0;
+
             if (connectionState == disconnected)
             {
-                //Serial.print(NonceRX, DEC); Serial.write('x'); Serial.println(rxBuffer[2], DEC);
-                FHSSsetCurrIndex(rxBuffer[1]);
-                NonceRX = rxBuffer[2] + 1;
-                // XXX need to pass the timerNonce instead of the divided nonce
-                timerNonce = NonceRX * rfModeDivisor;
+                // FHSSsetCurrIndex(rxBuffer[1]);
+                // NonceRX = rxBuffer[2] + 1;
+
+                timerNonce = newTimerNonce + rfModeDivisor;
+                NonceRX = newTimerNonce / rfModeDivisor;
+                uint8_t newFhssIndex = ((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
+                uint8_t currentIndex = FHSSgetCurrIndex();
+                FHSSsetCurrIndex(newFhssIndex);
+
+                printf("tN %u, cI %u fI %u\n", timerNonce, currentIndex, newFhssIndex);
+
                 TentativeConnection();
                 doStartTimer = true;
-            } else {
-                // TODO make the nonce 16 bit and derive the fhss index from it directly
-                if (NonceRX != (rxBuffer[2] + 1))
+
+            } else { // not disconnected
+                uint16_t expectedNonce = newTimerNonce + rfModeDivisor;
+                if (timerNonce != expectedNonce)
                 {
-                    printf("nonce slip: current %d, expected %d\n", NonceRX, rxBuffer[2] + 1);
-                    NonceRX = rxBuffer[2] + 1;
-                    timerNonce = NonceRX * rfModeDivisor;
+                    printf("nonce slip: current %d, expected %d\n", timerNonce, expectedNonce);
+                    timerNonce = newTimerNonce + rfModeDivisor;
+                    NonceRX = timerNonce / rfModeDivisor;
+                    uint8_t newFhssIndex = ((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
+                    FHSSsetCurrIndex(newFhssIndex);
                 }
-                if (FHSSgetCurrIndex() != rxBuffer[1]) 
-                {
-                    printf("fhss index mismatch: current %d, expected %d\n", FHSSgetCurrIndex(), rxBuffer[1]);
-                    FHSSsetCurrIndex(rxBuffer[1]);
-                }
+
+                // if (FHSSgetCurrIndex() != rxBuffer[1]) 
+                // {
+                //     printf("fhss index mismatch: current %d, expected %d\n", FHSSgetCurrIndex(), rxBuffer[1]);
+                //     FHSSsetCurrIndex(rxBuffer[1]);
+                // }
             }
             #endif // ELRS_OG_COMPATIBILITY
 
@@ -509,7 +521,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
                 ExpressLRS_nextAirRateIndex = indexIN;
                 liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
                 // printf("changing rate index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
-                printf("rate change\n");
+                printf("rate change: %u\n", indexIN);
             }
 
 
@@ -564,7 +576,13 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     // printf("fhss...\n");
 
     alreadyFHSS = true;
-    uint32_t freq = FHSSgetNextFreq();
+    // uint32_t freq = FHSSgetNextFreq();
+    // uint8_t currentIndex = FHSSgetCurrIndex();
+    uint8_t newIndex = ((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
+    // printf("fhss current %u, new %u\n", currentIndex, newIndex);
+    FHSSsetCurrIndex(newIndex);
+
+    uint32_t freq = FHSSgetCurrFreq();
     radio1.SetFrequency(freq);
 
     #ifdef USE_SECOND_RADIO
@@ -970,7 +988,6 @@ void liveUpdateRFLinkRate(uint8_t index)
         #endif
     }
 
-    // XXX replace this with fixed timer plus rfMode divisor
     // HwTimer::setInterval(ModParams->interval);
     rfModeDivisor = ModParams->interval / 1000;
 
@@ -1618,13 +1635,13 @@ void app_main()
             #endif
 
             // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
-            printf("rx1Events %u, rx2Events %u, LQ1 %u, LQ2 %u, LQC %u, crc1Errors/s %u, crc2Errors/s %u\n", 
+            printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u ", 
                     totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
                     crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
 
             int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
             int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
-            printf("rss1 %d, rssi2 %d\n", rssiDBM0, rssiDBM1);
+            printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
             printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
 
             // totalPackets = 0;

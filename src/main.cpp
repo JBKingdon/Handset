@@ -17,7 +17,6 @@
 // Next:
 //    UI improvements
 //    Better stick calibration
-//    Get rid of "Driver" from the radio lib class name
 //    Make a proper class hierarchy for the radio libs
 
 //    msp for vtx channel?
@@ -421,7 +420,8 @@ void HandleFHSS()
 
    if (modresult == 0) // if it time to hop, do so.
    {
-      uint32_t f = FHSSgetNextFreq();
+      FHSSsetCurrIndex((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval);
+      uint32_t f = FHSSgetCurrFreq();
       // printf("f %lu\n\r", f);
       radio.SetFrequency(f);
    }
@@ -862,13 +862,15 @@ void GenerateSyncPacketData()
    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
    radio.TXdataBuffer[1] = fhssIndex+1;   // V1 shifted the fhss index by 1
    #else
-   radio.TXdataBuffer[1] = fhssIndex;
+   // radio.TXdataBuffer[1] = fhssIndex; Can be derived from the nonce
    #endif
 
    #ifdef ELRS_OG_COMPATIBILITY
    radio.TXdataBuffer[2] = NonceTX+1;
    #else
-   radio.TXdataBuffer[2] = NonceTX;
+   // radio.TXdataBuffer[2] = NonceTX;
+   radio.TXdataBuffer[1] = (timerNonce >> 8) & 0xFF;
+   radio.TXdataBuffer[2] = (timerNonce >> 0) & 0xFF;
    #endif //ELRS_OG_COMPATIBILITY
 
    // send either the current or next index if using sync spamming on rate change
