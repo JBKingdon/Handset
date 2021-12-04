@@ -23,7 +23,7 @@ uint64_t HwTimer::interval = TimerIntervalUSDefault;
 bool HwTimer::isTick = true;
 int32_t HwTimer::phaseShift = 0;
 int32_t HwTimer::freqOffset = 0;
-bool HwTimer::running = false;
+volatile bool HwTimer::running = false;
 QueueHandle_t HwTimer::s_timer_queue = 0;
 
 #define HWTIMER_TICKS_PER_US 5
@@ -138,8 +138,8 @@ void HwTimer::stop()
     {
         timer_pause(TIMER_GROUP_0, TIMER_0);
         // timer1_detachInterrupt();
-        running = false;
         timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
+        running = false;
     }
 }
 

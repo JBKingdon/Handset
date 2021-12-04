@@ -95,10 +95,11 @@ typedef struct expresslrs_rf_pref_params_s
     expresslrs_RFrates_e enum_rate; // Max value of 16 since only 4 bits have been assigned in the sync package.
     int32_t RXsensitivity;          //expected RF sensitivity based on
     uint32_t TOA;                   //time on air in microseconds
-    uint32_t RFmodeCycleInterval;
+    uint32_t RFmodeCycleInterval;   // ms before switching to the next mode when trying to establish the connection
     uint32_t RFmodeCycleAddtionalTime;  // the time to keep trying in tentative mode before giving up and starting over
     uint32_t SyncPktIntervalDisconnected;
     uint32_t SyncPktIntervalConnected;
+    uint32_t pfdOffset;
 
 } expresslrs_rf_pref_params_s;
 

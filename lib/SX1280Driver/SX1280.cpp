@@ -155,10 +155,21 @@ void SX1280Driver::checkVersion()
     }
 }
 
+int32_t SX1280Driver::Begin()
+{
+    return Begin(false);
+}
+
 /** Initialise the radio module
+ * 
+ * The config for the DIOs needs to be different on the rx and tx, should we split the DIO setup into
+ * it's own function?
+ * 
+ * @param usePreamble configure DIOs to use preamble detection or not
+ * 
  * @return 0 for success, -1 for failure
  */
-int32_t SX1280Driver::Begin()
+int32_t SX1280Driver::Begin(const bool usePreamble)
 {
     int32_t result = 0;
 
@@ -197,8 +208,16 @@ int32_t SX1280Driver::Begin()
 
     // Using dual dios for rx and tx done
     // TODO need to be able to configure if the timeout irq is on dio1 or dio2
-    this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_RX_DONE, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_TX_TIMEOUT, SX1280_IRQ_RADIO_NONE);
-
+    if (usePreamble) {
+        this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_RX_DONE, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_TX_TIMEOUT | SX1280_IRQ_PREAMBLE_DETECTED, SX1280_IRQ_RADIO_NONE);
+    } else {
+        printf("DIO enabling done and timeout\n");
+        // unexpected irqs seem to leak through to the isrs, so only enable the ones we actually want
+        this->SetDioIrqParams(SX1280_IRQ_RX_DONE | SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_TX_TIMEOUT, // enabled irqs
+                                SX1280_IRQ_RX_DONE,                             // dio1 mapping
+                                SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_TX_TIMEOUT,  // dio2 mapping
+                                SX1280_IRQ_RADIO_NONE);                         // dio3 mapping
+    }
     return result;
 }
 
@@ -221,7 +240,7 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
         iqMode = SX1280_LORA_IQ_NORMAL;
     }
 
-    this->SetMode(SX1280_MODE_STDBY_XOSC);
+    this->SetMode(SX1280_MODE_STDBY_XOSC); // Try using _FS for quicker changeover ?
     ConfigModParams(bw, sf, cr);
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, iqMode);

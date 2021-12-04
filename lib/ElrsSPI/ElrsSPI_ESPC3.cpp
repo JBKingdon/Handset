@@ -151,8 +151,9 @@ int ElrsSPI::init()
     // 10 seems solid
     // printf("SPI clk set slow for testing\n");
     // printf("SPI clock at 16MHz\n");
-    devcfg.clock_speed_hz = 10*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
-    // devcfg.clock_speed_hz = 4*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
+    // devcfg.clock_speed_hz = 10*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
+    devcfg.clock_speed_hz = 8*1000*1000,
+    // devcfg.clock_speed_hz = 4*1000*1000,
     devcfg.spics_io_num = pinCSS,           // CS pin
     devcfg.queue_size = 2,                  // Are we going to use queing at all?
 

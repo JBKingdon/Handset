@@ -14,7 +14,7 @@ private:
 	static bool isTick;
 	static int32_t phaseShift;
 	static int32_t freqOffset;
-	static bool running;
+	static volatile bool running;
 	static void (*callbackTick)();
 	static void (*callbackTock)();
 	static void timer_task(void* arg);

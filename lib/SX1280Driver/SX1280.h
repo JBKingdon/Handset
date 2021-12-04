@@ -92,6 +92,7 @@ public:
     void checkVersion();
 
     int32_t Begin();
+    int32_t Begin(const bool usePreamble);
     void End();
     void SetMode(SX1280_RadioOperatingModes_t OPmode);
     void Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, 

@@ -230,7 +230,9 @@
 
 #else // not using pwm
 
-#define CRSF_TX_PIN     GPIO_NUM_9
+#define DEBUG_PIN     GPIO_NUM_9
+// #define CRSF_TX_PIN     GPIO_NUM_9
+
 #define LED2812_PIN     GPIO_NUM_8
 
 #endif // USE_PWM6

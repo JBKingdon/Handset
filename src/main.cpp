@@ -238,6 +238,10 @@ DoublePT1filterInt rssiFilter;
 
 #define RX_CONNECTION_LOST_TIMEOUT 3000 // Time in ms of no TLM response to consider that we have lost connection
 
+// WARNING In the RX code we deal with connectionState which is defined in common.h and visible here, so it's easy
+// to get confused.
+// XXX Either use connectionState consistently for both tx and rx or scope the variable so it can't be used accidentally.
+// TODO Review all the code that uses isRXconnected and see if it makes sense when there's no telemetry
 bool isRXconnected = false;
 
 bool alreadyFHSS = false;
@@ -856,7 +860,8 @@ void GenerateSyncPacketData()
    uint8_t PacketHeaderAddr;
    PacketHeaderAddr = (DeviceAddr << 2) + SYNC_PACKET; // addr isn't used in compatibility mode from V1, but will get overwritten by the crc14 anyway
    radio.TXdataBuffer[0] = PacketHeaderAddr;
-   uint8_t fhssIndex = FHSSgetCurrIndex();
+
+   // uint8_t fhssIndex = FHSSgetCurrIndex();
    // printf("fhss %u\n\r", fhssIndex);
 
    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
@@ -1433,7 +1438,8 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
    // for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
 
    uint32_t SyncInterval;
-   if (isRXconnected)
+   // XXX testing
+   if (false && isRXconnected)
    {
       SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalConnected;
    } else {
@@ -1443,7 +1449,7 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
    // safety check to make sure that if the mode is changed to one with a smaller fhss interval we don't get
    // stuck with syncPacketIndex > the new interval
    // Also sets the index to 1 if we're trying to establish a new connection as it seems to help avoid an initial 'slip' connection
-   if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval || connectionState == connectionState_e::disconnected) {
+   if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval || !isRXconnected) {
       syncPacketIndex = 1;
    }
 
@@ -1458,16 +1464,31 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
             )
          )
       )
-  {
+  { // Send a sync packet
+
       GenerateSyncPacketData();
       SyncPacketLastSent = millis();
-      if (connectionState == connectionState_e::connected) {
-         syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
-      }
+
+      // rotate the sync packet through the packets in each fhss interval
+      // if (isRXconnected) {
+      //    syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+      //    if (syncPacketIndex == 0) syncPacketIndex = 1; // skip index 0 as it collides with telemetry
+      // }
+
       //Serial.println("sync");
-  }
-  else
-  {
+
+  } else { // Send a normal RC packet
+
+      // debug lack of sync packets
+      // if ((millis() - SyncPacketLastSent) > SyncInterval) {
+      //    // we're overdue for a sync packet, why didn't we send it?
+      //    if (radio.currFreq != GetInitialFreq()) {
+      //       printf("not freq\n\r");
+      //    } else if ((NonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval) != syncPacketIndex) {
+      //       printf("not index\n\r");
+      //    }
+      // }
+
       #ifdef USE_ADC_COPRO
       // Get gimbal data from ADC copro
 
@@ -1657,7 +1678,7 @@ void SetRFLinkRate(uint8_t index)
    ExpressLRS_currAirRate_Modparams = ModParams;
    ExpressLRS_currAirRate_RFperfParams = RFperf;
 
-   isRXconnected = false;
+   isRXconnected = false; // assume the rate change caused a disconnect until proven otherwise
 
    #ifdef USE_DYNAMIC_POWER
    // The dynamic power thresholds are relative to the rx sensitivity, so need to be updated
