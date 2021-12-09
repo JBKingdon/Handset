@@ -18,9 +18,12 @@ private:
 	static void (*callbackTick)();
 	static void (*callbackTock)();
 	static void timer_task(void* arg);
-	static xQueueHandle s_timer_queue;
+
+protected:
 
 public:
+	static xQueueHandle s_timer_queue;
+
 	static void init();
 	static void stop();
 	static void resume();

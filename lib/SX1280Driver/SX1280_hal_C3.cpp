@@ -123,7 +123,7 @@ bool  SX1280Hal_C3::WaitOnBusy()
     while (gpio_get_level(busyPin) == 1)
     {
         if (micros() > (t0 + MAX_WAIT)) {
-            printf("busy timeout \n\r");
+            printf("busy timeout\n\r");
             return true;
         }
     }

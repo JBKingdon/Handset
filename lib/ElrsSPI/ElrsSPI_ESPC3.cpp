@@ -17,6 +17,7 @@
 #include "../../src/config.h"
 #include "../../src/utils.h"
 
+portMUX_TYPE xSpiMux = portMUX_INITIALIZER_UNLOCKED;
 
 ElrsSPI::ElrsSPI(uint32_t _pinMosi, uint32_t _pinMiso, uint32_t _pinSCK, uint32_t _pinCSS) : 
     pinMosi{_pinMosi}, pinMiso{_pinMiso}, pinSCK{_pinSCK}, pinCSS{_pinCSS}
@@ -146,13 +147,25 @@ int ElrsSPI::init()
     
     memset(&devcfg, 0, sizeof(devcfg));
     
-    // 16MHz seems to be too fast
-    // 12 looks good - maybe a small number of errors. Check again once pcb is done, might be messy wiring.
-    // 10 seems solid
+    // Tested speeds
+    // Breadboard: ok up to 10 (but dropped to 8 to try and be sure)
+    // PCB V0 (modules) up to 18MHz (max speed in 1280 docs)
+
     // printf("SPI clk set slow for testing\n");
-    // printf("SPI clock at 16MHz\n");
     // devcfg.clock_speed_hz = 10*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
+    #ifdef C3_PCB_V0
+
+    // Run at 12 so that we should have some timing room once we bump back to 18
+    // printf("SPI clock at 12MHz\n");
+    // devcfg.clock_speed_hz = 12*1000*1000,
+
+    // Full speed is 18MHz per 1280 datasheet
+    printf("SPI clock at 18MHz\n");
+    devcfg.clock_speed_hz = 18*1000*1000,
+
+    #else
     devcfg.clock_speed_hz = 8*1000*1000,
+    #endif
     // devcfg.clock_speed_hz = 4*1000*1000,
     devcfg.spics_io_num = pinCSS,           // CS pin
     devcfg.queue_size = 2,                  // Are we going to use queing at all?
@@ -198,7 +211,12 @@ int8_t ElrsSPI::transfer(uint8_t *buffer, const uint8_t nBytes)
     // XXX try using the underlying start and end commands so we can check for spi collisions and retry
     // XXX there's also the whole queued api to test out
 
+    // XXX Disabling interrupts is a sledge hammer approach. Replace with something better
+    taskENTER_CRITICAL(&xSpiMux);
+
     ret = spi_device_polling_transmit(spiHandle, &trans_desc);
+
+    taskEXIT_CRITICAL(&xSpiMux);
 
     return (ret != ESP_OK) ? -1 : 0;
 }

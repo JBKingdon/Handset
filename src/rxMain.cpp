@@ -38,7 +38,7 @@
 #include "driver/rmt.h"
 #include "led_strip.h"
 
-#define LED_BRIGHTNESS 64
+#define LED_BRIGHTNESS 32
 
 // #define PRINT_RX_SCOREBOARD 1
 
@@ -144,7 +144,7 @@ bool radio2Timedout = false;
 volatile uint32_t tPacketR1 = 0;
 volatile uint32_t tPacketR2 = 0;
 volatile uint32_t lastValidPacket = 0;
-uint32_t lastSyncPacket = 0;
+volatile uint32_t lastSyncPacket = 0;
 
 uint32_t linkStatstoFCLastSent = 0;
 
@@ -166,6 +166,10 @@ uint32_t RFmodeLastCycled = 0;
 #define RFmodeCycleMultiplierSlow 10
 uint8_t RFmodeCycleMultiplier;
 bool LockRFmode = false;
+
+// Track how long the timer callbacks have been running. 0 = not running
+static uint32_t tickStartMs = 0;
+static uint32_t tockStartMs = 0;
 
 
 // LPF LPF_UplinkRSSI(5);
@@ -254,12 +258,13 @@ void TentativeConnection()
     connectionStatePrev = connectionState;
     connectionState = tentative;
     RXtimerState = tim_disconnected;
-    printf("tentative conn\n");
+    // printf("tentative conn\n");
+    std::cout << "TC";
     FreqCorrection = 0;
     Offset = 0;
     prevOffset = 0;
     LPF_Offset.init(0);
-    RFmodeLastCycled = millis(); // give another 3 sec for lock to occur
+    RFmodeLastCycled = millis(); // reset the clock for cycling the mode
 
     LPF_rcvInterval.init(ExpressLRS_currAirRate_Modparams->interval);
 
@@ -271,12 +276,9 @@ void TentativeConnection()
     radio2->setRxTimeout(20000);
 
 
-#if WS2812_LED_IS_USED
-    uint8_t LEDcolor[3] = {0};
-    LEDcolor[(2 - ExpressLRS_currAirRate_Modparams->index) % 3] = 50;
-    WS281BsetLED(LEDcolor);
-    LEDWS2812LastUpdate = millis();
-#endif
+    #ifdef LED_STATUS_INDEX
+    setLedColour(LED_STATUS_INDEX, 40, 20, 0);
+    #endif
 
     // The caller MUST call hwTimer.resume(). It is not done here because
     // the timer ISR will fire immediately and preempt any other code
@@ -500,6 +502,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
             #else // not ELRS_OG_COMPATIBILITY
 
             uint16_t newTimerNonce = (rxBuffer[1] << 8) + rxBuffer[2] + 0;
+            const uint8_t nonceOffsets[] = { 0, 1, 3, 6}; // n(n+1)/2 - is this going to be stable?
 
             if (connectionState == disconnected)
             {
@@ -507,20 +510,19 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
                 // NonceRX = rxBuffer[2] + 1;
 
                 timerNonce = 2 * (newTimerNonce + rfModeDivisor); // how much to add? It's more than 1, but maybe less than rfModeDivisor
+                // timerNonce = 2 * (newTimerNonce + nonceOffsets[ExpressLRS_currAirRate_Modparams->index]); // seems to make things worse
                 NonceRX = timerNonce / (2 * rfModeDivisor);
                 // uint8_t newFhssIndex = ((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-                uint8_t newFhssIndex = ((NonceRX) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-                uint8_t currentIndex = FHSSgetCurrIndex();
+                // uint8_t newFhssIndex = ((NonceRX) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
+                // uint8_t currentIndex = FHSSgetCurrIndex();
                 // FHSSsetCurrIndex(newFhssIndex);
 
-                printf("tN %u, cI %u fI %u\n", timerNonce, currentIndex, newFhssIndex);
+                // printf("tN %u, cI %u fI %u\n", timerNonce, currentIndex, newFhssIndex);
 
                 TentativeConnection();
                 doStartTimer = true;
 
             } else { // not disconnected
-
-                uint8_t nonceOffsets[] = { 0, 1, 3, 6};
 
                 // uint8_t expectedNonce = (newTimerNonce / rfModeDivisor) + 0; // +1 because the tx set it's timerNonce at the packet start and we're now at packet end
                 // uint8_t currentNonce = (timerNonce / (2 * rfModeDivisor)); // NonceRX might not have been updated recently, so calculate what it would be
@@ -545,12 +547,21 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
             // if (ExpressLRS_currAirRate_Modparams->index != (expresslrs_tlm_ratio_e)indexIN)
             if (ExpressLRS_currAirRate_Modparams->index != indexIN)
-            { // change link parameters if required
+            {
+                // Adjust the timerNonce by the difference in offsets
+                const int8_t currentOffset = nonceOffsets[ExpressLRS_currAirRate_Modparams->index];
+                const int8_t nextOffset = nonceOffsets[indexIN];
+                const int8_t deltaOffset = nextOffset - currentOffset;
+                
+                timerNonce += deltaOffset;
+
+                // change link parameters
                 ExpressLRS_nextAirRateIndex = indexIN;
                 liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
+
                 // printf("changing rate index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
                 uint32_t packetHz = 1000 / (1 << indexIN);
-                printf("\nrate change: %u Hz\n", packetHz);
+                printf("\nrate change: %u Hz, deltaOffset %d\n", packetHz, deltaOffset);
             }
 
 
@@ -570,7 +581,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     }
 
     // LQCalc.add(); // Received a packet, that's the definition of LQ
-    // Extend sync duration since we've received a packet at this rate
+    // Extend cycle duration since we've received a packet at this rate
     // but do not extend it indefinitely
     RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow;
 
@@ -591,6 +602,8 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     // These conditions will have short circuit evaluation, left to right.
     if (alreadyFHSS || (ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || (connectionState == disconnected))
     {
+        // if (alreadyFHSS) std::cout << "H-already\n";
+        // if (connectionState == disconnected) std::cout << "H-disc\n";
         return false;
     }
 
@@ -599,6 +612,7 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     uint8_t modresultFHSS = (NonceRX + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
     if (modresultFHSS != 0)
     {
+        // std::cout << "H-nonce\n";
         return false;
     }
 
@@ -607,7 +621,7 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     alreadyFHSS = true;
     // uint32_t freq = FHSSgetNextFreq();
     // uint8_t newIndex = (((timerNonce / (2 * rfModeDivisor)) + (rfModeDivisor)) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-    uint8_t newIndex = ((((timerNonce + 0) / (2 * rfModeDivisor))) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) ;
+    uint8_t newIndex = (((timerNonce + 0) / (2 * rfModeDivisor)) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) ;
 
     // uint8_t currentIndex = FHSSgetCurrIndex();
     // printf("fhss current %u, new %u\n", currentIndex, newIndex);
@@ -619,6 +633,8 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     #ifdef USE_SECOND_RADIO
     radio2->SetFrequency(freq);
     #endif
+
+    // std::cout << 'H';
 
     // printf("done\n");
 
@@ -652,6 +668,8 @@ bool ICACHE_RAM_ATTR isTelemetryFrame()
     return (modresult == 0);
 }
 
+char * telemWhere = (char *)"not set";
+
 bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 {
     #ifdef ENABLE_TELEMETRY
@@ -678,6 +696,8 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     SX1280Driver *sendingRadio = &radio1;
     SX1280Driver *otherRadio = radio2;
 
+    telemWhere = (char *)"FS";
+
     // turn off the other radio so it doesn't report our own telem packet
     otherRadio->SetMode(SX1280_MODE_FS);
 
@@ -699,10 +719,14 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     // XXX add the active antenna indicator
 
+    telemWhere = (char *)"crc";
+
     // XXX hard coded packet length - does it matter?
     uint16_t crc = ota_crc.calc(sendingRadio->TXdataBuffer, 7);
     sendingRadio->TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
     sendingRadio->TXdataBuffer[7] = crc & 0xFF;
+
+    telemWhere = (char *)"tx";
 
     sendingRadio->TXnb(sendingRadio->TXdataBuffer, 8);
     // printf("telem sent ");
@@ -711,6 +735,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     // printf("...done\n");
 
+    telemWhere = (char *)"end";
     return true;
 }
 
@@ -756,10 +781,10 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                 if (HwTimer::isRunning()) {
                     radio1Timedout = true;
                     radio1.ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
-                    std::cout << "DT1";
+                    // std::cout << "DT1";
                 } else {
                     radio1.RXnb(); // clears all IRQs
-                    std::cout << "T1";
+                    // std::cout << "T1";
                 }
             } else {
                 printf("!!! tx_task irqs %04X\n", irqs);
@@ -805,10 +830,10 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 if (HwTimer::isRunning()) {
                     radio2Timedout = true;
                     radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
-                    std::cout << "DT2";                    
+                    // std::cout << "DT2";
                 } else {
                     radio2->RXnb(); // implicit clear irqs
-                    std::cout << "T2";                    
+                    // std::cout << "T2";
                 }
 
             } else {
@@ -838,6 +863,7 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
             // unsigned long tRcv = micros();
 
             // timeouts for sx1280 are currently routed into the tx_tasks
+            // XXX do the same for E22 (sx1262)
             #ifdef RADIO_E22
 
             uint16_t irqS = radio1.GetIrqStatus();
@@ -874,8 +900,8 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                             #if defined(PRINT_RX_SCOREBOARD)
                             // printf("1");
                             std::cout << '1';
-
                             #endif
+
                         } else {
                             // Skip at most 1 packet
                             // During startup the timer isn't running, so we can't rely on packetReceived being cleared in tick()
@@ -1181,9 +1207,7 @@ void ICACHE_RAM_ATTR updatePhaseLock()
         if (connectionState != connected)
         {
             HwTimer::setPhaseShift(RawOffset >> 1);
-        }
-        else
-        {
+        } else {
             HwTimer::setPhaseShift(Offset >> 2);
         }
 
@@ -1212,6 +1236,8 @@ void ICACHE_RAM_ATTR updatePhaseLock()
  */
 void ICACHE_RAM_ATTR tick()
 {
+    tickStartMs = millis();
+
     // printf("tickIn\n");
     // static unsigned long last = 0;
     // unsigned long now = micros();
@@ -1228,9 +1254,9 @@ void ICACHE_RAM_ATTR tick()
 
     // if (((timerNonce + halfStep) % rfModeDivisor) == 0)
     {
-        #ifdef DEBUG_PIN
-        gpio_set_level(DEBUG_PIN, 1);
-        #endif
+        // #ifdef DEBUG_PIN
+        // gpio_set_level(DEBUG_PIN, 1);
+        // #endif
 
         updatePhaseLock();
         NonceRX = timerNonce / (2 * rfModeDivisor);
@@ -1253,29 +1279,43 @@ void ICACHE_RAM_ATTR tick()
         alreadyFHSS = false;
     }
     // printf("tickOut\n");
+    tickStartMs = 0;
+
 }
+
+char *tockWhere = (char *)"not set";
 
 /** Aligned with (approximately) the start of the radio signal
  * 
  */
 void ICACHE_RAM_ATTR tock()
 {
+    tockStartMs = millis();
+
     // printf("tockIn\n");
+    // std::cout << "O";
+
+    tockWhere = (char *)"start";
 
     // if (timerNonce % rfModeDivisor == 0)
     {
-        pfdLoop.intEvent(esp_timer_get_time()); // our internal osc just fired
+        pfdLoop.intEvent(esp_timer_get_time());
 
-        #ifdef DEBUG_PIN
-        gpio_set_level(DEBUG_PIN, 0);
-        #endif
+        // #ifdef DEBUG_PIN
+        // gpio_set_level(DEBUG_PIN, 0);
+        // #endif
 
         // updateDiversity();
+        tockWhere = (char *)"FHSS";
         HandleFHSS();
-        HandleSendTelemetryResponse();
+        tockWhere = (char *)"telem";
+        HandleSendTelemetryResponse(); // XXX hangs in here
 
         // This is a hail-Mary check for if the radios haven't been talking and kick off new RXnb calls.
         // But if it's here then it will only active when the timer is running. Maybe we need two levels of hail-Mary
+
+        tockWhere = (char *)"HM";
+
 
         // privatize the *Last times so they can't change after we assign 'now' and cause false positives
         uint32_t p1 = r1LastIRQms, p2 = r2LastIRQms;
@@ -1287,6 +1327,7 @@ void ICACHE_RAM_ATTR tock()
             std::cout << "HM1";
             r1LastIRQms = now; // stop it spamming
         }
+
         if ((now - p2) > 40000)
         {
             radio2->RXnb();
@@ -1295,6 +1336,7 @@ void ICACHE_RAM_ATTR tock()
             r2LastIRQms = now; // stop it spamming
         }
 
+        tockWhere = (char *)"dTs";
 
         // deferred receives from rx timeouts
         if (!alreadyTLMresp) // if we're doing telem then the receivers will be restarted after anyway.
@@ -1323,6 +1365,8 @@ void ICACHE_RAM_ATTR tock()
         // printf("tockOut\n");
 
         static unsigned long tDrStart; // NB static for perstence across calls
+
+        tockWhere = (char *)"DR";
 
         // Dynamic Rate state transitions
         // XXX disabled for testing
@@ -1364,6 +1408,9 @@ void ICACHE_RAM_ATTR tock()
         } // if (connected)
 
     } // if (timerNonce mod divisor is zero)
+    tockWhere = (char *)"end";
+
+    tockStartMs = 0;
 }
 
 /** 
@@ -1377,8 +1424,10 @@ void ICACHE_RAM_ATTR tock()
  */
 void ICACHE_RAM_ATTR tickTock()
 {
+    // std::cout << 'O';
+
     timerNonce++;
-    if (timerNonce == 0) std::cout << 'W';
+    // if (timerNonce == 0) std::cout << 'W';
 
     if (timerNonce % (2 * rfModeDivisor) == 0)
     {
@@ -1386,6 +1435,7 @@ void ICACHE_RAM_ATTR tickTock()
     } else if ((timerNonce + rfModeDivisor) % (2 * rfModeDivisor) == 0) {
         tick();
     }
+
 }
 
 
@@ -1438,6 +1488,11 @@ void lostConnection()
     radio2->RXnb();
     #endif
 
+    #ifdef LED_STATUS_INDEX
+    setLedColour(LED_STATUS_INDEX, LED_BRIGHTNESS, 0, 0);
+    #endif
+
+
 // #ifdef GPIO_PIN_LED_GREEN
 //     digitalWrite(GPIO_PIN_LED_GREEN, LOW ^ GPIO_LED_GREEN_INVERTED);
 // #endif
@@ -1473,12 +1528,10 @@ void gotConnection()
 
     printf("got conn\n");
 
-#if WS2812_LED_IS_USED
-    uint8_t LEDcolor[3] = {0};
-    LEDcolor[(2 - ExpressLRS_currAirRate_Modparams->index) % 3] = 255;
-    WS281BsetLED(LEDcolor);
-    LEDWS2812LastUpdate = millis();
-#endif
+    #ifdef LED_STATUS_INDEX
+    setLedColour(LED_STATUS_INDEX, 0, LED_BRIGHTNESS, 0);
+    #endif
+
 
 #ifdef GPIO_PIN_LED_GREEN
     digitalWrite(GPIO_PIN_LED_GREEN, HIGH ^ GPIO_LED_GREEN_INVERTED);
@@ -1513,7 +1566,13 @@ static uint8_t minLqForChaos()
  */
 static void cycleRfMode()
 {
-    if (connectionState == connected) // || InBindingMode || webUpdateMode)
+    // statics for persistence accross calls
+    static uint32_t LEDLastUpdate = 0; 
+    static bool LED = false; 
+
+    const uint32_t LED_INTERVAL_DISCONNECTED = 1000;
+
+    if (connectionState != disconnected) // || InBindingMode || webUpdateMode)
         return;
 
     // Actually cycle the RF mode if not LOCK_ON_FIRST_CONNECTION
@@ -1545,16 +1604,23 @@ static void cycleRfMode()
     } // if time to switch RF mode
 
     // Always blink the LED at a steady rate when not connected, independent of the cycle status
-    // if (millis() - LEDLastUpdate > LED_INTERVAL_DISCONNECTED)
-    // {
-    //     #ifdef GPIO_PIN_LED
-    //         digitalWrite(GPIO_PIN_LED, LED ^ GPIO_LED_RED_INVERTED);
-    //     #elif GPIO_PIN_LED_GREEN
-    //         digitalWrite(GPIO_PIN_LED_GREEN, LED ^ GPIO_LED_GREEN_INVERTED);
-    //     #endif
-    //     LED = !LED;
-    //     LEDLastUpdate = millis();
-    // } // if cycle LED
+    if (millis() - LEDLastUpdate > LED_INTERVAL_DISCONNECTED)
+    {
+        #ifdef GPIO_PIN_LED
+            digitalWrite(GPIO_PIN_LED, LED ^ GPIO_LED_RED_INVERTED);
+        #elif GPIO_PIN_LED_GREEN
+            digitalWrite(GPIO_PIN_LED_GREEN, LED ^ GPIO_LED_GREEN_INVERTED);
+        #endif
+
+        #ifdef LED_STATUS_INDEX
+        setLedColour(LED_STATUS_INDEX, LED ? LED_BRIGHTNESS : 0, 0, 0);
+        #endif
+
+        LED = !LED;
+        LEDLastUpdate = millis();
+    } // if cycle LED
+
+
 }
 
 void setupPWM()
@@ -1604,7 +1670,8 @@ void initLeds()
     ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
 
     // install ws2812 driver
-    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(2, (led_strip_dev_t)config.channel);
+    const uint8_t N_LEDS = 3;
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(N_LEDS, (led_strip_dev_t)config.channel);
     strip = led_strip_new_rmt_ws2812(&strip_config);
     if (!strip) {
         printf("install WS2812 driver failed\n");
@@ -1621,6 +1688,8 @@ void initLeds()
     {
         strip->set_pixel(strip, 0, i, 0, 0);
         strip->set_pixel(strip, 1, i, 0, 0);
+        strip->set_pixel(strip, 2, i, 0, 0);
+
         strip->refresh(strip, 1);
         delay(1);
     }
@@ -1630,6 +1699,7 @@ void initLeds()
     {
         strip->set_pixel(strip, 0, 255-i, i, 0);
         strip->set_pixel(strip, 1, 255-i, i, 0);
+        strip->set_pixel(strip, 2, 255-i, i, 0);
         strip->refresh(strip, 1);
         delay(1);
     }
@@ -1639,6 +1709,7 @@ void initLeds()
     {
         strip->set_pixel(strip, 0, 0, 255-i, i);
         strip->set_pixel(strip, 1, 0, 255-i, i);
+        strip->set_pixel(strip, 2, 0, 255-i, i);
         strip->refresh(strip, 1);
         delay(1);
     }
@@ -1648,6 +1719,7 @@ void initLeds()
     {
         strip->set_pixel(strip, 0, 0, 0, 255-i);
         strip->set_pixel(strip, 1, 0, 0, 255-i);
+        strip->set_pixel(strip, 2, 0, 0, 255-i);
         strip->refresh(strip, 1);
         delay(2);
     }
@@ -1662,6 +1734,9 @@ void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue)
 
 extern "C"
 {
+
+extern char * wcWhere;
+
 
 void app_main()
 {
@@ -1700,20 +1775,22 @@ void app_main()
 
     const bool usePreambleDetect = false; // this didn't work out, but maybe worth another look someday?
 
+    // XXX retry if either radio doesn't initialise properly
+
     if (radio1.Begin(usePreambleDetect) == 0) {
         // set led green
-        setLedColour(0, 0, LED_BRIGHTNESS, 0);
+        setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
     } else {
         // set led red
-        setLedColour(0, LED_BRIGHTNESS, 0, 0);
+        setLedColour(LED_RADIO1_INDEX, LED_BRIGHTNESS, 0, 0);
     }
 
     if (radio2->Begin(usePreambleDetect) == 0) {
         // set led green
-        setLedColour(1, 0, LED_BRIGHTNESS, 0);
+        setLedColour(LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
     } else {
         // set led red
-        setLedColour(1, LED_BRIGHTNESS, 0, 0);
+        setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
     }
 
     radio1.SetOutputPower(DISARM_POWER);
@@ -1810,8 +1887,8 @@ void app_main()
             uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / totalPackets;
             uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / totalPackets;
 
-            strip->set_pixel(strip, 0, red1, green1, blue1);
-            strip->set_pixel(strip, 1, red2, green2, blue2);
+            strip->set_pixel(strip, LED_RADIO1_INDEX, red1, green1, blue1);
+            strip->set_pixel(strip, LED_RADIO2_INDEX, red2, green2, blue2);
             strip->refresh(strip, 10);
 
             // printf("delta %u bright %u green %u\n", delta1, brightness1, green1);
@@ -1826,14 +1903,25 @@ void app_main()
             std::cout << '\n';
             #endif
 
+            // check for hung callbacks
+            if (tickStartMs && ((now - tickStartMs) > 100))
+            {
+                std::cout << "XXX tick hung\n";
+            }
+            if (tockStartMs && ((now - tockStartMs) > 100))
+            {
+                printf("XXX tock hung at tock %s, telem %s, wc %s\n", tockWhere, telemWhere, wcWhere);
+            }
+
             // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
             printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u ", 
                     totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
                     crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
 
-            int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
-            int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
-            printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
+            // int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
+            // int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
+            // printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
+            printf("tN %u ", timerNonce);
             printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
 
             // totalPackets = 0;
@@ -1852,25 +1940,20 @@ void app_main()
             }
         }
 
-        // This isn't great to do from here, we might get an SPI collision with the still active rx/tx tasks
-        // if ((connectionState != disconnected) && (ExpressLRS_nextAirRateIndex != ExpressLRS_currAirRate_Modparams->index)){ // forced change
-        //     printf("Air rate change req via sync\n");
-        //     lostConnection();
-        //     lastSyncPacket = now;           // reset this variable to stop rf mode switching and add extra time
-        //     RFmodeLastCycled = now;         // reset this variable to stop rf mode switching and add extra time
-        //     crsf.sendLinkStatisticsToFC();
-        //     // crsf.sendLinkStatisticsToFC(); // need to send twice, not sure why, seems like a BF bug?
-        //     continue; // no point looking at all the other cases in the loop after this
-        // }
 
-
-        // again this is potentially dangerous if rx may still be in progress
-        if (connectionState == tentative && (now - lastSyncPacket > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleAddtionalTime))
+        // This is potentially dangerous if rx may still be in progress
+        // Fail a tentative connection if we don't get a sync packet in RFmodeCycleAddtionalTime
+        if (connectionState == tentative)
         {
-            printf("Bad sync, aborting\n");
-            lostConnection();
-            RFmodeLastCycled = now;
-            lastSyncPacket = now;
+            const uint32_t localLastSyncPacket = lastSyncPacket;
+            const uint32_t tBS = millis();
+            if ((tBS - localLastSyncPacket) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleAddtionalTime)
+            {
+                printf("Bad sync, aborting\n");
+                lostConnection();
+                RFmodeLastCycled = now;
+                lastSyncPacket = now;
+            }
         }
 
         // check if we lost conn.

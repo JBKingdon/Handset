@@ -40,15 +40,21 @@ void SX1280Hal::end()
     // detachInterrupt(GPIO_PIN_DIO1);
 }
 
+char * wcWhere = (char *)"not set";
 
 void SX1280Hal::WriteCommand(const SX1280_RadioCommands_t command, const uint8_t val)
 {
     uint8_t buffer[2] = {command, val};
 
+    wcWhere = (char *) "WOB";
+
     WaitOnBusy();
 
-    // spi1_transferBytes(buffer, 2);
+    wcWhere = (char *) "transfer";
+
     spi->transfer(buffer, 2);
+
+    wcWhere = (char *) "end";
 }
 
 // TODO get rid of all uses and remove this function

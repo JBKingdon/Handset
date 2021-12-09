@@ -4,11 +4,16 @@
 
 // which board are we using
 
-// XXX moved to platformio.ini
+// NB moved to platformio.ini:
 // #define T_DISPLAY
 // #define LONGAN_NANO
 // #define PCB_V1_0
 // #define RX_C3
+
+// XXX where's the best place for these?
+
+#define C3_PCB_V0
+#define USE_SECOND_RADIO
 
 // Not sure where best to set this, but it uses a set of modes tuned for the fullD rx code
 // Which sounds like an unnecessary thing anyway, so try and get rid of this long term
@@ -188,32 +193,58 @@
 
 #include "driver/gpio.h"
 
-#define USE_SECOND_RADIO
+#ifdef C3_PCB_V0
 
+#define RADIO_RESET_PIN GPIO_NUM_4
+#define RADIO_MOSI_PIN  GPIO_NUM_1
+#define RADIO_MISO_PIN  GPIO_NUM_0
+#define RADIO_SCK_PIN   GPIO_NUM_2
+#define RADIO_NSS_PIN   GPIO_NUM_8
+#define RADIO_BUSY_PIN  GPIO_NUM_7
+#define RADIO_DIO1_PIN  GPIO_NUM_5
+#define RADIO_DIO2_PIN  GPIO_NUM_19
+
+#else // these are for the breadboard prototype
 
 #define RADIO_RESET_PIN GPIO_NUM_18
-// #define RADIO_RXEN_PIN  GPIO_NUM_8  // try tying to 3v3
-// #define RADIO_TXEN_PIN  GPIO_NUM_1  // maybe experiment with auto mode using dio2?
-
 #define RADIO_MOSI_PIN  GPIO_NUM_5
 #define RADIO_MISO_PIN  GPIO_NUM_4
 #define RADIO_SCK_PIN   GPIO_NUM_6
 #define RADIO_NSS_PIN   GPIO_NUM_7
-
 #define RADIO_BUSY_PIN  GPIO_NUM_19
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 #define RADIO_DIO2_PIN  GPIO_NUM_2  // might do without this if needed? // problematical pin, used for strapping
+
+#endif // C3_PCB_V0
+
+// These 2 are for sx1262
+// #define RADIO_RXEN_PIN  GPIO_NUM_8  // try tying to 3v3
+// #define RADIO_TXEN_PIN  GPIO_NUM_1  // maybe experiment with auto mode using dio2?
+
+
 
 // second radio for full diversity.
 // reset, mosi, miso and sck common with first radio
 
 #ifdef USE_SECOND_RADIO
 
+#ifdef C3_PCB_V0
+
+#define RADIO2_NSS_PIN   GPIO_NUM_6
+#define RADIO2_BUSY_PIN  GPIO_NUM_18
+#define RADIO2_DIO1_PIN  GPIO_NUM_10
+#define RADIO2_DIO2_PIN  GPIO_NUM_3
+
+#else // for breadboard prototype
+
 // #define RADIO2_RESET_PIN GPIO_NUM_8
 #define RADIO2_NSS_PIN   GPIO_NUM_1
 #define RADIO2_BUSY_PIN  GPIO_NUM_12
 #define RADIO2_DIO1_PIN  GPIO_NUM_3
 #define RADIO2_DIO2_PIN  GPIO_NUM_0
+
+#endif // C3_PCB_V0
+
 
 #endif // USE_SECOND_RADIO
 
@@ -230,10 +261,30 @@
 
 #else // not using pwm
 
-#define DEBUG_PIN     GPIO_NUM_9
+
+// For PCB proto
+#ifdef C3_PCB_V0
+
+#define LED2812_PIN     GPIO_NUM_9
+// #define CRSF_TX_PIN     GPIO_NUM_21
+
+#define LED_STATUS_INDEX 0
+#define LED_RADIO1_INDEX 1
+#define LED_RADIO2_INDEX 2
+
+
+#else
+
+// #define DEBUG_PIN     GPIO_NUM_9
 // #define CRSF_TX_PIN     GPIO_NUM_9
 
 #define LED2812_PIN     GPIO_NUM_8
+
+#define LED_RADIO1_INDEX 0
+#define LED_RADIO2_INDEX 1
+
+#endif // C3_PCB_V0
+
 
 #endif // USE_PWM6
 
