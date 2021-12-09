@@ -601,14 +601,15 @@ void SX1280Driver::TXnb(volatile uint8_t *data, uint8_t length)
 
 void SX1280Driver::readRXData()
 {
-    uint8_t FIFOaddr = GetRxBufferAddr();
-    hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH);
+    // uint8_t FIFOaddr = GetRxBufferAddr();
+    // hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH);
+
     // if (FIFOaddr != 0) {
-    //     printf("offset %u\n", FIFOaddr);
+    //     printf("!!! offset %u\n", FIFOaddr);
     // }
 
     // assume we always read from offset 0 (won't work with free running receives)
-    // hal->ReadBuffer(0, RXdataBuffer, OTA_PACKET_LENGTH);
+    hal->ReadBuffer(0, RXdataBuffer, OTA_PACKET_LENGTH);
 }
 
 void SX1280Driver::RXnb()
