@@ -61,11 +61,6 @@ const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PW
 
 #endif
 
-// Replaced with per mode offset value
-// XXX can this be reduced at all? Should it have a component based on (interval - tOTA)?
-// #define PACKET_TO_TOCK_SLACK 200 // Desired buffer time between Packet ISR and Tock ISR
-// #define PACKET_TO_TOCK_SLACK 100 // Desired buffer time between Packet ISR and Tock ISR
-// #define PACKET_TO_TOCK_SLACK 0 // For syncing to preamble detect
 
 #ifdef RADIO_E22
 
@@ -96,6 +91,26 @@ enum RadioSelection
     both
 };
 
+enum SpiTaskID
+{
+    RxDone,
+    SetFrequency,
+    SetStandby,
+    StartRx,
+    StartTx,
+    ClearIRQs
+};
+
+typedef struct 
+{
+    SpiTaskID id;
+    uint32_t radioID;
+    union {
+        uint32_t frequency;
+        uint32_t irqMask;
+    };
+
+} SpiTaskInfo;
 
 DynamicRateStates drState = DynamicRateStates::Normal;
 
@@ -121,7 +136,6 @@ uint32_t r1LastIRQms = 0;
 uint32_t r2LastIRQms = 0;
 
 static xQueueHandle rx_evt_queue = NULL;
-static xQueueHandle rx2_evt_queue = NULL;
 static xQueueHandle tx_evt_queue = NULL;
 static xQueueHandle tx2_evt_queue = NULL;
 
@@ -147,6 +161,8 @@ volatile uint32_t lastValidPacket = 0;
 volatile uint32_t lastSyncPacket = 0;
 
 uint32_t linkStatstoFCLastSent = 0;
+
+uint32_t pfdDebugCounter = 0; // when greater than 0 updatePFD will print the offset
 
 int32_t RawOffset;
 int32_t prevRawOffset;
@@ -341,12 +357,11 @@ bool hasValidCRC(uint8_t *rxBuffer)
 }
 
 /**
- * @return 1 if packet passed crc check, 0 otherwise
+ * @return currently always returns 1
  */
 uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketReceived)
 {
     uint8_t type;
-    // uint16_t inCRC;
 
     // uint32_t beginProcessing;
     // uint32_t doneProcessing;
@@ -354,6 +369,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     // beginProcessing = micros();
 
     #ifdef USE_PWM6
+
+    // XXX this code needs review and updating for dual modem
 
     type = ((Pwm6Payload_t*) radio1.RXdataBuffer)->header;
     inCRC = ((Pwm6Payload_t*) radio1.RXdataBuffer)->crc;
@@ -365,40 +382,19 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
     type = rxBuffer[0] & 0b11;
 
-    // inCRC = ( ( (uint16_t)(rxBuffer[0] & 0b11111100) ) << 6 ) | rxBuffer[OTA_PACKET_LENGTH-1];
-
-    // rxBuffer[0] = type;
-    // uint16_t calculatedCRC = ota_crc.calc(rxBuffer, OTA_PACKET_LENGTH-1);
-
     #endif // USE_PWM6
 
     // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", rxBuffer[i]);
     // printf(", inCRC %04X calcCRC %04X\n", inCRC, calculatedCRC);
 
-    // if (!hasValidCRC(rxBuffer))
-    // // if (inCRC != calculatedCRC)
-    // {
-    //     #ifndef DEBUG_SUPPRESS
-    //     // printf("CRC error on RF packet: ");
-    //     // for (int i = 0; i < OTA_PACKET_LENGTH; i++)
-    //     // {
-    //     //     printf("%02X ", rxBuffer[i]);
-    //     // }
-    //     // printf("\n");
-    //     #endif
-    //     #if defined(PRINT_RX_SCOREBOARD)
-    //         lastPacketCrcError = true;
-    //     #endif
-    //     // crcCounter++;
-    //     return 0;     // EARLY RETURN
-    // }
-
-    // uses the time the packet was received so as to reduce jitter
-    // pfdLoop.extEvent(tPacketReceived + PACKET_TO_TOCK_SLACK);
 
     // try this again?
     // Use the difference between interval and TOA to figure out how long after the packet is received until the
+    // start of the frame
     // pfdLoop.extEvent(tPacketReceived + (ExpressLRS_currAirRate_Modparams->interval * 75 / 100));
+
+    // TODO since the crc checking was moved out of this function does it make sense to move the pfd extEvent() call
+    // out as well?
 
     // get the per mode offset
     uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
@@ -509,13 +505,9 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
                 // FHSSsetCurrIndex(rxBuffer[1]);
                 // NonceRX = rxBuffer[2] + 1;
 
-                timerNonce = 2 * (newTimerNonce + rfModeDivisor); // how much to add? It's more than 1, but maybe less than rfModeDivisor
-                // timerNonce = 2 * (newTimerNonce + nonceOffsets[ExpressLRS_currAirRate_Modparams->index]); // seems to make things worse
+                timerNonce = 2 * (newTimerNonce + rfModeDivisor); // rfModeDivisor approximates how many increments happened on the tx while the packet was on the air
+
                 NonceRX = timerNonce / (2 * rfModeDivisor);
-                // uint8_t newFhssIndex = ((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-                // uint8_t newFhssIndex = ((NonceRX) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-                // uint8_t currentIndex = FHSSgetCurrIndex();
-                // FHSSsetCurrIndex(newFhssIndex);
 
                 // printf("tN %u, cI %u fI %u\n", timerNonce, currentIndex, newFhssIndex);
 
@@ -524,8 +516,6 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
             } else { // not disconnected
 
-                // uint8_t expectedNonce = (newTimerNonce / rfModeDivisor) + 0; // +1 because the tx set it's timerNonce at the packet start and we're now at packet end
-                // uint8_t currentNonce = (timerNonce / (2 * rfModeDivisor)); // NonceRX might not have been updated recently, so calculate what it would be
                 uint16_t expectedNonce = (newTimerNonce + nonceOffsets[ExpressLRS_currAirRate_Modparams->index]) & 0x7FFF; // XXX should the tx run the nonce at 2kHz as well?
                 uint16_t currentNonce = timerNonce / 2;
                 if (currentNonce != expectedNonce)
@@ -533,35 +523,21 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
                     printf("nonce slip: current %u, expected %u\n", currentNonce, expectedNonce);
                     timerNonce = 2 * (newTimerNonce + rfModeDivisor);
                     NonceRX = timerNonce / (2 * rfModeDivisor);
-                    // uint8_t newFhssIndex = (NonceRX / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-                    // FHSSsetCurrIndex(newFhssIndex);
                 }
 
-                // if (FHSSgetCurrIndex() != rxBuffer[1]) 
-                // {
-                //     printf("fhss index mismatch: current %d, expected %d\n", FHSSgetCurrIndex(), rxBuffer[1]);
-                //     FHSSsetCurrIndex(rxBuffer[1]);
-                // }
             }
-            #endif // ELRS_OG_COMPATIBILITY
+            #endif // not ELRS_OG_COMPATIBILITY
 
             // if (ExpressLRS_currAirRate_Modparams->index != (expresslrs_tlm_ratio_e)indexIN)
             if (ExpressLRS_currAirRate_Modparams->index != indexIN)
             {
-                // Adjust the timerNonce by the difference in offsets
-                const int8_t currentOffset = nonceOffsets[ExpressLRS_currAirRate_Modparams->index];
-                const int8_t nextOffset = nonceOffsets[indexIN];
-                const int8_t deltaOffset = nextOffset - currentOffset;
-                
-                timerNonce += deltaOffset;
-
                 // change link parameters
                 ExpressLRS_nextAirRateIndex = indexIN;
                 liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
 
                 // printf("changing rate index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
                 uint32_t packetHz = 1000 / (1 << indexIN);
-                printf("\nrate change: %u Hz, deltaOffset %d\n", packetHz, deltaOffset);
+                printf("\nrate change: %u Hz\n", packetHz);
             }
 
 
@@ -598,6 +574,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
 bool ICACHE_RAM_ATTR HandleFHSS()
 {
+    static uint16_t lastTimerNonce = 0;
+
     // Optimise for the case where we've already done the hop or will never hop - we want to get out as quickly as possible
     // These conditions will have short circuit evaluation, left to right.
     if (alreadyFHSS || (ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || (connectionState == disconnected))
@@ -619,20 +597,37 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     // printf("fhss...\n");
 
     alreadyFHSS = true;
-    // uint32_t freq = FHSSgetNextFreq();
-    // uint8_t newIndex = (((timerNonce / (2 * rfModeDivisor)) + (rfModeDivisor)) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) - 1;
-    uint8_t newIndex = (((timerNonce + 0) / (2 * rfModeDivisor)) / ExpressLRS_currAirRate_Modparams->FHSShopInterval) ;
 
-    // uint8_t currentIndex = FHSSgetCurrIndex();
-    // printf("fhss current %u, new %u\n", currentIndex, newIndex);
+    // privatize so that the debug is consistent with what was used in the calculation
+    uint16_t localTimerNonce = timerNonce;
+
+    // We need to make sure that we're not calculating the index right on the boundary of the change,
+    // so this offset moves the calculation into the middle of the range.
+    uint16_t roundingOffset = rfModeDivisor * ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+
+    uint8_t newIndex = (localTimerNonce - roundingOffset) / (2 * rfModeDivisor * ExpressLRS_currAirRate_Modparams->FHSShopInterval);
+
+    // XXX debug
+    uint8_t currentIndex = FHSSgetCurrIndex();
+    uint8_t expectedIndex = currentIndex + 1;
+    if (newIndex != expectedIndex) {
+        printf("!!! fhss current %u, new %u, lastTN %u, current TN %u\n", currentIndex, newIndex, lastTimerNonce, localTimerNonce);
+    }
+    lastTimerNonce = localTimerNonce;
+
     FHSSsetCurrIndex(newIndex);
 
     uint32_t freq = FHSSgetCurrFreq();
-    radio1.SetFrequency(freq);
 
-    #ifdef USE_SECOND_RADIO
-    radio2->SetFrequency(freq);
-    #endif
+    SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, 0, freq}; // 0 for both radios, 
+    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+
+    // radio1.SetFrequency(freq);
+
+    // #ifdef USE_SECOND_RADIO
+    // radio2->SetFrequency(freq);
+    // #endif
 
     // std::cout << 'H';
 
@@ -692,14 +687,21 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // printf("telem...\n");
 
     // XXX Use the radio with the best LQ for sending telem
-
     SX1280Driver *sendingRadio = &radio1;
-    SX1280Driver *otherRadio = radio2;
+    // SX1280Driver *otherRadio = radio2;
 
     telemWhere = (char *)"FS";
 
     // turn off the other radio so it doesn't report our own telem packet
-    otherRadio->SetMode(SX1280_MODE_FS);
+
+    // SpiTaskInfo taskInfo;
+    // taskInfo.id = SpiTaskID::SetStandby;
+    // taskInfo.radioID = 2;
+
+    // XXX put taskInfo onto the queue instead of calling SetMode directly
+    // xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+    // otherRadio->SetMode(SX1280_MODE_FS);
 
     alreadyTLMresp = true;
     sendingRadio->TXdataBuffer[0] = 0b11; // tlm packet
@@ -728,7 +730,14 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     telemWhere = (char *)"tx";
 
-    sendingRadio->TXnb(sendingRadio->TXdataBuffer, 8);
+    SpiTaskInfo taskInfo;
+    taskInfo.id = SpiTaskID::StartTx;
+    taskInfo.radioID = 1;
+
+    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+
+    // sendingRadio->TXnb(sendingRadio->TXdataBuffer, 8);
     // printf("telem sent ");
     // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1.TXdataBuffer[i]);
     // printf("crc %04X\n", crc);
@@ -748,13 +757,15 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
  */
 static void ICACHE_RAM_ATTR tx_task(void* arg)
 {
+    SpiTaskInfo taskInfo;
+
     uint8_t dummyData;
     for(;;) {
         if(xQueueReceive(tx_evt_queue, &dummyData, portMAX_DELAY))
         {
             r1LastIRQms = millis();
 
-            uint16_t irqs = radio1.GetIrqStatus();
+            uint16_t irqs = radio1.GetIrqStatus(); // XXX how can we do this safely?
 
             // Sometimes we get preamble events even when not configured, so this needs to be guarded
             // if (irqs & SX1280_IRQ_PREAMBLE_DETECTED)
@@ -769,9 +780,15 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
             if (irqs & SX1280_IRQ_TX_DONE) {
                 // give fhss a chance to run before tock()
                 HandleFHSS();
+
                 // start the next receive
-                radio1.RXnb();
-                radio2->RXnb();
+                // XXX should this test if the next frame is for telem?
+                taskInfo.id = SpiTaskID::StartRx;
+                taskInfo.radioID = 0; // 0 for both radios
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                // radio1.RXnb();
+                // radio2->RXnb();
 
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r1 timeout\n");
@@ -780,10 +797,20 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                 // if we're not connected then the hwtimer isn't running and tock won't be called
                 if (HwTimer::isRunning()) {
                     radio1Timedout = true;
-                    radio1.ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
+
+                    taskInfo.id = SpiTaskID::ClearIRQs;
+                    taskInfo.radioID = 1;
+                    taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                    // radio1.ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT); // XXX replace with a new rxTask event
                     // std::cout << "DT1";
                 } else {
-                    radio1.RXnb(); // clears all IRQs
+                    // radio1.RXnb(); // clears all IRQs
+                    taskInfo.id = SpiTaskID::StartRx;
+                    taskInfo.radioID = 1;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
                     // std::cout << "T1";
                 }
             } else {
@@ -795,6 +822,8 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
 
 static void ICACHE_RAM_ATTR tx2_task(void* arg)
 {
+    SpiTaskInfo taskInfo;
+
     uint8_t dummyData;
     for(;;) {
         if(xQueueReceive(tx2_evt_queue, &dummyData, portMAX_DELAY))
@@ -820,19 +849,32 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 // printf("tx2!\n");            
                 // give fhss a chance to run before tock()
                 HandleFHSS();
-                // start the next receive for both radios
-                radio1.RXnb();
-                radio2->RXnb();
+
+                // start the next receive
+                taskInfo.id = SpiTaskID::StartRx;
+                taskInfo.radioID = 0; // 0 for both radios
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                // radio1.RXnb();
+                // radio2->RXnb();
 
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 // printf("r2 timeout\n");
                 timeout2Counter++;
                 if (HwTimer::isRunning()) {
                     radio2Timedout = true;
-                    radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
+                    taskInfo.id = SpiTaskID::ClearIRQs;
+                    taskInfo.radioID = 2;
+                    taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+                    // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
                     // std::cout << "DT2";
                 } else {
-                    radio2->RXnb(); // implicit clear irqs
+                    // radio2->RXnb(); // implicit clear irqs
+                    taskInfo.id = SpiTaskID::StartRx;
+                    taskInfo.radioID = 2;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
                     // std::cout << "T2";
                 }
 
@@ -843,149 +885,259 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
     }
 }
 
+
+static void doReceive(const int radioID)
+{
+
+    // unsigned long tRcv = micros();
+
+    // timeouts for sx1280 are currently routed into the tx_tasks
+    // XXX do the same for E22 (sx1262)
+    #ifdef RADIO_E22
+
+    uint16_t irqS = radio1.GetIrqStatus();
+
+    if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
+    {
+        timeoutCounter++;
+        // need to start another rx
+        radio1.RXnb();
+
+        continue;
+    }
+
+    #endif // RADIO_E22
+
+    // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
+    // uint8_t processResult = 0;
+
+    switch (radioID) {
+        case 1:
+
+            r1LastIRQms = millis();
+
+            radio1.readRXData(); // get the data from the radio chip
+            if (hasValidCRC((uint8_t*)radio1.RXdataBuffer))
+            {
+                if (!packetReceived)
+                {
+                    ProcessRFPacket((uint8_t*)radio1.RXdataBuffer, tPacketR1);
+                    totalRX1Events++;
+                    packetReceived = true;
+                    HandleFHSS();
+                    lqEffective.add();
+                    #if defined(PRINT_RX_SCOREBOARD)
+                    // printf("1");
+                    std::cout << '1';
+                    #endif
+
+                } else {
+                    // Skip at most 1 packet
+                    // During startup the timer isn't running, so we can't rely on packetReceived being cleared in tick()
+                    packetReceived = false;
+                }
+
+                lqRadio1.add();
+                antenna = 0;
+                getRFlinkInfo();
+
+            } else {
+                // failed CRC check
+                crc1Counter++;
+                #ifdef PRINT_RX_SCOREBOARD
+                lastPacketCrcError = true;
+                #endif
+            }
+            
+            // start the next receive
+            if (connectionState != connected || !isTelemetryFrame()) {
+                radio1.RXnb();  // includes clearing the irqs
+            } else {
+                radio1.ClearIrqStatus(SX1280_IRQ_RX_DONE);
+            }
+
+            break;
+
+        case 2:
+
+            r2LastIRQms = millis();
+
+            radio2->readRXData(); // get the data from the radio chip
+            if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
+            {
+                if (!packetReceived)
+                {
+                    ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2); 
+                    totalRX2Events++;
+                    packetReceived = true;
+                    HandleFHSS();
+                    lqEffective.add();                            
+                    #if defined(PRINT_RX_SCOREBOARD)
+                    // printf("2");
+                    std::cout << '2';
+                    #endif
+                } else {
+                    // Skip at most 1 packet
+                    packetReceived = false;
+                }
+
+                lqRadio2.add();
+                antenna = 1;
+                getRFlinkInfo();
+
+            } else {
+                // failed CRC check
+                crc2Counter++;
+                #ifdef PRINT_RX_SCOREBOARD
+                lastPacketCrcError = true;
+                #endif
+            }
+            
+            if (connectionState != connected || !isTelemetryFrame()) {
+                radio2->RXnb();  // includes clearing the irqs
+            } else {
+                radio2->ClearIrqStatus(SX1280_IRQ_RX_DONE);
+            }
+
+            break;
+
+        default:
+            printf("unexpected radioID %u\n", radioID);
+    }
+
+    // check for variaton in the intervals between sending packets
+    // static unsigned long tRcvLast = 0;
+    // unsigned long delta = tRcv - tRcvLast;
+    // int32_t avgDelta = LPF_rcvInterval.update(delta);
+    // int32_t variance = delta - avgDelta;
+    // if (variance < 0) variance = -variance;
+    // if (variance > 10) {
+    //     printf("fhhsMod %u delta %lu avg %ld, variance %ld\n", NonceRX % ExpressLRS_currAirRate_Modparams->FHSShopInterval, delta, avgDelta, variance);
+    // }
+    // tRcvLast = tRcv;
+}
+
+
+
+
 /** Handle received packets
  * 
  * 
  * Instead of passing the radioID via the queue, use an eventDescriptor instead?
  * 
+ * Each item on the queue represents an spi transaction, so if an activity requires multiple
+ * spi calls (without something else jumping in between) then that should be represented as a single
+ * queue message.
+ * 
  * Events that will need to be handled:
  *   packet received (from either modem)
  *   set frequency
  *   start receive (for either or both modems)
+ *   start tx
  * 
  */
 static void ICACHE_RAM_ATTR rx_task(void* arg)
 {
-    uint32_t radioID;
+    // uint32_t radioID;
+    SpiTaskInfo taskInfo;
     for(;;) {
-        if(xQueueReceive(rx_evt_queue, &radioID, portMAX_DELAY))
+        if(xQueueReceive(rx_evt_queue, &taskInfo, portMAX_DELAY))
         {
-            // unsigned long tRcv = micros();
-
-            // timeouts for sx1280 are currently routed into the tx_tasks
-            // XXX do the same for E22 (sx1262)
-            #ifdef RADIO_E22
-
-            uint16_t irqS = radio1.GetIrqStatus();
-
-            if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
+            switch (taskInfo.id)
             {
-                timeoutCounter++;
-                // need to start another rx
-                radio1.RXnb();
-
-                continue;
-            }
-
-            #endif // RADIO_E22
-
-            // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // rx has finished, so clear the debug pin
-            // uint8_t processResult = 0;
-
-            switch (radioID) {
-                case 1:
-
-                    r1LastIRQms = millis();
-
-                    radio1.readRXData(); // get the data from the radio chip
-                    if (hasValidCRC((uint8_t*)radio1.RXdataBuffer))
-                    {
-                        if (!packetReceived)
-                        {
-                            ProcessRFPacket((uint8_t*)radio1.RXdataBuffer, tPacketR1);
-                            totalRX1Events++;
-                            packetReceived = true;
-                            HandleFHSS();
-                            lqEffective.add();
-                            #if defined(PRINT_RX_SCOREBOARD)
-                            // printf("1");
-                            std::cout << '1';
-                            #endif
-
-                        } else {
-                            // Skip at most 1 packet
-                            // During startup the timer isn't running, so we can't rely on packetReceived being cleared in tick()
-                            packetReceived = false;
-                        }
-
-                        lqRadio1.add();
-                        antenna = 0;
-                        getRFlinkInfo();
-
-                    } else {
-                        // failed CRC check
-                        crc1Counter++;
-                        #ifdef PRINT_RX_SCOREBOARD
-                        lastPacketCrcError = true;
-                        #endif
-                    }
-                    
-                    // start the next receive
-                    if (connectionState != connected || !isTelemetryFrame()) {
-                        radio1.RXnb();  // includes clearing the irqs
-                    } else {
-                        radio1.ClearIrqStatus(SX1280_IRQ_RX_DONE);
-                    }
-
+                case SpiTaskID::RxDone:
+                    doReceive(taskInfo.radioID);
                     break;
 
-                case 2:
+                // case SpiTaskID::SetStandby: // not used, remove?
+                //     switch(taskInfo.radioID)
+                //     {
+                //         case 1:
+                //             radio1.SetMode(SX1280_MODE_FS);
+                //             break;
+                //         case 2:
+                //             radio2->SetMode(SX1280_MODE_FS);
+                //             break;
+                //         default:
+                //             printf("unexpected radioID for standby %d\n", taskInfo.radioID);
+                //     }
+                //     break;
 
-                    r2LastIRQms = millis();
-
-                    radio2->readRXData(); // get the data from the radio chip
-                    if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
+                case SpiTaskID::StartTx:
+                    // send a packet which has already been placed in the radio instance's txbuffer
+                    switch(taskInfo.radioID)
                     {
-                        if (!packetReceived)
-                        {
-                            ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2); 
-                            totalRX2Events++;
-                            packetReceived = true;
-                            HandleFHSS();
-                            lqEffective.add();                            
-                            #if defined(PRINT_RX_SCOREBOARD)
-                            // printf("2");
-                            std::cout << '2';
-                            #endif
-                        } else {
-                            // Skip at most 1 packet
-                            packetReceived = false;
-                        }
-
-                        lqRadio2.add();
-                        antenna = 1;
-                        getRFlinkInfo();
-
-                    } else {
-                        // failed CRC check
-                        crc2Counter++;
-                        #ifdef PRINT_RX_SCOREBOARD
-                        lastPacketCrcError = true;
-                        #endif
+                        case 1:
+                            // turn off the 'other' radio
+                            radio2->SetMode(SX1280_MODE_FS);
+                            // start the transmission
+                            radio1.TXnb(radio1.TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
+                            break;
+                        case 2:
+                            // turn off the 'other' radio
+                            radio1.SetMode(SX1280_MODE_FS);
+                            // start the transmission
+                            radio2->TXnb(radio2->TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
+                            break;
+                        default:
+                            printf("unexpected radioID for StartTx %d\n", taskInfo.radioID);
                     }
-                    
-                    if (connectionState != connected || !isTelemetryFrame()) {
-                        radio2->RXnb();  // includes clearing the irqs
-                    } else {
-                        radio2->ClearIrqStatus(SX1280_IRQ_RX_DONE);
-                    }
-
                     break;
+
+                case SpiTaskID::SetFrequency:
+                    switch(taskInfo.radioID)
+                    {
+                        case 0: // change on both radios
+                            radio1.SetFrequency(taskInfo.frequency);
+                            radio2->SetFrequency(taskInfo.frequency);
+                            break;
+                        case 1:
+                            radio1.SetFrequency(taskInfo.frequency);
+                            break;
+                        case 2:
+                            radio2->SetFrequency(taskInfo.frequency);
+                            break;
+                        default:
+                            printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
+                    }
+                    break;
+
+                case SpiTaskID::StartRx:
+                    switch(taskInfo.radioID)
+                    {
+                        case 0: // start rx on both radios
+                            radio1.RXnb();
+                            radio2->RXnb();
+                            break;
+                        case 1:
+                            radio1.RXnb();
+                            break;
+                        case 2:
+                            radio2->RXnb();
+                            break;
+                        default:
+                            printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
+                    }
+                    break;
+
+                case SpiTaskID::ClearIRQs:
+                    switch(taskInfo.radioID)
+                    {
+                        case 1:
+                            radio1.ClearIrqStatus(taskInfo.irqMask);
+                            break;
+                        case 2:
+                            radio2->ClearIrqStatus(taskInfo.irqMask);
+                            break;
+                        default:
+                            printf("unexpected radioID for ClearIRQs %d\n", taskInfo.radioID);
+                    }
+                    break;
+
 
                 default:
-                    printf("unexpected radioID %u\n", radioID);
+                    printf("unhandled SpiTaskID %u\n", taskInfo.id);
             }
-
-            // check for variaton in the intervals between sending packets
-            // static unsigned long tRcvLast = 0;
-            // unsigned long delta = tRcv - tRcvLast;
-            // int32_t avgDelta = LPF_rcvInterval.update(delta);
-            // int32_t variance = delta - avgDelta;
-            // if (variance < 0) variance = -variance;
-            // if (variance > 10) {
-            //     printf("fhhsMod %u delta %lu avg %ld, variance %ld\n", NonceRX % ExpressLRS_currAirRate_Modparams->FHSShopInterval, delta, avgDelta, variance);
-            // }
-            // tRcvLast = tRcv;
         }
     }
 }
@@ -995,12 +1147,14 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
  */
 static void IRAM_ATTR dio1_isr_handler(void* arg)
 {
+    static const SpiTaskInfo taskInfo = {SpiTaskID::RxDone, 1, 0};
+
     BaseType_t taskWoken = 0;
-    const uint32_t radioID = 1;
+    // const uint32_t radioID = 1;
     // store the packet time here for use in PFD to reduce jitter on CRC failover
     tPacketR1 = esp_timer_get_time();
 
-    xQueueSendFromISR(rx_evt_queue, &radioID, &taskWoken);
+    xQueueSendFromISR(rx_evt_queue, &taskInfo, &taskWoken);
     if (taskWoken) portYIELD_FROM_ISR();
 }
 
@@ -1008,13 +1162,15 @@ static void IRAM_ATTR dio1_isr_handler(void* arg)
 */
 static void IRAM_ATTR r2_dio1_isr_handler(void* arg)
 {
+    static const SpiTaskInfo taskInfo = {SpiTaskID::RxDone, 2, 0};
+
     BaseType_t taskWoken = 0;
-    const uint32_t radioID = 2;
+    // const uint32_t radioID = 2;
     // store the packet time here for use in PFD to reduce jitter on CRC failover
     tPacketR2 = esp_timer_get_time();
 
     // send to the same queue as radio1
-    xQueueSendFromISR(rx_evt_queue, &radioID, &taskWoken);
+    xQueueSendFromISR(rx_evt_queue, &taskInfo, &taskWoken);
     if (taskWoken) portYIELD_FROM_ISR();
 }
 
@@ -1110,6 +1266,7 @@ void liveUpdateRFLinkRate(uint8_t index)
     ExpressLRS_currAirRate_Modparams = ModParams;
     ExpressLRS_currAirRate_RFperfParams = RFperf;
 
+    // pfdDebugCounter = 10; // trigger pfd debug
 }
 
 
@@ -1213,6 +1370,11 @@ void ICACHE_RAM_ATTR updatePhaseLock()
 
         prevOffset = Offset;
         prevRawOffset = RawOffset;
+
+        if (pfdDebugCounter > 0) {
+            printf("Offset: %d\n", Offset);
+            pfdDebugCounter--;
+        }
     }
 
 #ifndef DEBUG_SUPPRESS
@@ -1322,7 +1484,7 @@ void ICACHE_RAM_ATTR tock()
         uint32_t now = millis();
         if ((now - p1) > 40000)
         {
-            radio1.RXnb();
+            radio1.RXnb(); // XXX convert to event messages
             radio1Timedout = false;
             std::cout << "HM1";
             r1LastIRQms = now; // stop it spamming
@@ -1341,14 +1503,23 @@ void ICACHE_RAM_ATTR tock()
         // deferred receives from rx timeouts
         if (!alreadyTLMresp) // if we're doing telem then the receivers will be restarted after anyway.
         {
+            SpiTaskInfo taskInfo;
+            taskInfo.id = SpiTaskID::StartRx;
+
             if (radio1Timedout) {
-                radio1.RXnb();
-                radio1Timedout = false;
+                taskInfo.radioID = 1;
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                // radio1.RXnb();
+                // radio1Timedout = false;
             }
 
             if (radio2Timedout) {
-                radio2->RXnb();
-                radio2Timedout = false;
+                taskInfo.radioID = 2;
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                // radio2->RXnb();
+                // radio2Timedout = false;
             }
         }
 
@@ -1797,8 +1968,8 @@ void app_main()
     radio2->SetOutputPower(DISARM_POWER);
 
     //create a queue to handle gpio event from isr
-    rx_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    rx2_evt_queue = xQueueCreate(10, 0);
+    rx_evt_queue = xQueueCreate(10, sizeof(SpiTaskInfo));
+    // rx2_evt_queue = xQueueCreate(10, 0);
     tx_evt_queue = xQueueCreate(10, 0);
     tx2_evt_queue = xQueueCreate(10, 0);
     //start tasks
@@ -1913,15 +2084,14 @@ void app_main()
                 printf("XXX tock hung at tock %s, telem %s, wc %s\n", tockWhere, telemWhere, wcWhere);
             }
 
-            // printf("rx1Events %u, rx2Events %u,  matches %u, LQ %u, timeouts/s %u crcErrors/s %u\n", totalRX1Events, totalRX2Events, totalMatches, uplinkLQ, timeoutCounter*1000/elapsedT, crcCounter*1000/elapsedT);
             printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u ", 
                     totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
                     crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
 
-            // int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
-            // int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
-            // printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
-            printf("tN %u ", timerNonce);
+            int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
+            int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
+            printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
+            // printf("tN %u ", timerNonce);
             printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
 
             // totalPackets = 0;
