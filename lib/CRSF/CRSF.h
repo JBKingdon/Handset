@@ -110,11 +110,18 @@ public:
 
     /////Variables/////
 
-    static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
+    static volatile crsf_elrs_channels_s PackedRCdataOut;
+    static volatile crsf_elrs_channels_hiRes_s PackedHiResRCdataOut;
+    static volatile elrsPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
+    #else
     static volatile crsfPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
+    static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
+    #endif
+
+    
     static volatile crsf_sensor_battery_s TLMbattSensor;
 
-    static volatile crsf_elrs_channels_hiRes_s PackedHiResRCdataOut;
 
 
     /// UART Handling ///

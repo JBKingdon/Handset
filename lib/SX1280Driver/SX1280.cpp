@@ -240,7 +240,8 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
         iqMode = SX1280_LORA_IQ_NORMAL;
     }
 
-    this->SetMode(SX1280_MODE_STDBY_XOSC); // Try using _FS for quicker changeover ?
+    // this->SetMode(SX1280_MODE_STDBY_XOSC); // Try using _FS for quicker changeover ?
+    this->SetMode(SX1280_MODE_FS); // Try using _FS for quicker changeover ?
     ConfigModParams(bw, sf, cr);
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, iqMode);

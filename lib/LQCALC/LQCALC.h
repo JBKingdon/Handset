@@ -48,7 +48,7 @@ public:
     }
 
     /* Return the current running total of bits set, in percent */
-    uint8_t getLQ() const
+    uint8_t getLQPercent() const
     {
         // Allow the compiler to optimize out some or all of the
         // math if evenly divisible
@@ -57,6 +57,13 @@ public:
         else
             return (uint32_t)LQ * 100 / N;
     }
+
+    /** Return raw LQ */
+    uint8_t getLQ() const
+    {
+        return LQ;
+    }
+
 
     /* Initialize and zero the history */
     void reset()

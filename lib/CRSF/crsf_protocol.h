@@ -31,7 +31,13 @@
 #ifdef UART_RX_SPEED_400K
 #define CRSF_RX_BAUDRATE 400000
 #else
+
+#ifdef USE_ELRS_CRSF_EXTENSIONS
+#define CRSF_RX_BAUDRATE 691200
+#else
 #define CRSF_RX_BAUDRATE 420000
+#endif
+
 #endif
 
 #define CRSF_OPENTX_FAST_BAUDRATE 400000
@@ -48,8 +54,15 @@
 
 #define CRSF_SYNC_BYTE 0xC8
 
+#ifdef USE_ELRS_CRSF_EXTENSIONS
+#define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
+#define RCHiResframeLength 7        // length of the RC HiRes data frame. 4 x 12 bit analog + 4 x 2bit switches
+#define LinkStatisticsFrameLength 5
+#else
 #define RCframeLength 22             // length of the RC data packed bytes frame. 16 channels in 11 bits each.
 #define LinkStatisticsFrameLength 10 //
+#endif
+
 #define OpenTXsyncFrameLength 11     //
 #define BattSensorFrameLength 8      //
 #define VTXcontrolFrameLength 12     //
@@ -115,6 +128,11 @@ typedef enum
     CRSF_FRAMETYPE_OPENTX_SYNC = 0x10,
     CRSF_FRAMETYPE_RADIO_ID = 0x3A,
     CRSF_FRAMETYPE_RC_CHANNELS_PACKED = 0x16,
+
+    CRSF_FRAMETYPE_LINK_STATISTICS_ELRS = 0x15,
+    CRSF_FRAMETYPE_RC_ELRS         = 0x17,
+    CRSF_FRAMETYPE_RC_ELRS_HIRES   = 0x18,
+
     CRSF_FRAMETYPE_ATTITUDE = 0x1E,
     CRSF_FRAMETYPE_FLIGHT_MODE = 0x21,
     // Extended Header Frames, range: 0x28 to 0x96
@@ -229,6 +247,23 @@ typedef struct crsf_channels_s
     unsigned ch15 : 11;
 } PACKED crsf_channels_t;
 
+typedef struct crsf_elrs_channels_s {
+    // 56 bits of data (10 bits per channel * 4 channels + 2 bits per switch * 8 switches) = 7 bytes.
+    unsigned int chan0 : 10;
+    unsigned int chan1 : 10;
+    unsigned int chan2 : 10;
+    unsigned int chan3 : 10;
+    unsigned int aux1 : 2;
+    unsigned int aux2 : 2;
+    unsigned int aux3 : 2;
+    unsigned int aux4 : 2;
+    unsigned int aux5 : 2;
+    unsigned int aux6 : 2;
+    unsigned int aux7 : 2;
+    unsigned int aux8 : 2;
+} PACKED crsf_elrs_channels_t;
+
+
 // hires packet for carrying 12 bit gimbal data
 typedef struct crsf_elrs_channels_hiRes_s {
     // 56 bits of data (12 bits per channel * 4 channels + 2 bits per switch * 4 switches) = 7 bytes.
@@ -314,6 +349,16 @@ typedef struct crsfPayloadLinkstatistics_s
 } crsfLinkStatistics_t;
 
 typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
+
+typedef struct elrsPayloadLinkstatistics_s
+{
+    uint8_t rssi0, rssi1;
+    uint8_t link_quality; // range 0-99, use the top bit to indicate which antenna is being used
+    // int8_t  snr;
+    uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
+    int8_t txPower;     // power in dBm
+} elrsLinkStatistics_t;
+
 
 // typedef struct crsfOpenTXsyncFrame_s
 // {

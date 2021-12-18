@@ -57,6 +57,9 @@
 
 #define DYN_POWER_RSSI_FILTER_CUTOFF_HZ 0.1f
 
+#define DYN_RATE_INCREASE_MARGIN 20
+#define DYN_RATE_DECREASE_MARGIN 15
+
 
 #ifndef ELRS_OG_COMPATIBILITY
 
@@ -125,6 +128,8 @@ uint8_t missedTelemetryPackets = 0;
 int16_t dynamicPowerRSSIIncreaseThreshold;
 int16_t dynamicPowerRSSIDecreaseThreshold;
 
+int16_t dynamicRateRSSIIncreaseThreshold;
+int16_t dynamicRateRSSIDecreaseThreshold;
 
 // Methods that need to be callable from the C interrupt handlers
 extern "C" {
@@ -266,7 +271,7 @@ SX1280Driver radio;
 #endif // E22 vs E28 radios
 
 // telemetry values
-int8_t rssi;
+int8_t rssi1, rssi2;
 uint8_t snr, lq;
 
 // For deferred packet rate change
@@ -746,12 +751,17 @@ void ProcessTLMpacket()
       waitingForTelemetry = false;
       missedTelemetryPackets = 0;
 
-      rssi = radio.RXdataBuffer[2];
-      snr = radio.RXdataBuffer[4];
-      lq = radio.RXdataBuffer[5];
+      rssi1 = radio.RXdataBuffer[2];
+      rssi2 = radio.RXdataBuffer[3];
+      snr = radio.RXdataBuffer[4];     // XXX snr isn't currently sent
+      lq = radio.RXdataBuffer[5] & 0x7F;  // top bit has the active antenna indicator
       // printf("T: %d %u %u\n\r", rssi, snr, lq);
 
+      int8_t rssi = rssi1 > rssi2 ? rssi1 : rssi2; // XXX need to generalise this to cope with single rssi rxes
+
       #ifdef USE_DYNAMIC_POWER
+
+      static uint32_t rssiSamplesNeeded = 10; // static for persistence accross calls
 
       // use rssi * 100 in the filter for greater resolution
 
@@ -766,7 +776,37 @@ void ProcessTLMpacket()
          rssiF = rssiFilter.update(rssi * 100);
       }
 
+      if (rssiSamplesNeeded) rssiSamplesNeeded--;
+
       // printf("rssi %d, filtered %ld\n\r", rssi, rssiF);
+
+      // ==== Dynamic rates ====
+
+      // XXX naming is confusing, as we're not 'increasing' the rate here, we're going to a slower rate to improve sensitivity
+      if ((rssiF < dynamicRateRSSIIncreaseThreshold * 100) &&     // rssi is low
+          (radio.currPWR = radioPower) &&                         // power is already maxed out
+          (syncSpamCounter == 0) &&                               // there isn't a rate change already happening
+          (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1)) && // we're not already at the slowest packet rate
+          (rssiSamplesNeeded == 0))                               // we have enough samples for a valid rssiF
+      {
+         nextLinkRate = ExpressLRS_currAirRate_Modparams->index + 1;
+         syncSpamCounter = 3;
+         lastLinkRateChangeTime = 0; // allow change to take effect as soon as possible
+         rssiSamplesNeeded = 10;     // make sure that we don't do rapid fire rate changes with out of date data
+
+      } else if ((rssiF > dynamicRateRSSIDecreaseThreshold * 100) &&      // rssi is good
+                  (ExpressLRS_currAirRate_Modparams->index > 0) &&        // we're not already at the fastest packet rate
+                  (syncSpamCounter == 0) &&                               // there isn't a rate change already happening
+                  (rssiSamplesNeeded == 0))                               // we have enough samples for a valid rssiF
+      {
+         nextLinkRate = ExpressLRS_currAirRate_Modparams->index - 1;
+         syncSpamCounter = 3;
+         lastLinkRateChangeTime = 0; // allow change to take effect as soon as possible
+         rssiSamplesNeeded = 10;     // make sure that we don't do rapid fire rate changes with out of date data
+
+      }
+
+      // ==== Dynamic Power ====
 
       // Order of tests is important for lq vs max rssi conditions since both could evaluate true and if
       // so we want the LQ test to take priority. The tests are therefore in priority order, highest to
@@ -776,7 +816,7 @@ void ProcessTLMpacket()
          // Panic time, take the power directly to the configured max
          radio.SetOutputPower(radioPower);
       }
-      else if ((rssiF < dynamicPowerRSSIIncreaseThreshold * 100) && (radio.currPWR < radioPower))
+      else if ((rssiF < dynamicPowerRSSIIncreaseThreshold * 100) && (radio.currPWR < radioPower)) // XXX does this also need a sample counter to get valid rssi?
       {
          radio.SetOutputPower(radio.currPWR + 1);
          // printf("rssi %d rssiF %ld power up! %d\n\r", rssi, rssiF, radio.currPWR);
@@ -786,11 +826,12 @@ void ProcessTLMpacket()
          // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
          radio.SetOutputPower(radio.currPWR + 1);
       }
-      else if ((rssiF > dynamicPowerRSSIDecreaseThreshold * 100) && (radio.currPWR > -18)) // XXX find/add a constant for min power
-      {
-         radio.SetOutputPower(radio.currPWR - 1);
-         // printf("rssi %d rssiF %ld power down! %d\n\r", rssi, rssiF, radio.currPWR);
-      }
+      // XXX testing, disable power reduction
+      // else if ((rssiF > dynamicPowerRSSIDecreaseThreshold * 100) && (radio.currPWR > -18)) // XXX find/add a constant for min power
+      // {
+      //    radio.SetOutputPower(radio.currPWR - 1);
+      //    // printf("rssi %d rssiF %ld power down! %d\n\r", rssi, rssiF, radio.currPWR);
+      // }
 
       #endif // USE_DYNAMIC_POWER
 
@@ -1661,19 +1702,25 @@ void SetRFLinkRate(uint8_t index)
    expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(index);
    expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
 
+   // setTimerISRInterval(ModParams->interval);
+   // This is only going to work if interval is an exact multiple of 1000
+   rfModeDivisor = ModParams->interval / 1000; // XXX replace interval with divisor
+
+   FHSSsetCurrIndex((timerNonce / rfModeDivisor) / ExpressLRS_currAirRate_Modparams->FHSShopInterval);
+   uint32_t freq = FHSSgetCurrFreq();
+
+
    #ifdef USE_FLRC
    if (index == 0) { // special case FLRC for testing
       radio.ConfigFLRC(GetInitialFreq());
    } else 
    #endif
    {
-      radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+      // XXX are there times when it's important to set initial freq?
+      // radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+      radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, freq, ModParams->PreambleLen, invertIQ);
    }
 
-
-   // setTimerISRInterval(ModParams->interval);
-   // This is only going to work if interval is an exact multiple of 1000
-   rfModeDivisor = ModParams->interval / 1000; // XXX replace interval with divisor
 
    ExpressLRS_currAirRate_Modparams = ModParams;
    ExpressLRS_currAirRate_RFperfParams = RFperf;
@@ -1684,6 +1731,10 @@ void SetRFLinkRate(uint8_t index)
    // The dynamic power thresholds are relative to the rx sensitivity, so need to be updated
    dynamicPowerRSSIIncreaseThreshold = RFperf->RXsensitivity + DYN_POWER_INCREASE_MARGIN;
    dynamicPowerRSSIDecreaseThreshold = dynamicPowerRSSIIncreaseThreshold + DYN_POWER_DECREASE_MARGIN;
+
+   // Same deal for rates
+   dynamicRateRSSIIncreaseThreshold = RFperf->RXsensitivity + DYN_RATE_INCREASE_MARGIN;
+   dynamicRateRSSIDecreaseThreshold = dynamicRateRSSIIncreaseThreshold + DYN_RATE_DECREASE_MARGIN;
    #endif
 
    // if (UpdateRFparamReq)
@@ -1747,10 +1798,12 @@ void updateDisplayNormal()
    if (isRXconnected) {
       sprintf((char*)buffer, "LQ   %4u ", lq);
       LCD_ShowString(0, 64, buffer, WHITE);
-      sprintf((char*)buffer, "RSSI %4d ", rssi);
+      sprintf((char*)buffer, "RSSI1 %4d ", rssi1);
       LCD_ShowString(0, 80, buffer, WHITE);
-      sprintf((char*)buffer, "SNR  %4u ", snr);
+      sprintf((char*)buffer, "RSSI2 %4d ", rssi2);
       LCD_ShowString(0, 96, buffer, WHITE);
+      sprintf((char*)buffer, "SNR  %4u ", snr);
+      LCD_ShowString(0, 112, buffer, WHITE);
    } else if (telemetryEnabled) {
       LCD_ShowString(0, 64, (const u8*)"         ", WHITE);
       LCD_ShowString(0, 80, (const u8*)"NO TELEM ", WHITE);
@@ -2392,7 +2445,7 @@ int main(void)
                      #ifdef USE_SYNC_SPAM
                      // defer the change until we've sent some sync packets to kick the rx to the new setting
                      nextLinkRate = (encValue - 100) / 2;
-                     syncSpamCounter = 1;
+                     syncSpamCounter = 2;
                      lastLinkRateChangeTime = millis();
                      #else
                      SetRFLinkRate((encValue - 100) / 2);

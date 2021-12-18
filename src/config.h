@@ -266,7 +266,7 @@
 #ifdef C3_PCB_V0
 
 #define LED2812_PIN     GPIO_NUM_9
-// #define CRSF_TX_PIN     GPIO_NUM_21
+#define CRSF_TX_PIN     GPIO_NUM_21
 
 #define LED_STATUS_INDEX 0
 #define LED_RADIO1_INDEX 1

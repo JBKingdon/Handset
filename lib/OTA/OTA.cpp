@@ -249,7 +249,7 @@ void ICACHE_RAM_ATTR UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, 
 
     switch (switchIndex) {
         case 0:   // we should never get index 0 here since that is the low latency switch
-            Serial.println("BAD switchIndex 0");
+            // Serial.println("BAD switchIndex 0");
             break;
         case 1:
             crsf->PackedRCdataOut.aux2 = switchValue;
@@ -322,6 +322,8 @@ void UnpackChannelDataPWM6(Pwm6Payload_t *buffer, CRSF *crsf)
 {
     // static uint32_t debugCounter = 0;
 
+    #ifdef USE_PWM6
+
     // The analog channels
     crsf->PackedRCdataOut.ch0 = buffer->ch0;
     crsf->PackedRCdataOut.ch1 = buffer->ch1;
@@ -349,6 +351,7 @@ void UnpackChannelDataPWM6(Pwm6Payload_t *buffer, CRSF *crsf)
     crsf->PackedRCdataOut.ch11 = N_to_CRSF(1, buffer->sw5);
     // crsf->PackedRCdataOut.ch12 = N_to_CRSF(1, buffer->sw6);
     // crsf->PackedRCdataOut.ch13 = N_to_CRSF(1, buffer->sw7);
+    #endif
 }
 
 

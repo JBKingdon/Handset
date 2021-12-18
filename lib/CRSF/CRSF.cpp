@@ -62,10 +62,17 @@ uint8_t CRSF::nextSwitchIndex = 0; // for round-robin sequential switches
 
 volatile uint8_t CRSF::ParameterUpdateData[2] = {0};
 
+
+#ifdef USE_ELRS_CRSF_EXTENSIONS
+volatile crsf_elrs_channels_s CRSF::PackedRCdataOut;
+volatile crsf_elrs_channels_hiRes_s CRSF::PackedHiResRCdataOut;
+volatile elrsPayloadLinkstatistics_s CRSF::LinkStatistics;
+#else
 volatile crsf_channels_s CRSF::PackedRCdataOut;
 volatile crsf_elrs_channels_hiRes_s CRSF::PackedHiResRCdataOut;
 volatile crsfPayloadLinkstatistics_s CRSF::LinkStatistics;
 volatile crsf_sensor_battery_s CRSF::TLMbattSensor;
+#endif
 
 #if CRSF_TX_MODULE
 /// OpenTX mixer sync ///
@@ -874,26 +881,50 @@ void ICACHE_RAM_ATTR CRSF::ESP32uartTask(void *pvParameters)
 //     return false;
 // }
 
+// void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToFC()
+// {
+//     uint8_t outBuffer[LinkStatisticsFrameLength + 4];
+
+//     outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+//     outBuffer[1] = LinkStatisticsFrameLength + 2;
+//     outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS;
+
+//     memcpy(outBuffer + 3, (uint8_t *)&LinkStatistics, LinkStatisticsFrameLength);
+
+//     uint8_t crc = crsf_crc.calc(&outBuffer[2], LinkStatisticsFrameLength + 1);
+
+//     outBuffer[LinkStatisticsFrameLength + 3] = crc;
+// #if !defined(DEBUG_CRSF_NO_OUTPUT) && defined(CRSF_TX_PIN)
+//     // SerialOutFIFO.push(LinkStatisticsFrameLength + 4);
+//     // SerialOutFIFO.pushBytes(outBuffer, LinkStatisticsFrameLength + 4);
+//     //this->_dev->write(outBuffer, LinkStatisticsFrameLength + 4);
+//     uart_write_bytes(CRSF_PORT_NUM, outBuffer, LinkStatisticsFrameLength + 4);
+// #endif
+// }
+
 void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToFC()
 {
-    uint8_t outBuffer[LinkStatisticsFrameLength + 4];
+    uint8_t outBuffer[LinkStatisticsFrameLength + 4] = {0};
 
     outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
     outBuffer[1] = LinkStatisticsFrameLength + 2;
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
+    outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS_ELRS;
+    #else
     outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS;
+    #endif
 
     memcpy(outBuffer + 3, (uint8_t *)&LinkStatistics, LinkStatisticsFrameLength);
 
     uint8_t crc = crsf_crc.calc(&outBuffer[2], LinkStatisticsFrameLength + 1);
 
     outBuffer[LinkStatisticsFrameLength + 3] = crc;
-#if !defined(DEBUG_CRSF_NO_OUTPUT) && defined(CRSF_TX_PIN)
-    // SerialOutFIFO.push(LinkStatisticsFrameLength + 4);
-    // SerialOutFIFO.pushBytes(outBuffer, LinkStatisticsFrameLength + 4);
-    //this->_dev->write(outBuffer, LinkStatisticsFrameLength + 4);
+
+    #if !defined(DEBUG_CRSF_NO_OUTPUT) && defined(CRSF_TX_PIN)
     uart_write_bytes(CRSF_PORT_NUM, outBuffer, LinkStatisticsFrameLength + 4);
-#endif
+    #endif
 }
+
 
 void ICACHE_RAM_ATTR CRSF::sendRCFrameToFC()
 {
@@ -902,7 +933,16 @@ void ICACHE_RAM_ATTR CRSF::sendRCFrameToFC()
 
     outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
     outBuffer[1] = RCframeLength + 2;
+
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
+
+    outBuffer[2] = CRSF_FRAMETYPE_RC_ELRS;
+
+    #else
+
     outBuffer[2] = CRSF_FRAMETYPE_RC_CHANNELS_PACKED;
+
+    #endif
 
     memcpy(outBuffer + 3, (uint8_t *)&PackedRCdataOut, RCframeLength);
 
