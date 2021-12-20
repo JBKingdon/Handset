@@ -1204,7 +1204,8 @@ static void doReceive(const int radioID)
         std::cout << "timeout";
         return;
     } else if (irqS & SX1262_IRQ_TX_DONE) {
-        // Need to do 915 fhss call here
+        // Chance to hop
+        HandleFHSS();
         return;
     }
 
