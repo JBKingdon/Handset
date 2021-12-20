@@ -8,7 +8,7 @@
  *   Figure out why the radios stop talking
  */
 
-const bool TRANSMITTER = false;
+const bool TRANSMITTER = true;
 
 #include <stdio.h>
 #include <string.h>
@@ -70,7 +70,7 @@ const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PW
 
 #ifdef RADIO_E22
 
-SX1262Driver radio1;
+SX1262Driver * radio1 = NULL;
 
 
 #elif defined (RADIO_E28_12) || defined(RADIO_E28_20) || defined(RADIO_E28_27)
@@ -253,7 +253,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     int8_t t1, t2;
     switch (antenna) {
         case 0:
-            t1 = radio1.GetLastPacketRSSI();
+            t1 = radio1->GetLastPacketRSSI();
             rssiDBM0 = LPF_UplinkRSSI0.update(t1);
             // printf("update0 %d %d\n", t1, rssiDBM0);
             break;
@@ -288,7 +288,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.LinkStatistics.uplink_RSSI_1 = -rssiDBM0;
     crsf.LinkStatistics.uplink_RSSI_2 = -rssiDBM1;
     crsf.LinkStatistics.active_antenna = antenna;
-    crsf.LinkStatistics.uplink_SNR = radio1.LastPacketSNR;
+    crsf.LinkStatistics.uplink_SNR = radio1->LastPacketSNR;
     crsf.LinkStatistics.uplink_Link_quality = uplinkLQ;
     crsf.LinkStatistics.rf_Mode = (uint8_t)RATE_LAST - (uint8_t)ExpressLRS_currAirRate_Modparams->enum_rate;
     //Serial.println(crsf.LinkStatistics.uplink_RSSI_1);
@@ -316,7 +316,7 @@ void TentativeConnection()
 
     // set timeout based on interval?
 
-    radio1.setRxTimeout(20000);
+    radio1->setRxTimeout(20000);
     // radio2->setRxTimeout(20000);
 
 
@@ -393,13 +393,13 @@ void setRadioParams(uint8_t index, RadioSelection targetRadio)
     switch(targetRadio)
     {
         case RadioSelection::first:
-            radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+            radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
         case RadioSelection::second:
             // radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
         case RadioSelection::both:
-            radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+            radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             // radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
     }
@@ -410,11 +410,11 @@ void setRadioParams(uint8_t index, RadioSelection targetRadio)
  */
 void GenerateSyncPacketData()
 {
-   radio1.TXdataBuffer[0] = SYNC_PACKET;  // XXX New packet format needed
+   radio1->TXdataBuffer[0] = SYNC_PACKET;  // XXX New packet format needed
 
    // radio.TXdataBuffer[2] = NonceTX;
-   radio1.TXdataBuffer[1] = (timerNonce >> 8) & 0xFF;
-   radio1.TXdataBuffer[2] = (timerNonce >> 0) & 0xFF;
+   radio1->TXdataBuffer[1] = (timerNonce >> 8) & 0xFF;
+   radio1->TXdataBuffer[2] = (timerNonce >> 0) & 0xFF;
 
    // send either the current or next index if using sync spamming on rate change
    uint8_t rateIndex;
@@ -433,10 +433,10 @@ void GenerateSyncPacketData()
    #endif
 
     // XXX this will be the rate of the 2G4 link eventually
-   radio1.TXdataBuffer[3] = ((rateIndex & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
+   radio1->TXdataBuffer[3] = ((rateIndex & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
 
 
-   int8_t adjustedDBM = radio1.currPWR;
+   int8_t adjustedDBM = radio1->currPWR;
    #if defined(RADIO_E28_27)    // XXX make the radio instance know what sort of radio it is and query it at runtime?
    // for e28-27, PA output is +27dBm of the pre-PA setting, up to a max of 0 input.
    adjustedDBM += 27;
@@ -445,10 +445,10 @@ void GenerateSyncPacketData()
    adjustedDBM += 22;
    #endif
 
-   radio1.TXdataBuffer[4] = adjustedDBM;
+   radio1->TXdataBuffer[4] = adjustedDBM;
 
-   radio1.TXdataBuffer[5] = UID[4];
-   radio1.TXdataBuffer[6] = UID[5];
+   radio1->TXdataBuffer[5] = UID[4];
+   radio1->TXdataBuffer[6] = UID[5];
 }
 
 /**
@@ -493,7 +493,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF()
         ((syncSpamCounter != 0 && (millis() - lastLinkRateChangeTime > 300)) || // if we're trying to notify the rx of changing packet rate, just do it, otherwise...
          (
              ((millis() - SyncPacketLastSent) > SyncInterval) && // ...has enough time passed?
-             (radio1.currFreq == GetInitialFreq())                // we're on the sync frequency
+             (radio1->currFreq == GetInitialFreq())                // we're on the sync frequency
              // sync just after we changed freqs (helps with hwTimer.init() being in sync from the get go)
              && ((nonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval) == syncPacketIndex))))
     { // Send a sync packet
@@ -541,7 +541,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF()
         // setSentSwitch(nextSwitchIndex, nextSwitchValue);
         uint8_t nextSwitchIndex = 1;
         uint8_t currentSwitches[4] = {0};
-        GenerateChannelDataHybridSwitch8(radio1.TXdataBuffer, scaledADC, currentSwitches, nextSwitchIndex, DeviceAddr);
+        GenerateChannelDataHybridSwitch8(radio1->TXdataBuffer, scaledADC, currentSwitches, nextSwitchIndex, DeviceAddr);
 #endif // USE_HIRES_DATA
     }
 
@@ -549,11 +549,11 @@ void ICACHE_RAM_ATTR sendRCdataToRF()
 
 
     // need to clear the crc bits of the first byte before calculating the crc
-    radio1.TXdataBuffer[0] &= 0b11;
+    radio1->TXdataBuffer[0] &= 0b11;
 
-    uint16_t crc = ota_crc.calc(radio1.TXdataBuffer, OTA_PACKET_LENGTH - 1);
-    radio1.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
-    radio1.TXdataBuffer[OTA_PACKET_LENGTH - 1] = crc & 0xFF;
+    uint16_t crc = ota_crc.calc(radio1->TXdataBuffer, OTA_PACKET_LENGTH - 1);
+    radio1->TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
+    radio1->TXdataBuffer[OTA_PACKET_LENGTH - 1] = crc & 0xFF;
 
 
     // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // clear the rx debug pin as we're definitely not listening now
@@ -562,7 +562,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF()
     // printf(", crc %04X\n", crc);
 
     // std::cout << "sendRC TXnb\n";
-    radio1.TXnb(radio1.TXdataBuffer, OTA_PACKET_LENGTH);
+    radio1->TXnb(radio1->TXdataBuffer, OTA_PACKET_LENGTH);
 
     // // check for variaton in the intervals between sending packets
     // static LPF LPF_sentInterval(4);
@@ -594,11 +594,11 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
     // XXX this code needs review and updating for dual modem
 
-    type = ((Pwm6Payload_t*) radio1.RXdataBuffer)->header;
-    inCRC = ((Pwm6Payload_t*) radio1.RXdataBuffer)->crc;
-    ((Pwm6Payload_t*) radio1.RXdataBuffer)->crc = 0; // zero out the crc bits to match the sender
+    type = ((Pwm6Payload_t*) radio1->RXdataBuffer)->header;
+    inCRC = ((Pwm6Payload_t*) radio1->RXdataBuffer)->crc;
+    ((Pwm6Payload_t*) radio1->RXdataBuffer)->crc = 0; // zero out the crc bits to match the sender
 
-    uint16_t calculatedCRC = ota_crc.calc(radio1.RXdataBuffer, OTA_PACKET_LENGTH-1);
+    uint16_t calculatedCRC = ota_crc.calc(radio1->RXdataBuffer, OTA_PACKET_LENGTH-1);
 
     #else
 
@@ -917,7 +917,7 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     // uint8_t modresultTLM = (NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval));
     // if (modresultTLM != 0 || ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) // if we are about to send a tlm response don't bother going back to rx
     // {
-    //     radio1.RXnb();
+    //     radio1->RXnb();
     // }
 
     return true;
@@ -967,7 +967,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // SX1280Driver *sendingRadio = &radio1;
     // SX1280Driver *otherRadio = radio2;
 
-    SX1262Driver *sendingRadio = &radio1;
+    SX1262Driver *sendingRadio = radio1;
 
     telemWhere = (char *)"FS";
 
@@ -986,7 +986,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     sendingRadio->TXdataBuffer[0] = 0b11; // tlm packet
 
     #ifdef ELRS_OG_COMPATIBILITY
-    radio1.TXdataBuffer[1] = 1; // ELRS_TELEMETRY_TYPE_LINK; XXX 
+    radio1->TXdataBuffer[1] = 1; // ELRS_TELEMETRY_TYPE_LINK; XXX 
     #else
     sendingRadio->TXdataBuffer[1] = CRSF_FRAMETYPE_LINK_STATISTICS;
     #endif
@@ -1032,7 +1032,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     // sendingRadio->TXnb(sendingRadio->TXdataBuffer, 8);
     // printf("telem sent ");
-    // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1.TXdataBuffer[i]);
+    // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1->TXdataBuffer[i]);
     // printf("crc %04X\n", crc);
 
     // printf("...done\n");
@@ -1059,14 +1059,14 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
         {
             r1LastIRQms = millis();
 
-            uint16_t irqs = radio1.GetIrqStatus(); // XXX how can we do this safely?
+            uint16_t irqs = radio1->GetIrqStatus(); // XXX how can we do this safely?
 
             // Sometimes we get preamble events even when not configured, so this needs to be guarded
             // if (irqs & SX1280_IRQ_PREAMBLE_DETECTED)
             // {
             //     // store the packet time here for use in PFD to reduce jitter on CRC failover
             //     tPacketR1 = esp_timer_get_time();
-            //     radio1.ClearIrqStatus(SX1280_IRQ_PREAMBLE_DETECTED);
+            //     radio1->ClearIrqStatus(SX1280_IRQ_PREAMBLE_DETECTED);
             //     // printf("p1");
             //     std::cout << "p1";
 
@@ -1081,7 +1081,7 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                 taskInfo.radioID = 0; // 0 for both radios
                 xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-                // radio1.RXnb();
+                // radio1->RXnb();
                 // radio2->RXnb();
 
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
@@ -1097,10 +1097,10 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
                     taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-                    // radio1.ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT); // XXX replace with a new rxTask event
+                    // radio1->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT); // XXX replace with a new rxTask event
                     // std::cout << "DT1";
                 } else {
-                    // radio1.RXnb(); // clears all IRQs
+                    // radio1->RXnb(); // clears all IRQs
                     taskInfo.id = SpiTaskID::StartRx;
                     taskInfo.radioID = 1;
                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
@@ -1151,7 +1151,7 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
 //                 taskInfo.radioID = 0; // 0 for both radios
 //                 xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-//                 // radio1.RXnb();
+//                 // radio1->RXnb();
 //                 // radio2->RXnb();
 
 //             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
@@ -1194,13 +1194,13 @@ static void doReceive(const int radioID)
     // XXX do the same for E22 (sx1262)
     #ifdef RADIO_E22
 
-    uint16_t irqS = radio1.GetIrqStatus();
+    uint16_t irqS = radio1->GetIrqStatus();
 
     if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
     {
         timeout1Counter++;
         // need to start another rx
-        radio1.RXnb();
+        radio1->RXnb();
         std::cout << "timeout";
         return;
     } else if (irqS & SX1262_IRQ_TX_DONE) {
@@ -1218,12 +1218,12 @@ static void doReceive(const int radioID)
 
             r1LastIRQms = millis();
 
-            radio1.readRXData(); // get the data from the radio chip
-            if (hasValidCRC((uint8_t*)radio1.RXdataBuffer))
+            radio1->readRXData(); // get the data from the radio chip
+            if (hasValidCRC((uint8_t*)radio1->RXdataBuffer))
             {
                 if (!packetReceived)
                 {
-                    ProcessRFPacket((uint8_t*)radio1.RXdataBuffer, tPacketR1, RadioSelection::first);
+                    ProcessRFPacket((uint8_t*)radio1->RXdataBuffer, tPacketR1, RadioSelection::first);
                     totalRX1Events++;
                     packetReceived = true;
                     HandleFHSS();
@@ -1250,15 +1250,15 @@ static void doReceive(const int radioID)
                 lastPacketCrcError = true;
                 #endif
 
-                // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1.RXdataBuffer[i]);
+                // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1->RXdataBuffer[i]);
                 // std::cout << '\n';
             }
             
             // start the next receive
             if (connectionState != connected || !isTelemetryFrame()) {
-                radio1.RXnb();  // includes clearing the irqs
+                radio1->RXnb();  // includes clearing the irqs
             } else {
-                radio1.ClearIrqStatus(SX1280_IRQ_RX_DONE);
+                radio1->ClearIrqStatus(SX1280_IRQ_RX_DONE);
             }
 
             break;
@@ -1395,7 +1395,7 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                 //     switch(taskInfo.radioID)
                 //     {
                 //         case 1:
-                //             radio1.SetMode(SX1280_MODE_FS);
+                //             radio1->SetMode(SX1280_MODE_FS);
                 //             break;
                 //         case 2:
                 //             radio2->SetMode(SX1280_MODE_FS);
@@ -1414,13 +1414,13 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                             // radio2->SetMode(SX1280_MODE_FS); // will be correct once radio2 has the right type
 
                             // start the transmission
-                            radio1.TXnb(radio1.TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
+                            radio1->TXnb(radio1->TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
                             break;
                         case RadioSelection::second:
                             std::cout << "no send on radio2\n";
                             // not sending on radio2 yet
                             // turn off the 'other' radio
-                            // radio1.SetMode(SX1280_MODE_FS);
+                            // radio1->SetMode(SX1280_MODE_FS);
                             // start the transmission
                             // radio2->TXnb(radio2->TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
                             break;
@@ -1433,11 +1433,11 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     switch(taskInfo.radioID)
                     {
                         case RadioSelection::both: // change on both radios
-                            radio1.SetFrequency(taskInfo.frequency);
+                            radio1->SetFrequency(taskInfo.frequency);
                             // radio2->SetFrequency(taskInfo.frequency);
                             break;
                         case RadioSelection::first:
-                            radio1.SetFrequency(taskInfo.frequency);
+                            radio1->SetFrequency(taskInfo.frequency);
                             break;
                         case RadioSelection::second:
                             // radio2->SetFrequency(taskInfo.frequency);
@@ -1453,11 +1453,11 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     switch(taskInfo.radioID)
                     {
                         case RadioSelection::both: // start rx on both radios
-                            radio1.RXnb();
+                            radio1->RXnb();
                             // radio2->RXnb();
                             break;
                         case RadioSelection::first:
-                            radio1.RXnb();
+                            radio1->RXnb();
                             break;
                         case RadioSelection::second:
                             // radio2->RXnb();
@@ -1473,7 +1473,7 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     switch(taskInfo.radioID)
                     {
                         case RadioSelection::first:
-                            radio1.ClearIrqStatus(taskInfo.irqMask);
+                            radio1->ClearIrqStatus(taskInfo.irqMask);
                             break;
                         case RadioSelection::second:
                             // radio2->ClearIrqStatus(taskInfo.irqMask);
@@ -1576,12 +1576,12 @@ void liveUpdateRFLinkRate(uint8_t index)
     #ifdef USE_FLRC
     if (index == 0)
     { // special case FLRC for testing
-        radio1.ConfigFLRC(GetInitialFreq());
+        radio1->ConfigFLRC(GetInitialFreq());
     }
     else
     #endif
     {
-        radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, freq, ModParams->PreambleLen, invertIQ);
+        radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, freq, ModParams->PreambleLen, invertIQ);
         #ifdef USE_SECOND_RADIO
         // radio2 is the sniffer and should already be on the right settings
         // radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, freq, ModParams->PreambleLen, invertIQ);
@@ -1592,10 +1592,10 @@ void liveUpdateRFLinkRate(uint8_t index)
 
 
     // Set timeout based on the interval
-    radio1.setRxTimeout(ModParams->interval * 5 / 2);
+    radio1->setRxTimeout(ModParams->interval * 5 / 2);
     // radio2->setRxTimeout(ModParams->interval * 5 / 2);
 
-    radio1.RXnb();
+    radio1->RXnb();
     // radio2->RXnb();
 
     ExpressLRS_currAirRate_Modparams = ModParams;
@@ -1622,12 +1622,12 @@ void SetRFLinkRate(uint8_t index)
 #ifdef USE_FLRC
     if (index == 0)
     { // special case FLRC for testing
-        radio1.ConfigFLRC(GetInitialFreq());
+        radio1->ConfigFLRC(GetInitialFreq());
     }
     else
 #endif
     {
-        radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+        radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
         #ifdef USE_SECOND_RADIO
         radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
         #endif
@@ -1811,7 +1811,7 @@ void ICACHE_RAM_ATTR tockRX()
     uint32_t now = millis();
     if ((now - p1) > 2000)
     {
-        radio1.RXnb(); // XXX convert to event messages
+        radio1->RXnb(); // XXX convert to event messages
         radio1Timedout = false;
         std::cout << "HM1";
         r1LastIRQms = now; // stop it spamming
@@ -1983,8 +1983,8 @@ void lostConnection()
     SetRFLinkRate(ExpressLRS_nextAirRateIndex); // also sets to initialFreq 
 
     // set timeouts to cover the entire time we're going to wait for sync in this mode
-    radio1.setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
-    radio1.RXnb();
+    radio1->setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
+    radio1->RXnb();
 
     #ifdef USE_SECOND_RADIO
     radio2->setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
@@ -2097,7 +2097,7 @@ static void cycleRfMode()
         // crsf.sendLinkStatisticsToFC(); // need to send twice, not sure why, seems like a BF bug?
 
 
-        radio1.RXnb();
+        radio1->RXnb();
         #ifdef USE_SECOND_RADIO
         radio2->RXnb();
         #endif
@@ -2272,18 +2272,20 @@ void app_main()
     HwTimer::setCallbackTick(tickTock);
     HwTimer::setCallbackTock(tickTock);
 
+    radio1 = new SX1262Driver();
+
     // radio2 = new SX1280Driver(RADIO2_NSS_PIN);
 
-    radio1.currFreq = GetInitialFreq();
+    radio1->currFreq = GetInitialFreq();
     // radio2->currFreq = GetInitialFreq();
 
     // const bool usePreambleDetect = false; // this didn't work out, but maybe worth another look someday?
 
     // XXX retry if either radio doesn't initialise properly
 
-    radio1.Begin(); // XXX need to add result value to sx1262 driver
+    radio1->Begin(); // XXX need to add result value to sx1262 driver
 
-    // if (radio1.Begin(usePreambleDetect) == 0) {
+    // if (radio1->Begin(usePreambleDetect) == 0) {
         // set led green
         // setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
     // } else {
@@ -2299,7 +2301,7 @@ void app_main()
     //     setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
     // }
 
-    radio1.SetOutputPower(DISARM_POWER);    // XXX figure out what to do for tx and rx powers
+    radio1->SetOutputPower(DISARM_POWER);    // XXX figure out what to do for tx and rx powers
     // radio2->SetOutputPower(DISARM_POWER);
 
     //create a queue to handle gpio event from isr
@@ -2344,7 +2346,7 @@ void app_main()
 
     // XXX What's a reasonable timeout?
     // timeout in us
-    radio1.setRxTimeout(2000000);
+    radio1->setRxTimeout(2000000);
     // radio2->setRxTimeout(20000);
 
     FHSSrandomiseFHSSsequence();
@@ -2353,7 +2355,7 @@ void app_main()
     {
         HwTimer::resume();
     } else {
-        radio1.RXnb();
+        radio1->RXnb();
         // radio2->RXnb();
         crsf.Begin();
     }
