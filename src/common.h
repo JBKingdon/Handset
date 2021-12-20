@@ -107,6 +107,8 @@ typedef struct expresslrs_rf_pref_params_s
 // XXX change this to N_RATES
 #ifdef USE_PWM6
 #define RATE_MAX 2
+#elif defined(DUAL_BAND_BREADBOARD) // XXX this will need splitting into 915/2G4 values, unless we imply single rate for 915?
+#define RATE_MAX 1
 #else
 #define RATE_MAX 4
 #endif

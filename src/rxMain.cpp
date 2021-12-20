@@ -5,8 +5,10 @@
  *   Fix SPI collisions
  *   Add code to detect if a modem stops talking to us. There should always be one of txdone, rxdone or timeout in every frame
  *      add code to try harder when the modem stops talking
- *   Add linkstatus packets -> FC
+ *   Figure out why the radios stop talking
  */
+
+const bool TRANSMITTER = false;
 
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +30,7 @@
 #include "common.h"
 #include "FHSS.h"
 #include "SX1262Driver.h"
+#include "SX1280Driver.h"
 #include "HwTimer.h"
 #include "CRSF.h"
 #include "PFD.h"
@@ -39,7 +42,7 @@
 #include "driver/rmt.h"
 #include "led_strip.h"
 
-#define DEBUG_SUPPRESS
+// #define DEBUG_SUPPRESS
 // #define PRINT_RX_SCOREBOARD 1
 
 #define LED_BRIGHTNESS 32
@@ -69,16 +72,22 @@ const int8_t PwmPins[] = {PWM_CH1_PIN, PWM_CH2_PIN, PWM_CH3_PIN, PWM_CH4_PIN, PW
 
 SX1262Driver radio1;
 
+
 #elif defined (RADIO_E28_12) || defined(RADIO_E28_20) || defined(RADIO_E28_27)
 
 // XXX Having one of these as a pointer and one not is going to be really annoying. Fix
 SX1280Driver radio1;
-SX1280Driver * radio2 = NULL;
 
 #else
 error("must define a radio module")
 
 #endif // RADIO_*
+
+#ifdef SECOND_RADIO
+
+SX1280Driver * radio2 = NULL;
+
+#endif
 
 enum DynamicRateStates
 {
@@ -145,8 +154,10 @@ static xQueueHandle tx_evt_queue = NULL;
 static xQueueHandle tx2_evt_queue = NULL;
 
 volatile uint32_t NonceRX = 0; // nonce that we THINK we are up to.
+uint32_t nonceTX = 0;
 
-uint16_t timerNonce = 0;   // incremented every time the hwtimer fires, and scaled by rfModeDivisor to get the NonceTX
+uint16_t timerNonce = 0;   // incremented every time the hwtimer fires, and scaled by rfModeDivisor to get the nonce
+
 // XXX divisor would be more efficient if specified as a bit shift
 uint32_t rfModeDivisor = 1; // Since the hwTimer now runs at a fixed 1kHz we need to a factor to scale to the packet rate
 
@@ -247,9 +258,9 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
             // printf("update0 %d %d\n", t1, rssiDBM0);
             break;
         case 1:
-            // rssiDBM1 = LPF_UplinkRSSI1.update(radio1.GetLastPacketRSSI());
-            t2 = radio2->GetLastPacketRSSI();
-            rssiDBM1 = LPF_UplinkRSSI1.update(t2);
+            std::cout << "getRFlinkInfo radio2 disabled\n";
+            // t2 = radio2->GetLastPacketRSSI();
+            // rssiDBM1 = LPF_UplinkRSSI1.update(t2);
             // printf("update1 %d %d\n", t2, rssiDBM1);
 
             break;
@@ -306,7 +317,7 @@ void TentativeConnection()
     // set timeout based on interval?
 
     radio1.setRxTimeout(20000);
-    radio2->setRxTimeout(20000);
+    // radio2->setRxTimeout(20000);
 
 
     #ifdef LED_STATUS_INDEX
@@ -385,15 +396,187 @@ void setRadioParams(uint8_t index, RadioSelection targetRadio)
             radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
         case RadioSelection::second:
-            radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+            // radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
         case RadioSelection::both:
             radio1.Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
-            radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
+            // radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
             break;
     }
 }
 
+/** 
+ * 
+ */
+void GenerateSyncPacketData()
+{
+   radio1.TXdataBuffer[0] = SYNC_PACKET;  // XXX New packet format needed
+
+   // radio.TXdataBuffer[2] = NonceTX;
+   radio1.TXdataBuffer[1] = (timerNonce >> 8) & 0xFF;
+   radio1.TXdataBuffer[2] = (timerNonce >> 0) & 0xFF;
+
+   // send either the current or next index if using sync spamming on rate change
+   uint8_t rateIndex;
+   #ifdef USE_SYNC_SPAM
+   if (syncSpamCounter != 0 && nextLinkRate != -1) {
+      // Notify the RX that we're going to change packet rate
+      rateIndex = (nextLinkRate & 0b11);
+      syncSpamCounter--;
+   } else {
+      // Send the current packet rate
+      rateIndex = (ExpressLRS_currAirRate_Modparams->index & 0b11);
+   }
+   #else
+   // Send the current packet rate
+   rateIndex = (ExpressLRS_currAirRate_Modparams->index & 0b11);
+   #endif
+
+    // XXX this will be the rate of the 2G4 link eventually
+   radio1.TXdataBuffer[3] = ((rateIndex & 0b111) << 5) + ((ExpressLRS_currAirRate_Modparams->TLMinterval & 0b111) << 2);
+
+
+   int8_t adjustedDBM = radio1.currPWR;
+   #if defined(RADIO_E28_27)    // XXX make the radio instance know what sort of radio it is and query it at runtime?
+   // for e28-27, PA output is +27dBm of the pre-PA setting, up to a max of 0 input.
+   adjustedDBM += 27;
+   #elif defined(RADIO_E28_20)
+   // for e28-20, PA output is +22dBm of the pre-PA setting, up to a max of -2 input.
+   adjustedDBM += 22;
+   #endif
+
+   radio1.TXdataBuffer[4] = adjustedDBM;
+
+   radio1.TXdataBuffer[5] = UID[4];
+   radio1.TXdataBuffer[6] = UID[5];
+}
+
+/**
+ * 
+ */
+void ICACHE_RAM_ATTR sendRCdataToRF()
+{
+    // static to persist across calls
+    static uint8_t syncPacketIndex = 1;
+
+    // printf("n %u\n\r", nonceTX);
+
+    // for(int i=0; i<10; i++) radio.TXdataBuffer[i] = i;
+
+    uint32_t SyncInterval;
+    // XXX testing
+    if (false && isRXconnected)
+    {
+        SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalConnected;
+    }
+    else
+    {
+        SyncInterval = ExpressLRS_currAirRate_RFperfParams->SyncPktIntervalDisconnected;
+    }
+
+    // safety check to make sure that if the mode is changed to one with a smaller fhss interval we don't get
+    // stuck with syncPacketIndex > the new interval
+    // Also sets the index to 1 if we're trying to establish a new connection as it seems to help avoid an initial 'slip' connection
+    if (syncPacketIndex >= ExpressLRS_currAirRate_Modparams->FHSShopInterval || !isRXconnected)
+    {
+        syncPacketIndex = 1;
+    }
+
+    // XXX temp hacking
+    const int syncSpamCounter = 0;
+    const int lastLinkRateChangeTime = 0;
+
+    static unsigned long SyncPacketLastSent = 0; // static for persistence between calls
+
+    //   if ((syncWhenArmed || !isArmed()) &&    // send sync packets when not armed, or always if syncWhenArmed is true
+    if (
+        ((syncSpamCounter != 0 && (millis() - lastLinkRateChangeTime > 300)) || // if we're trying to notify the rx of changing packet rate, just do it, otherwise...
+         (
+             ((millis() - SyncPacketLastSent) > SyncInterval) && // ...has enough time passed?
+             (radio1.currFreq == GetInitialFreq())                // we're on the sync frequency
+             // sync just after we changed freqs (helps with hwTimer.init() being in sync from the get go)
+             && ((nonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval) == syncPacketIndex))))
+    { // Send a sync packet
+
+        GenerateSyncPacketData();
+        SyncPacketLastSent = millis();
+
+        // rotate the sync packet through the packets in each fhss interval
+        // if (isRXconnected) {
+        //    syncPacketIndex = (syncPacketIndex + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+        //    if (syncPacketIndex == 0) syncPacketIndex = 1; // skip index 0 as it collides with telemetry
+        // }
+
+        std::cout << "sync\n";
+    }
+    else
+    { // Send a normal RC packet
+        // printf("%u\n", nonceTX);
+
+        // debug lack of sync packets
+        // if ((millis() - SyncPacketLastSent) > SyncInterval) {
+        //    // we're overdue for a sync packet, why didn't we send it?
+        //    if (radio.currFreq != GetInitialFreq()) {
+        //       printf("not freq\n\r");
+        //    } else if ((nonceTX % ExpressLRS_currAirRate_Modparams->FHSShopInterval) != syncPacketIndex) {
+        //       printf("not index\n\r");
+        //    }
+        // }
+
+        // XXX temporary data for testing
+        uint16_t scaledADC[4];
+        scaledADC[0] = 750;
+        scaledADC[1] = 750;
+        scaledADC[2] = 750;
+        scaledADC[3] = 750;
+
+#ifdef USE_HIRES_DATA
+        GenerateHiResChannelData(radio.TXdataBuffer, scaledADC, DeviceAddr);
+#elif defined USE_PWM6
+        GenerateChannelDataPWM6((Pwm6Payload_t *)radio.TXdataBuffer, scaledADC, currentSwitches);
+#else
+        // XXX more temporary hacking
+        // uint8_t nextSwitchIndex = getNextSwitchIndex();
+        // uint8_t nextSwitchValue = currentSwitches[nextSwitchIndex];
+        // setSentSwitch(nextSwitchIndex, nextSwitchValue);
+        uint8_t nextSwitchIndex = 1;
+        uint8_t currentSwitches[4] = {0};
+        GenerateChannelDataHybridSwitch8(radio1.TXdataBuffer, scaledADC, currentSwitches, nextSwitchIndex, DeviceAddr);
+#endif // USE_HIRES_DATA
+    }
+
+    ///// Next, Calculate the CRC and put it into the buffer /////
+
+
+    // need to clear the crc bits of the first byte before calculating the crc
+    radio1.TXdataBuffer[0] &= 0b11;
+
+    uint16_t crc = ota_crc.calc(radio1.TXdataBuffer, OTA_PACKET_LENGTH - 1);
+    radio1.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
+    radio1.TXdataBuffer[OTA_PACKET_LENGTH - 1] = crc & 0xFF;
+
+
+    // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // clear the rx debug pin as we're definitely not listening now
+
+    // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio.TXdataBuffer[i]);
+    // printf(", crc %04X\n", crc);
+
+    // std::cout << "sendRC TXnb\n";
+    radio1.TXnb(radio1.TXdataBuffer, OTA_PACKET_LENGTH);
+
+    // // check for variaton in the intervals between sending packets
+    // static LPF LPF_sentInterval(4);
+    // static unsigned long tSentLast = 0;
+    // unsigned long tSent = micros();
+    // unsigned long delta = tSent - tSentLast;
+    // int32_t avgDelta = LPF_sentInterval.update(delta);
+    // int32_t variance = delta - avgDelta;
+    // if (variance < 0) variance = -variance;
+    // if (variance > 10) {
+    //    printf("delta %lu avg %ld\n", delta, avgDelta);
+    // }
+    // tSentLast = tSent;
+}
 
 /**
  * @return currently always returns 1
@@ -546,13 +729,12 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
 
             #else // not ELRS_OG_COMPATIBILITY
 
+            const uint32_t TimerNonceOffset195 = 0;
 
             if (connectionState == disconnected)
             {
-                // FHSSsetCurrIndex(rxBuffer[1]);
-                // NonceRX = rxBuffer[2] + 1;
-
-                timerNonce = 2 * (newTimerNonce + rfModeDivisor); // rfModeDivisor approximates how many increments happened on the tx while the packet was on the air
+                // timerNonce = 2 * (newTimerNonce + rfModeDivisor); // rfModeDivisor approximates how many increments happened on the tx while the packet was on the air
+                timerNonce = newTimerNonce + TimerNonceOffset195;
 
                 NonceRX = timerNonce / (2 * rfModeDivisor);
 
@@ -564,14 +746,16 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
             } else { // not disconnected
                 const uint8_t nonceOffsets[] = { 0, 1, 3, 6}; // n(n+1)/2 - is this going to be stable?
 
-                uint16_t expectedNonce = (newTimerNonce + nonceOffsets[ExpressLRS_currAirRate_Modparams->index]) & 0x7FFF; // XXX should the tx run the nonce at 2kHz as well?
-                uint16_t currentNonce = timerNonce / 2;
+                // uint16_t expectedNonce = (newTimerNonce + nonceOffsets[ExpressLRS_currAirRate_Modparams->index]) & 0x7FFF; // XXX should the tx run the nonce at 2kHz as well?
+                uint16_t expectedNonce = (newTimerNonce + TimerNonceOffset195 - 6);
+                uint16_t currentNonce = timerNonce;
                 if (currentNonce != expectedNonce)
                 {
                     #ifndef DEBUG_SUPPRESS
                     printf("nonce slip: current %u, expected %u\n", currentNonce, expectedNonce);
                     #endif
-                    timerNonce = 2 * (newTimerNonce + rfModeDivisor);
+                    // timerNonce = 2 * (newTimerNonce + rfModeDivisor);
+                    timerNonce = newTimerNonce + TimerNonceOffset195;
                     NonceRX = timerNonce / (2 * rfModeDivisor);
                 }
 
@@ -592,15 +776,17 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
                 dynamicRateTargetIndex = indexIN;
 
                 // Initiate DR change by moving one of the radios to the new freq
-                setRadioParams(indexIN, RadioSelection::second); // XXX choose the radio with the weakest signal
-                radio2->setRxTimeout(10000);
-                radio2->RXnb();
-                drState = DynamicRateStates::ShiftDown; // XXX rename as it doesn't matter which direction we're trying to go in
-                tDrStart = millis();
+                // setRadioParams(indexIN, RadioSelection::second); // XXX choose the radio with the weakest signal
+                // radio2->setRxTimeout(10000);
+                // radio2->RXnb();
+                // drState = DynamicRateStates::ShiftDown; // XXX rename as it doesn't matter which direction we're trying to go in
+                // tDrStart = millis();
 
-                #ifndef DEBUG_SUPPRESS
-                std::cout << "DR start\n";
-                #endif
+                // #ifndef DEBUG_SUPPRESS
+                // std::cout << "DR start\n";
+                // #endif
+                std::cout << "rate change disabled\n";
+
             }
 
 
@@ -642,16 +828,23 @@ bool ICACHE_RAM_ATTR HandleFHSS()
 
     // Optimise for the case where we've already done the hop or will never hop - we want to get out as quickly as possible
     // These conditions will have short circuit evaluation, left to right.
-    if (alreadyFHSS || (ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || (connectionState == disconnected))
+    if (alreadyFHSS || (ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0))
     {
         // if (alreadyFHSS) std::cout << "H-already\n";
         // if (connectionState == disconnected) std::cout << "H-disc\n";
         return false;
     }
 
+    // On the rx side we don't hop when disconnected, but on the tx we always hop
+    if (!TRANSMITTER && (connectionState == disconnected)) {
+        return false;
+    }
+
     // ok, so we might hop if we're on the right nonce, time to do the calculation
     // uint8_t modresultFHSS = (NonceRX + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
-    uint8_t modresultFHSS = (NonceRX + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+    const uint32_t nonce = TRANSMITTER ? nonceTX : NonceRX + 1;
+
+    uint8_t modresultFHSS = nonce % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
     if (modresultFHSS != 0)
     {
         // std::cout << "H-nonce\n";
@@ -663,14 +856,14 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     alreadyFHSS = true;
 
     // privatize so that the debug is consistent with what was used in the calculation
-    // uint16_t localTimerNonce = timerNonce;
+    uint16_t localTimerNonce = timerNonce;
 
     // We need to make sure that we're not calculating the index right on the boundary of the change,
     // so this offset moves the calculation into the middle of the range.
     // uint16_t roundingOffset = rfModeDivisor * ExpressLRS_currAirRate_Modparams->FHSShopInterval;
     // uint8_t newIndex = (localTimerNonce - roundingOffset) / (2 * rfModeDivisor * ExpressLRS_currAirRate_Modparams->FHSShopInterval);
 
-    uint8_t newIndex = NonceRX / ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+    uint8_t newIndex = nonce / ExpressLRS_currAirRate_Modparams->FHSShopInterval;
 
     // if (newIndex != newIndex2) printf("newIndex %u newIndex2 %u NonceRX %u TN %u\n", newIndex, newIndex2, NonceRX, localTimerNonce);
 
@@ -693,12 +886,15 @@ bool ICACHE_RAM_ATTR HandleFHSS()
 
     uint32_t freq = FHSSgetCurrFreq();
 
-    SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::both, freq};
+    // XXX need to figure out how we're going to hop the 2 different radios
 
-    if (drState != DynamicRateStates::Normal) {
-        // dynamic rate change is in progress, so leave the sniffer radio on the sync frequency and only change radio1
-        taskInfo.radioID = RadioSelection::first;
-    }
+    // SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::both, freq};
+    SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::first, freq};
+
+    // if (drState != DynamicRateStates::Normal) {
+    //     // dynamic rate change is in progress, so leave the sniffer radio on the sync frequency and only change radio1
+    //     taskInfo.radioID = RadioSelection::first;
+    // }
 
     xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
@@ -710,6 +906,13 @@ bool ICACHE_RAM_ATTR HandleFHSS()
     // printf("f %u\n", freq);
 
     // XXX do we need this rxnb call?
+
+    // looks like we might need it on sx1262 for the receiver
+
+    if (!TRANSMITTER) {
+        taskInfo.id = SpiTaskID::StartRx;
+        xQueueSend(rx_evt_queue, &taskInfo, 1000);
+    }
 
     // uint8_t modresultTLM = (NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval));
     // if (modresultTLM != 0 || ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) // if we are about to send a tlm response don't bother going back to rx
@@ -761,8 +964,10 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // printf("telem...\n");
 
     // XXX Use the radio with the best LQ for sending telem
-    SX1280Driver *sendingRadio = &radio1;
+    // SX1280Driver *sendingRadio = &radio1;
     // SX1280Driver *otherRadio = radio2;
+
+    SX1262Driver *sendingRadio = &radio1;
 
     telemWhere = (char *)"FS";
 
@@ -820,7 +1025,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     SpiTaskInfo taskInfo;
     taskInfo.id = SpiTaskID::StartTx;
-    taskInfo.radioID = 1;
+    taskInfo.radioID = RadioSelection::first;
 
     xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
@@ -842,6 +1047,7 @@ bool ICACHE_RAM_ATTR HandleSendTelemetryResponse()
  * the interrupts other than rx_done (rx_done being on the most critcal path for a receiver)
  * 
  * XXX rename the function
+ * XXX figure out how to best handle mixed 1262/1280 support
  */
 static void ICACHE_RAM_ATTR tx_task(void* arg)
 {
@@ -910,72 +1116,72 @@ static void ICACHE_RAM_ATTR tx_task(void* arg)
     }
 }
 
-static void ICACHE_RAM_ATTR tx2_task(void* arg)
-{
-    SpiTaskInfo taskInfo;
+// static void ICACHE_RAM_ATTR tx2_task(void* arg)
+// {
+//     SpiTaskInfo taskInfo;
 
-    uint8_t dummyData;
-    for(;;) {
-        if(xQueueReceive(tx2_evt_queue, &dummyData, portMAX_DELAY))
-        {
-            r2LastIRQms = millis();
+//     uint8_t dummyData;
+//     for(;;) {
+//         if(xQueueReceive(tx2_evt_queue, &dummyData, portMAX_DELAY))
+//         {
+//             r2LastIRQms = millis();
 
-            uint16_t irqs = radio2->GetIrqStatus();
+//             uint16_t irqs = radio2->GetIrqStatus();
 
-            // TODO Sometimes we get preamble events even when not configured, so this needs to be guarded
-            // Since it's not currently used, just comment it out
+//             // TODO Sometimes we get preamble events even when not configured, so this needs to be guarded
+//             // Since it's not currently used, just comment it out
 
-            // if (irqs & SX1280_IRQ_PREAMBLE_DETECTED)
-            // {
-            //     // store the packet time here for use in PFD to reduce jitter on CRC failover
-            //     tPacketR2 = esp_timer_get_time();
-            //     radio2->ClearIrqStatus(SX1280_IRQ_PREAMBLE_DETECTED);
-            //     // printf("p2");
-            //     std::cout << "p2";
+//             // if (irqs & SX1280_IRQ_PREAMBLE_DETECTED)
+//             // {
+//             //     // store the packet time here for use in PFD to reduce jitter on CRC failover
+//             //     tPacketR2 = esp_timer_get_time();
+//             //     radio2->ClearIrqStatus(SX1280_IRQ_PREAMBLE_DETECTED);
+//             //     // printf("p2");
+//             //     std::cout << "p2";
 
-            // } else if (irqs & SX1280_IRQ_TX_DONE) {
+//             // } else if (irqs & SX1280_IRQ_TX_DONE) {
 
-            if (irqs & SX1280_IRQ_TX_DONE) {
-                // printf("tx2!\n");            
-                // give fhss a chance to run before tock()
-                HandleFHSS();
+//             if (irqs & SX1280_IRQ_TX_DONE) {
+//                 // printf("tx2!\n");            
+//                 // give fhss a chance to run before tock()
+//                 HandleFHSS();
 
-                // start the next receive
-                taskInfo.id = SpiTaskID::StartRx;
-                taskInfo.radioID = 0; // 0 for both radios
-                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+//                 // start the next receive
+//                 taskInfo.id = SpiTaskID::StartRx;
+//                 taskInfo.radioID = 0; // 0 for both radios
+//                 xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-                // radio1.RXnb();
-                // radio2->RXnb();
+//                 // radio1.RXnb();
+//                 // radio2->RXnb();
 
-            } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
-                // printf("r2 timeout\n");
-                timeout2Counter++;
-                if (HwTimer::isRunning()) {
-                    radio2Timedout = true;
-                    taskInfo.id = SpiTaskID::ClearIRQs;
-                    taskInfo.radioID = 2;
-                    taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
-                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
-                    // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
-                    // std::cout << "DT2";
-                } else {
-                    // radio2->RXnb(); // implicit clear irqs
-                    taskInfo.id = SpiTaskID::StartRx;
-                    taskInfo.radioID = 2;
-                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+//             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
+//                 // printf("r2 timeout\n");
+//                 timeout2Counter++;
+//                 if (HwTimer::isRunning()) {
+//                     radio2Timedout = true;
+//                     taskInfo.id = SpiTaskID::ClearIRQs;
+//                     taskInfo.radioID = 2;
+//                     taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
+//                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
+//                     // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
+//                     // std::cout << "DT2";
+//                 } else {
+//                     // radio2->RXnb(); // implicit clear irqs
+//                     taskInfo.id = SpiTaskID::StartRx;
+//                     taskInfo.radioID = 2;
+//                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-                    // std::cout << "T2";
-                }
+//                     // std::cout << "T2";
+//                 }
 
-            } else {
-                #ifndef DEBUG_SUPPRESS
-                printf("!!! tx2_task irqs %04X\n", irqs);
-                #endif
-            }
-        }
-    }
-}
+//             } else {
+//                 #ifndef DEBUG_SUPPRESS
+//                 printf("!!! tx2_task irqs %04X\n", irqs);
+//                 #endif
+//             }
+//         }
+//     }
+// }
 
 
 static void doReceive(const int radioID)
@@ -992,11 +1198,14 @@ static void doReceive(const int radioID)
 
     if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
     {
-        timeoutCounter++;
+        timeout1Counter++;
         // need to start another rx
         radio1.RXnb();
-
-        continue;
+        std::cout << "timeout";
+        return;
+    } else if (irqS & SX1262_IRQ_TX_DONE) {
+        // Need to do 915 fhss call here
+        return;
     }
 
     #endif // RADIO_E22
@@ -1040,6 +1249,9 @@ static void doReceive(const int radioID)
                 #ifdef PRINT_RX_SCOREBOARD
                 lastPacketCrcError = true;
                 #endif
+
+                // for(int i=0; i<OTA_PACKET_LENGTH; i++) printf("%02X ", radio1.RXdataBuffer[i]);
+                // std::cout << '\n';
             }
             
             // start the next receive
@@ -1052,70 +1264,71 @@ static void doReceive(const int radioID)
             break;
 
         case 2:
+            std::cout << "doReceive radio2 disabled\n";
 
-            r2LastIRQms = millis();
+            // r2LastIRQms = millis();
 
-            radio2->readRXData(); // get the data from the radio chip
-            if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
-            {
-                // Did we just get a packet for dynamic rate change?
-                if (drState == DynamicRateStates::ShiftDown)
-                {
-                    // We've got a packet on the sniffer, so we need to commit to the new settings
+            // radio2->readRXData(); // get the data from the radio chip
+            // if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
+            // {
+            //     // Did we just get a packet for dynamic rate change?
+            //     if (drState == DynamicRateStates::ShiftDown)
+            //     {
+            //         // We've got a packet on the sniffer, so we need to commit to the new settings
 
-                    // change link parameters
-                    ExpressLRS_nextAirRateIndex = dynamicRateTargetIndex;
+            //         // change link parameters
+            //         ExpressLRS_nextAirRateIndex = dynamicRateTargetIndex;
 
-                    if (dynamicRateTargetIndex == 0) timerNonce -= 3; // for some reason changing to 1k always seems to be off
+            //         if (dynamicRateTargetIndex == 0) timerNonce -= 3; // for some reason changing to 1k always seems to be off
 
-                    liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
+            //         liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
 
-                    // clear the dr change state
-                    drState = DynamicRateStates::Normal;
+            //         // clear the dr change state
+            //         drState = DynamicRateStates::Normal;
 
-                    // make sure that we call RXnb
-                    forceNextReceive = true;
+            //         // make sure that we call RXnb
+            //         forceNextReceive = true;
 
-                    #ifndef DEBUG_SUPPRESS
-                    // printf("changing rate index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
-                    uint32_t packetHz = 1000 / (1 << dynamicRateTargetIndex);
-                    printf("\nDR end: %u Hz\n", packetHz);
-                    #endif
-                }
+            //         #ifndef DEBUG_SUPPRESS
+            //         // printf("changing rate index from %u to %u\n", ExpressLRS_currAirRate_Modparams->index, indexIN);
+            //         uint32_t packetHz = 1000 / (1 << dynamicRateTargetIndex);
+            //         printf("\nDR end: %u Hz\n", packetHz);
+            //         #endif
+            //     }
 
-                if (!packetReceived)
-                {
-                    ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second); 
-                    totalRX2Events++;
-                    packetReceived = true;
-                    HandleFHSS();
-                    lqEffective.add();                            
-                    #if defined(PRINT_RX_SCOREBOARD)
-                    // printf("2");
-                    std::cout << '2';
-                    #endif
-                } else {
-                    // Skip at most 1 packet
-                    packetReceived = false;
-                }
+            //     if (!packetReceived)
+            //     {
+            //         ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second); 
+            //         totalRX2Events++;
+            //         packetReceived = true;
+            //         HandleFHSS();
+            //         lqEffective.add();                            
+            //         #if defined(PRINT_RX_SCOREBOARD)
+            //         // printf("2");
+            //         std::cout << '2';
+            //         #endif
+            //     } else {
+            //         // Skip at most 1 packet
+            //         packetReceived = false;
+            //     }
 
-                lqRadio2.add();
-                antenna = 1;
-                getRFlinkInfo();
+            //     lqRadio2.add();
+            //     antenna = 1;
+            //     getRFlinkInfo();
 
-            } else {
-                // failed CRC check
-                crc2Counter++;
-                #ifdef PRINT_RX_SCOREBOARD
-                lastPacketCrcError = true;
-                #endif
-            }
+            // } else {
+            //     // failed CRC check
+            //     crc2Counter++;
+            //     #ifdef PRINT_RX_SCOREBOARD
+            //     lastPacketCrcError = true;
+            //     #endif
+            // }
             
-            if (forceNextReceive || connectionState != connected || !isTelemetryFrame()) {
-                radio2->RXnb();  // includes clearing the irqs
-            } else {
-                radio2->ClearIrqStatus(SX1280_IRQ_RX_DONE);
-            }
+            // if (forceNextReceive || connectionState != connected || !isTelemetryFrame()) {
+            //     radio2->RXnb();  // includes clearing the irqs
+            // } else {
+            //     radio2->ClearIrqStatus(SX1280_IRQ_RX_DONE);
+            // }
 
             break;
 
@@ -1153,9 +1366,6 @@ static void doReceive(const int radioID)
 
 
 /** Handle received packets
- * 
- * 
- * Instead of passing the radioID via the queue, use an eventDescriptor instead?
  * 
  * Each item on the queue represents an spi transaction, so if an activity requires multiple
  * spi calls (without something else jumping in between) then that should be represented as a single
@@ -1201,15 +1411,18 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     {
                         case RadioSelection::first:
                             // turn off the 'other' radio
-                            radio2->SetMode(SX1280_MODE_FS);
+                            // radio2->SetMode(SX1280_MODE_FS); // will be correct once radio2 has the right type
+
                             // start the transmission
                             radio1.TXnb(radio1.TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
                             break;
                         case RadioSelection::second:
+                            std::cout << "no send on radio2\n";
+                            // not sending on radio2 yet
                             // turn off the 'other' radio
-                            radio1.SetMode(SX1280_MODE_FS);
+                            // radio1.SetMode(SX1280_MODE_FS);
                             // start the transmission
-                            radio2->TXnb(radio2->TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
+                            // radio2->TXnb(radio2->TXdataBuffer, 8); // Currently only used to send telem packets which are fixed at 8 bytes
                             break;
                         default:
                             printf("unexpected radioID for StartTx %d\n", taskInfo.radioID);
@@ -1221,13 +1434,15 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     {
                         case RadioSelection::both: // change on both radios
                             radio1.SetFrequency(taskInfo.frequency);
-                            radio2->SetFrequency(taskInfo.frequency);
+                            // radio2->SetFrequency(taskInfo.frequency);
                             break;
                         case RadioSelection::first:
                             radio1.SetFrequency(taskInfo.frequency);
                             break;
                         case RadioSelection::second:
-                            radio2->SetFrequency(taskInfo.frequency);
+                            // radio2->SetFrequency(taskInfo.frequency);
+                            std::cout << "SetFrequency radio2 disabled\n";
+
                             break;
                         default:
                             printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
@@ -1239,13 +1454,15 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                     {
                         case RadioSelection::both: // start rx on both radios
                             radio1.RXnb();
-                            radio2->RXnb();
+                            // radio2->RXnb();
                             break;
                         case RadioSelection::first:
                             radio1.RXnb();
                             break;
                         case RadioSelection::second:
-                            radio2->RXnb();
+                            // radio2->RXnb();
+                            std::cout << "StartRx radio2 disabled\n";
+
                             break;
                         default:
                             printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
@@ -1259,7 +1476,9 @@ static void ICACHE_RAM_ATTR rx_task(void* arg)
                             radio1.ClearIrqStatus(taskInfo.irqMask);
                             break;
                         case RadioSelection::second:
-                            radio2->ClearIrqStatus(taskInfo.irqMask);
+                            // radio2->ClearIrqStatus(taskInfo.irqMask);
+                            std::cout << "ClearIRQs radio2 disabled\n";
+
                             break;
                         default:
                             printf("unexpected radioID for ClearIRQs %d\n", taskInfo.radioID);
@@ -1369,13 +1588,15 @@ void liveUpdateRFLinkRate(uint8_t index)
         #endif
     }
 
+    std::cout << "liveUpdate radio2 disabled\n";
+
 
     // Set timeout based on the interval
     radio1.setRxTimeout(ModParams->interval * 5 / 2);
-    radio2->setRxTimeout(ModParams->interval * 5 / 2);
+    // radio2->setRxTimeout(ModParams->interval * 5 / 2);
 
     radio1.RXnb();
-    radio2->RXnb();
+    // radio2->RXnb();
 
     ExpressLRS_currAirRate_Modparams = ModParams;
     ExpressLRS_currAirRate_RFperfParams = RFperf;
@@ -1523,37 +1744,31 @@ void ICACHE_RAM_ATTR tick()
     // }
     // last = now;
 
-    // timerNonce++; // moved to tickTock
+    // #ifdef DEBUG_PIN
+    // gpio_set_level(DEBUG_PIN, 1);
+    // #endif
 
-    // uint32_t halfStep = rfModeDivisor/2;
-    // // if (halfStep>0) halfStep--;
+    updatePhaseLock();
+    NonceRX = timerNonce / (2 * rfModeDivisor);
+    nonceTX = timerNonce / (2 * rfModeDivisor);
 
-    // if (((timerNonce + halfStep) % rfModeDivisor) == 0)
-    {
-        // #ifdef DEBUG_PIN
-        // gpio_set_level(DEBUG_PIN, 1);
-        // #endif
+    // reset the flag for dual radio diversity reception
+    packetReceived = false;
 
-        updatePhaseLock();
-        NonceRX = timerNonce / (2 * rfModeDivisor);
+    // Save the LQ value before the inc() reduces it by 1
+    uplinkLQ = lqEffective.getLQ();
+    lpfLq.update(uplinkLQ);
 
-        // reset the flag for dual radio diversity reception
-        packetReceived = false;
-
-        // Save the LQ value before the inc() reduces it by 1
-        uplinkLQ = lqEffective.getLQ();
-        lpfLq.update(uplinkLQ);
-
-        // Only advance the LQI period counter if we didn't send Telemetry this period
-        if (!alreadyTLMresp) {
-            lqRadio1.inc();
-            lqRadio2.inc();
-            lqEffective.inc();
-        }
-
-        alreadyTLMresp = false;
-        alreadyFHSS = false;
+    // Only advance the LQI period counter if we didn't send Telemetry this period
+    if (!alreadyTLMresp) {
+        lqRadio1.inc();
+        lqRadio2.inc();
+        lqEffective.inc();
     }
+
+    alreadyTLMresp = false;
+    alreadyFHSS = false;
+
     // printf("tickOut\n");
     tickStartMs = 0;
 
@@ -1564,7 +1779,7 @@ char *tockWhere = (char *)"not set";
 /** Aligned with (approximately) the start of the radio signal
  * 
  */
-void ICACHE_RAM_ATTR tock()
+void ICACHE_RAM_ATTR tockRX()
 {
     tockStartMs = millis();
 
@@ -1573,121 +1788,133 @@ void ICACHE_RAM_ATTR tock()
 
     tockWhere = (char *)"start";
 
-    // if (timerNonce % rfModeDivisor == 0)
+    pfdLoop.intEvent(esp_timer_get_time());
+
+    // #ifdef DEBUG_PIN
+    // gpio_set_level(DEBUG_PIN, 0);
+    // #endif
+
+    // updateDiversity();
+    tockWhere = (char *)"FHSS";
+    HandleFHSS();
+    tockWhere = (char *)"telem";
+    HandleSendTelemetryResponse();
+
+
+    tockWhere = (char *)"HM";
+
+    // This is a hail-Mary check for if the radios haven't been talking and kick off new RXnb calls.
+    // But if it's here then it will only active when the timer is running. Maybe we need two levels of hail-Mary
+
+    // privatize the *Last times so they can't change after we assign 'now' and cause false positives
+    uint32_t p1 = r1LastIRQms, p2 = r2LastIRQms;
+    uint32_t now = millis();
+    if ((now - p1) > 2000)
     {
-        pfdLoop.intEvent(esp_timer_get_time());
+        radio1.RXnb(); // XXX convert to event messages
+        radio1Timedout = false;
+        std::cout << "HM1";
+        r1LastIRQms = now; // stop it spamming
+    }
 
-        // #ifdef DEBUG_PIN
-        // gpio_set_level(DEBUG_PIN, 0);
-        // #endif
+    // if ((now - p2) > 2000)
+    // {
+    //     radio2->RXnb();
+    //     radio2Timedout = false;
+    //     std::cout << "HM2";
+    //     r2LastIRQms = now; // stop it spamming
+    // }
 
-        // updateDiversity();
-        tockWhere = (char *)"FHSS";
-        HandleFHSS();
-        tockWhere = (char *)"telem";
-        HandleSendTelemetryResponse(); // XXX hangs in here
+    tockWhere = (char *)"dTs";
 
-        // This is a hail-Mary check for if the radios haven't been talking and kick off new RXnb calls.
-        // But if it's here then it will only active when the timer is running. Maybe we need two levels of hail-Mary
+    // deferred receives from rx timeouts
+    if (!alreadyTLMresp) // if we're doing telem then the receivers will be restarted after anyway.
+    {
+        SpiTaskInfo taskInfo;
+        taskInfo.id = SpiTaskID::StartRx;
 
-        tockWhere = (char *)"HM";
-
-
-        // privatize the *Last times so they can't change after we assign 'now' and cause false positives
-        uint32_t p1 = r1LastIRQms, p2 = r2LastIRQms;
-        uint32_t now = millis();
-        if ((now - p1) > 2000)
-        {
-            radio1.RXnb(); // XXX convert to event messages
+        if (radio1Timedout) {
+            taskInfo.radioID = 1;
+            xQueueSend(rx_evt_queue, &taskInfo, 1000);
             radio1Timedout = false;
-            std::cout << "HM1";
-            r1LastIRQms = now; // stop it spamming
         }
 
-        if ((now - p2) > 2000)
-        {
-            radio2->RXnb();
+        if (radio2Timedout) {
+            taskInfo.radioID = 2;
+            xQueueSend(rx_evt_queue, &taskInfo, 1000);
             radio2Timedout = false;
-            std::cout << "HM2";
-            r2LastIRQms = now; // stop it spamming
         }
-
-        tockWhere = (char *)"dTs";
-
-        // deferred receives from rx timeouts
-        if (!alreadyTLMresp) // if we're doing telem then the receivers will be restarted after anyway.
-        {
-            SpiTaskInfo taskInfo;
-            taskInfo.id = SpiTaskID::StartRx;
-
-            if (radio1Timedout) {
-                taskInfo.radioID = 1;
-                xQueueSend(rx_evt_queue, &taskInfo, 1000);
-
-                // radio1.RXnb();
-                // radio1Timedout = false;
-            }
-
-            if (radio2Timedout) {
-                taskInfo.radioID = 2;
-                xQueueSend(rx_evt_queue, &taskInfo, 1000);
-
-                // radio2->RXnb();
-                // radio2Timedout = false;
-            }
-        }
+    }
 
 
-        #if defined(PRINT_RX_SCOREBOARD)
-        static bool lastPacketWasTelemetry = false; // NB static for perstence across calls
-        if (!(lqRadio1.currentIsSet() || lqRadio2.currentIsSet()) && !lastPacketWasTelemetry)
-            // printf(lastPacketCrcError ? "X" : "_");
-            std::cout << (lastPacketCrcError ? 'X' : '_');
+    #if defined(PRINT_RX_SCOREBOARD)
+    static bool lastPacketWasTelemetry = false; // NB static for perstence across calls
+    if (!lqEffective.currentIsSet() && !lastPacketWasTelemetry)
+        // printf(lastPacketCrcError ? "X" : "_");
+        std::cout << (lastPacketCrcError ? 'X' : '_');
 
-        lastPacketCrcError = false;
-        lastPacketWasTelemetry = alreadyTLMresp;
-        #endif
-        // printf("tockOut\n");
+    lastPacketCrcError = false;
+    lastPacketWasTelemetry = alreadyTLMresp;
+    #endif
+    // printf("tockOut\n");
 
 
-        tockWhere = (char *)"DR";
+    tockWhere = (char *)"DR";
 
-        // Dynamic Rate state transitions
-        // XXX disabled for testing
-        if (connectionState == connected) // don't run dynamic rates if we're not connected
-        {
-            uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
-            switch(drState)
-            {
-                // case DynamicRateStates::Normal:
-                //     if ((lpfLq.SmoothDataINT < 90) && (currentIndex < (RATE_MAX-1)))
-                //     {
-                //         printf("shiftDown start\n");
-                //         setRadioParams(currentIndex+1, RadioSelection::second); // XXX choose the radio with the weakest signal
-                //         radio2->RXnb();
-                //         drState = DynamicRateStates::ShiftDown;
-                //         tDrStart = millis();
-                //     } // else check for shift up case
-                //     break;
-                case DynamicRateStates::Normal:
-                    break; // don't do anything in normal mode for now
+    // Dynamic Rate state transitions
+    // if (connectionState == connected) // don't run dynamic rates if we're not connected
+    // {
+    //     uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+    //     switch(drState)
+    //     {
+    //         // case DynamicRateStates::Normal:
+    //         //     if ((lpfLq.SmoothDataINT < 90) && (currentIndex < (RATE_MAX-1)))
+    //         //     {
+    //         //         printf("shiftDown start\n");
+    //         //         setRadioParams(currentIndex+1, RadioSelection::second); // XXX choose the radio with the weakest signal
+    //         //         radio2->RXnb();
+    //         //         drState = DynamicRateStates::ShiftDown;
+    //         //         tDrStart = millis();
+    //         //     } // else check for shift up case
+    //         //     break;
+    //         case DynamicRateStates::Normal:
+    //             break; // don't do anything in normal mode for now
 
-                default:    // check for timeout
-                    if ((millis() - tDrStart) > 5000) {
-                        // change didn't happen, reset the sniffer back to the current mode
-                        printf("DR change timedout\n");
-                        setRadioParams(currentIndex, RadioSelection::second); // XXX convert to taskInfo/rxTask
-                        radio2->RXnb();
-                        drState = DynamicRateStates::Normal;
-                    }
-            }
-        } // if (connected)
+    //         default:    // check for timeout
+    //             if ((millis() - tDrStart) > 5000) {
+    //                 // change didn't happen, reset the sniffer back to the current mode
+    //                 printf("DR change timedout\n");
+    //                 // setRadioParams(currentIndex, RadioSelection::second); // XXX convert to taskInfo/rxTask
+    //                 // radio2->RXnb();
+    //                 drState = DynamicRateStates::Normal;
+    //             }
+    //     }
+    // } // if (connected)
 
-    } // if (timerNonce mod divisor is zero)
+
     tockWhere = (char *)"end";
 
     tockStartMs = 0;
 }
+
+
+/** Aligned with (approximately) the start of the radio signal
+ * 
+ */
+void ICACHE_RAM_ATTR tockTX()
+{
+    // std::cout << "tockTX\n";
+
+    // #ifdef DEBUG_PIN
+    // gpio_set_level(DEBUG_PIN, 0);
+    // #endif
+
+    // hopefully this will already have been done from txDone interrupt
+    HandleFHSS();
+
+    sendRCdataToRF();
+}
+
 
 /** 
  * Ok, so this is a silly way to implement this, but it's a quick and easy way for testing
@@ -1707,7 +1934,11 @@ void ICACHE_RAM_ATTR tickTock()
 
     if (timerNonce % (2 * rfModeDivisor) == 0)
     {
-        tock();
+        if (TRANSMITTER) {
+            tockTX();
+        } else {
+            tockRX();
+        }
     } else if ((timerNonce + rfModeDivisor) % (2 * rfModeDivisor) == 0) {
         tick();
     }
@@ -1753,10 +1984,10 @@ void lostConnection()
 
     // set timeouts to cover the entire time we're going to wait for sync in this mode
     radio1.setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
-    radio2->setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
-
     radio1.RXnb();
+
     #ifdef USE_SECOND_RADIO
+    radio2->setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
     radio2->RXnb();
     #endif
 
@@ -2041,33 +2272,35 @@ void app_main()
     HwTimer::setCallbackTick(tickTock);
     HwTimer::setCallbackTock(tickTock);
 
-    radio2 = new SX1280Driver(RADIO2_NSS_PIN);
+    // radio2 = new SX1280Driver(RADIO2_NSS_PIN);
 
     radio1.currFreq = GetInitialFreq();
-    radio2->currFreq = GetInitialFreq();
+    // radio2->currFreq = GetInitialFreq();
 
-    const bool usePreambleDetect = false; // this didn't work out, but maybe worth another look someday?
+    // const bool usePreambleDetect = false; // this didn't work out, but maybe worth another look someday?
 
     // XXX retry if either radio doesn't initialise properly
 
-    if (radio1.Begin(usePreambleDetect) == 0) {
-        // set led green
-        setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
-    } else {
-        // set led red
-        setLedColour(LED_RADIO1_INDEX, LED_BRIGHTNESS, 0, 0);
-    }
+    radio1.Begin(); // XXX need to add result value to sx1262 driver
 
-    if (radio2->Begin(usePreambleDetect) == 0) {
+    // if (radio1.Begin(usePreambleDetect) == 0) {
         // set led green
-        setLedColour(LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
-    } else {
+        // setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
+    // } else {
         // set led red
-        setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
-    }
+        // setLedColour(LED_RADIO1_INDEX, LED_BRIGHTNESS, 0, 0);
+    // }
 
-    radio1.SetOutputPower(DISARM_POWER);
-    radio2->SetOutputPower(DISARM_POWER);
+    // if (radio2->Begin(usePreambleDetect) == 0) {
+    //     // set led green
+    //     setLedColour(LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
+    // } else {
+    //     // set led red
+    //     setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
+    // }
+
+    radio1.SetOutputPower(DISARM_POWER);    // XXX figure out what to do for tx and rx powers
+    // radio2->SetOutputPower(DISARM_POWER);
 
     //create a queue to handle gpio event from isr
     rx_evt_queue = xQueueCreate(10, sizeof(SpiTaskInfo));
@@ -2078,23 +2311,27 @@ void app_main()
     xTaskCreate(rx_task, "rx_task", 2048, NULL, 16, NULL); // Task priority 1=min, max is ??? Default main task is pri 1
     // xTaskCreate(rx2_task, "rx2_task", 2048, NULL, 17, NULL);
     xTaskCreate(tx_task, "tx_task", 2048, NULL,  5, NULL);
-    xTaskCreate(tx2_task, "tx2_task", 2048, NULL,  5, NULL);
+
+    std::cout << "app_main tx2_task disabled\n";
+    // xTaskCreate(tx2_task, "tx2_task", 2048, NULL,  5, NULL);
 
 
-    // need to attach an ISR handlers to DIO pins
+    // need to attach ISR handlers to DIO pins
 
     gpio_set_intr_type(RADIO_DIO1_PIN, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(RADIO2_DIO1_PIN, GPIO_INTR_POSEDGE);
+    #ifdef RADIO_DIO2_PIN
     gpio_set_intr_type(RADIO_DIO2_PIN, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(RADIO2_DIO2_PIN, GPIO_INTR_POSEDGE);
+    #endif
+    // gpio_set_intr_type(RADIO2_DIO1_PIN, GPIO_INTR_POSEDGE);
+    // gpio_set_intr_type(RADIO2_DIO2_PIN, GPIO_INTR_POSEDGE);
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
 
     //hook isr handler for specific gpio pin
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO1_PIN, dio1_isr_handler, NULL));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO1_PIN, r2_dio1_isr_handler, NULL));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO2_PIN, dio2_isr_handler, NULL));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO2_PIN, r2_dio2_isr_handler, NULL));
+    // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO2_PIN, dio2_isr_handler, NULL));
+    // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO1_PIN, r2_dio1_isr_handler, NULL));
+    // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO2_PIN, r2_dio2_isr_handler, NULL));
 
     uint8_t linkRateIndex = 0;
     SetRFLinkRate(linkRateIndex);
@@ -2106,14 +2343,20 @@ void app_main()
     // radio.GetStatus();
 
     // XXX What's a reasonable timeout?
-    radio1.setRxTimeout(20000);
-    radio2->setRxTimeout(20000);
+    // timeout in us
+    radio1.setRxTimeout(2000000);
+    // radio2->setRxTimeout(20000);
 
     FHSSrandomiseFHSSsequence();
 
-    radio1.RXnb();
-    radio2->RXnb();
-    crsf.Begin();
+    if (TRANSMITTER)
+    {
+        HwTimer::resume();
+    } else {
+        radio1.RXnb();
+        // radio2->RXnb();
+        crsf.Begin();
+    }
 
     delay(500);
     strip->clear(strip, 10);
@@ -2166,8 +2409,8 @@ void app_main()
             uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / totalPackets;
             uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / totalPackets;
 
-            strip->set_pixel(strip, LED_RADIO1_INDEX, red1, green1, blue1);
-            strip->set_pixel(strip, LED_RADIO2_INDEX, red2, green2, blue2);
+            // strip->set_pixel(strip, LED_RADIO1_INDEX, red1, green1, blue1);
+            // strip->set_pixel(strip, LED_RADIO2_INDEX, red2, green2, blue2);
             strip->refresh(strip, 10);
 
             // printf("delta %u bright %u green %u\n", delta1, brightness1, green1);

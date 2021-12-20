@@ -12,8 +12,10 @@
 
 // XXX where's the best place for these?
 
-#define C3_PCB_V0
-#define USE_SECOND_RADIO
+#define DUAL_BAND_BREADBOARD
+
+// #define C3_PCB_V0
+// #define USE_SECOND_RADIO
 
 // Not sure where best to set this, but it uses a set of modes tuned for the fullD rx code
 // Which sounds like an unnecessary thing anyway, so try and get rid of this long term
@@ -204,6 +206,21 @@
 #define RADIO_DIO1_PIN  GPIO_NUM_5
 #define RADIO_DIO2_PIN  GPIO_NUM_19
 
+#elif defined(DUAL_BAND_BREADBOARD)
+
+// These are for the sx1262
+
+#define RADIO_RESET_PIN GPIO_NUM_12
+#define RADIO_MOSI_PIN  GPIO_NUM_1
+#define RADIO_MISO_PIN  GPIO_NUM_0
+#define RADIO_SCK_PIN   GPIO_NUM_2
+#define RADIO_NSS_PIN   GPIO_NUM_8
+#define RADIO_BUSY_PIN  GPIO_NUM_7
+#define RADIO_DIO1_PIN  GPIO_NUM_10
+// #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
+#define RADIO_TXEN      GPIO_NUM_18
+
+
 #else // these are for the breadboard prototype
 
 #define RADIO_RESET_PIN GPIO_NUM_18
@@ -272,6 +289,14 @@
 #define LED_RADIO1_INDEX 1
 #define LED_RADIO2_INDEX 2
 
+#elif defined(DUAL_BAND_BREADBOARD)
+
+#define LED2812_PIN     GPIO_NUM_9
+// #define CRSF_TX_PIN     GPIO_NUM_21
+
+#define LED_STATUS_INDEX 0
+// #define LED_RADIO1_INDEX 1
+// #define LED_RADIO2_INDEX 2
 
 #else
 

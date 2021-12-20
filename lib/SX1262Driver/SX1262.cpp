@@ -247,10 +247,12 @@ void SX1262Driver::End()
     instance->RXdoneCallback = &nullCallback;
 }
 
-// XXX pass newTimeout in ms (or us?) and scale internally
+/**
+ *   @param newTimeout in us
+ */
 void SX1262Driver::setRxTimeout(uint32_t newTimeout)
 {
-    rxTimeout = newTimeout;
+    rxTimeout = ((float)newTimeout) / 15.625f;
 }
 
 /** Clear the timeout registers after rx_done.
@@ -395,7 +397,7 @@ void SX1262Driver::Begin()
     const uint8_t bytesToTest = 100;
 
     // test that we can write to and read from the radio's buffer
-    memset((void*)TXdataBuffer, 0, 256);
+    memset((void*)TXdataBuffer, 0, bytesToTest);
     hal.WriteBuffer(0, TXdataBuffer, bytesToTest); // can't reach the last byte, good enough
 
     // GetStatus();
@@ -409,7 +411,7 @@ void SX1262Driver::Begin()
         }
     }
 
-    memset((void*)TXdataBuffer, 0xFF, 256);
+    memset((void*)TXdataBuffer, 0xFF, bytesToTest);
     hal.WriteBuffer(0, TXdataBuffer, bytesToTest);
 
     // read it back
@@ -487,8 +489,12 @@ void SX1262Driver::Begin()
     // printf("setting dios\n\r");
 
     // Using dual dios for rx and tx done
-    this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE | SX1262_IRQ_RX_TX_TIMEOUT, SX1262_IRQ_TX_DONE, SX1262_IRQ_RADIO_NONE);
+    // this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE | SX1262_IRQ_RX_TX_TIMEOUT, SX1262_IRQ_TX_DONE, SX1262_IRQ_RADIO_NONE);
     // this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE, SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RADIO_NONE);
+
+    // single dio
+    this->SetDioIrqParams(SX1262_IRQ_RADIO_ALL, SX1262_IRQ_RX_DONE | SX1262_IRQ_TX_DONE | SX1262_IRQ_RX_TX_TIMEOUT, SX1262_IRQ_RADIO_NONE, SX1262_IRQ_RADIO_NONE);
+
 
     // GetStatus();
 }
@@ -895,8 +901,8 @@ void SX1262Driver::readRXData()
 {
     // first do the errata fixup for the rx timeout
     clearRxTimeout();
-    uint8_t FIFOaddr = GetRxBufferAddr();
-    hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, OTA_PACKET_LENGTH);
+    uint8_t fifoAddr = GetRxBufferAddr();
+    hal.ReadBuffer(fifoAddr, instance->RXdataBuffer, OTA_PACKET_LENGTH);
 }
 
 void SX1262Driver::RXnb()

@@ -41,8 +41,10 @@ void SX1262Hal_C3::init()
     gpio_reset_pin(RADIO_DIO1_PIN);
     gpio_set_direction(RADIO_DIO1_PIN, GPIO_MODE_INPUT);
 
+    #ifdef RADIO_DIO2_PIN
     gpio_reset_pin(RADIO_DIO2_PIN);
     gpio_set_direction(RADIO_DIO2_PIN, GPIO_MODE_INPUT);
+    #endif
 
     #ifdef RADIO_TXEN_PIN
     gpio_reset_pin(RADIO_TXEN_PIN);

@@ -52,67 +52,67 @@ void ElrsSPI::debug()
  * would be a good idea.
  * 
  */
-void ElrsSPI::doubleReset()
-{
-    printf("doubleReset start\n");
+// void ElrsSPI::doubleReset()
+// {
+//     printf("doubleReset start\n");
 
-    // enable the secondary CS pin for output
-    gpio_reset_pin(RADIO2_NSS_PIN);
-    gpio_set_direction(RADIO2_NSS_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(RADIO2_NSS_PIN, 1);
+//     // enable the secondary CS pin for output
+//     gpio_reset_pin(RADIO2_NSS_PIN);
+//     gpio_set_direction(RADIO2_NSS_PIN, GPIO_MODE_OUTPUT);
+//     gpio_set_level(RADIO2_NSS_PIN, 1);
 
 
-    // perform the reset
-    gpio_set_level(RADIO_RESET_PIN, 1);
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-    gpio_set_level(RADIO_RESET_PIN, 0);    
-    vTaskDelay(200 / portTICK_PERIOD_MS);
-    gpio_set_level(RADIO_RESET_PIN, 1);
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+//     // perform the reset
+//     gpio_set_level(RADIO_RESET_PIN, 1);
+//     vTaskDelay(50 / portTICK_PERIOD_MS);
+//     gpio_set_level(RADIO_RESET_PIN, 0);    
+//     vTaskDelay(200 / portTICK_PERIOD_MS);
+//     gpio_set_level(RADIO_RESET_PIN, 1);
+//     vTaskDelay(50 / portTICK_PERIOD_MS);
 
-    // wait for busy x 2
+//     // wait for busy x 2
 
-    const unsigned int MAX_WAIT = 5000; // in us
-    unsigned long t0 = micros();
+//     const unsigned int MAX_WAIT = 5000; // in us
+//     unsigned long t0 = micros();
 
-    gpio_num_t busyPin = RADIO_BUSY_PIN;
+//     gpio_num_t busyPin = RADIO_BUSY_PIN;
     
-    while (gpio_get_level(busyPin) == 1)
-    {
-        if (micros() > (t0 + MAX_WAIT)) {
-            printf("busy timeout on R1\n");
-        }
-    }
+//     while (gpio_get_level(busyPin) == 1)
+//     {
+//         if (micros() > (t0 + MAX_WAIT)) {
+//             printf("busy timeout on R1\n");
+//         }
+//     }
 
-    t0 = micros();
-    busyPin = RADIO2_BUSY_PIN;
+//     t0 = micros();
+//     busyPin = RADIO2_BUSY_PIN;
 
-    while (gpio_get_level(busyPin) == 1)
-    {
-        if (micros() > (t0 + MAX_WAIT)) {
-            printf("busy timeout on R2\n");
-        }
-    }
-
-
-    // send the SPI command
-    int32_t tmp = 0;
-    uint8_t * buffer = (uint8_t*)&tmp;
-    buffer[0] = 0x03; // get packet type, length 3
-
-    // assert the secondary radio's CS pin
-    gpio_set_level(RADIO2_NSS_PIN, 0);
-
-    transfer(buffer, 3);
-
-    gpio_set_level(RADIO2_NSS_PIN, 1);
-
-    // reset the pin for later use
-    gpio_reset_pin(RADIO2_NSS_PIN);
+//     while (gpio_get_level(busyPin) == 1)
+//     {
+//         if (micros() > (t0 + MAX_WAIT)) {
+//             printf("busy timeout on R2\n");
+//         }
+//     }
 
 
-    printf("doubleReset end\n");
-}
+//     // send the SPI command
+//     int32_t tmp = 0;
+//     uint8_t * buffer = (uint8_t*)&tmp;
+//     buffer[0] = 0x03; // get packet type, length 3
+
+//     // assert the secondary radio's CS pin
+//     gpio_set_level(RADIO2_NSS_PIN, 0);
+
+//     transfer(buffer, 3);
+
+//     gpio_set_level(RADIO2_NSS_PIN, 1);
+
+//     // reset the pin for later use
+//     gpio_reset_pin(RADIO2_NSS_PIN);
+
+
+//     printf("doubleReset end\n");
+// }
 
 
 
@@ -163,6 +163,13 @@ int ElrsSPI::init()
     printf("SPI clock at 18MHz\n");
     devcfg.clock_speed_hz = 18*1000*1000,
 
+    #elif defined(DUAL_BAND_BREADBOARD)
+
+    // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
+
+    printf("SPI clock at 12MHz\n");
+    devcfg.clock_speed_hz = 12*1000*1000,
+
     #else
     devcfg.clock_speed_hz = 8*1000*1000,
     #endif
@@ -173,9 +180,10 @@ int ElrsSPI::init()
     ret=spi_bus_add_device(SPI2_HOST, &devcfg, &spiHandle);
     ESP_ERROR_CHECK(ret);
 
-    if (isPrimary) {
-        doubleReset();
-    }
+    // doubleReset only for boards with shared reset line for both radios
+    // if (isPrimary) {
+    //     doubleReset();
+    // }
 
     char const *spiType;
     if (isPrimary) {

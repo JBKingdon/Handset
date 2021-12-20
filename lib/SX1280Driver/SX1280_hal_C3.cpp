@@ -7,6 +7,7 @@
 #include "SX1280_Regs.h"
 #include "SX1280_hal_C3.h"
 #include <stdio.h>
+#include <iostream>
 
 #include "../../src/utils.h"
 
@@ -38,19 +39,21 @@ void SX1280Hal_C3::init()
     if (isSecondRadio)
     {
         // The secondary radio only has to initialise it's unique pins...
-        gpio_reset_pin(RADIO2_BUSY_PIN);
-        gpio_set_direction(RADIO2_BUSY_PIN, GPIO_MODE_INPUT);
+        // gpio_reset_pin(RADIO2_BUSY_PIN);
+        // gpio_set_direction(RADIO2_BUSY_PIN, GPIO_MODE_INPUT);
 
-        gpio_reset_pin(RADIO2_DIO1_PIN);
-        gpio_set_direction(RADIO2_DIO1_PIN, GPIO_MODE_INPUT);
+        // gpio_reset_pin(RADIO2_DIO1_PIN);
+        // gpio_set_direction(RADIO2_DIO1_PIN, GPIO_MODE_INPUT);
 
-        gpio_reset_pin(RADIO2_DIO2_PIN);
-        gpio_set_direction(RADIO2_DIO2_PIN, GPIO_MODE_INPUT);
+        // gpio_reset_pin(RADIO2_DIO2_PIN);
+        // gpio_set_direction(RADIO2_DIO2_PIN, GPIO_MODE_INPUT);
 
-        // ...and call init to setup the device on the spi bus
-        spi->init();
+        // // ...and call init to setup the device on the spi bus
+        // spi->init();
 
-        printf("Secondary radio initialised\n");
+        // printf("Secondary radio initialised\n");
+
+        std::cout << "SX1280Hal_C3::init radio2 not done\n";
 
     } else {
         // The primary radio is responsible for setting it's pins and the spi instance
@@ -65,8 +68,10 @@ void SX1280Hal_C3::init()
         gpio_reset_pin(RADIO_DIO1_PIN);
         gpio_set_direction(RADIO_DIO1_PIN, GPIO_MODE_INPUT);
 
+        #ifdef RADIO_DIO2_PIN
         gpio_reset_pin(RADIO_DIO2_PIN);
         gpio_set_direction(RADIO_DIO2_PIN, GPIO_MODE_INPUT);
+        #endif
 
         #ifdef RADIO_TXEN_PIN
         gpio_reset_pin(RADIO_TXEN_PIN);
@@ -118,7 +123,13 @@ bool  SX1280Hal_C3::WaitOnBusy()
     const unsigned int MAX_WAIT = 5000; // in us
     const unsigned long t0 = micros();
 
-    gpio_num_t busyPin = isSecondRadio ? RADIO2_BUSY_PIN : RADIO_BUSY_PIN;
+    if (isSecondRadio) {
+        std::cout << "SX1280Hal_C3::WaitOnBusy sx1280 disabled\n";
+        return true;
+    }
+
+    // gpio_num_t busyPin = isSecondRadio ? RADIO2_BUSY_PIN : RADIO_BUSY_PIN;
+    gpio_num_t busyPin = RADIO_BUSY_PIN;
     
     while (gpio_get_level(busyPin) == 1)
     {

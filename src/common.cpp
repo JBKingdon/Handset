@@ -18,6 +18,11 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     {1, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_6, 20000, TLM_RATIO_1_32,   4,  12}
 
 
+    #elif defined(DUAL_BAND_BREADBOARD) // XXX need a non-impl specific define for dual
+
+    // fixed 125Hz for the 915 modem
+    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_NO_TLM,   4, 10}, // 4896 us @ 8 bytes
+
     #else
 
     // 333, but dodgy due to the out of spec pre-amble. Maybe with tigher pfd slack or a faster SPI impl?
@@ -44,10 +49,12 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
 
 // XXX redo all these values
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
-    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
+    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset
     #ifdef USE_PWM6
     {0, RATE_100HZ, -112,  6432,    3500,               4000,                       2000,                   5000}, // XXX update this for 12byte payload
     {1, RATE_50HZ,  -120, 18560,    3500,               6000,                       2000,                   5000}
+    #elif defined(DUAL_BAND_BREADBOARD)
+    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       2000,                   5000,                3000} // offset tbd
     #else
     {0, RATE_200HZ, -112,  4380,    3500,               2000,                       2000,                   5000},
     {1, RATE_100HZ, -117,  8770,    3500,               4000,                       2000,                   5000},

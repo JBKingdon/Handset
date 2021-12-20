@@ -1,5 +1,7 @@
-#ifndef H_OTA
-#define H_OTA
+#pragma once
+
+// #ifndef H_OTA
+// #define H_OTA
 
 #include <stdint.h>
 #include "../../src/user_config.h"
@@ -52,7 +54,7 @@ typedef struct Pwm6Payload_s {
 #endif // USE_HIRES_DATA
 
 // XXX replace with a IS_RX flag
-#ifdef ESPC3
+// #ifdef ESPC3
 
 #include "CRSF.h"
 
@@ -72,7 +74,7 @@ void UnpackChannelDataSeqSwitches(volatile uint8_t* Buffer, CRSF *crsf);
 
 #endif // SEQ_SWITCHES
 
-#else // not the ESPC3 (RX)
+// #else // not the ESPC3 (RX)
 // void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, CRSF *crsf, uint8_t addr);
 void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, const uint16_t scaledADC[], 
                                                       const uint8_t currentSwitches[], const uint8_t nextSwitchIndex, uint8_t addr);
@@ -80,6 +82,6 @@ void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, const uint16_t s
 void GenerateChannelDataPWM6(Pwm6Payload_t* outputBuffer, const uint16_t scaledADC[], 
                              const uint8_t currentSwitches[]);
 
-#endif // ESPC3
+// #endif // ESPC3
 
-#endif // H_OTA
+// #endif // H_OTA
