@@ -72,6 +72,7 @@ public:
         LQbyte = 0;
         LQprevious = false;
         LQmask = (1 << 0);
+        printf("lq reset, sizeof %u / %u\n", sizeof(LQArray), sizeof(LQArray[0]));
         for (uint8_t i = 0; i < (sizeof(LQArray)/sizeof(LQArray[0])); i++)
             LQArray[i] = 0;
     }

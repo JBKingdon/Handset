@@ -20,6 +20,11 @@ SX1280Hal_C3::SX1280Hal_C3()
     isSecondRadio = false;
 }
 
+/** NB This constructor with an explicit cssPin marks the radio as the 'second' radio
+ * and assumes that another radio has already setup the spi bus.
+ * This is horrible. Replace it with something better.
+ * 
+ */
 SX1280Hal_C3::SX1280Hal_C3(uint32_t cssPin)
 {
     spi = new ElrsSPI(cssPin);
@@ -38,22 +43,27 @@ void SX1280Hal_C3::init()
 {
     if (isSecondRadio)
     {
+        #ifdef USE_SECOND_RADIO
         // The secondary radio only has to initialise it's unique pins...
-        // gpio_reset_pin(RADIO2_BUSY_PIN);
-        // gpio_set_direction(RADIO2_BUSY_PIN, GPIO_MODE_INPUT);
+        gpio_reset_pin(RADIO2_RESET_PIN);
+        gpio_set_direction(RADIO2_RESET_PIN, GPIO_MODE_OUTPUT);
 
-        // gpio_reset_pin(RADIO2_DIO1_PIN);
-        // gpio_set_direction(RADIO2_DIO1_PIN, GPIO_MODE_INPUT);
+        gpio_reset_pin(RADIO2_BUSY_PIN);
+        gpio_set_direction(RADIO2_BUSY_PIN, GPIO_MODE_INPUT);
 
-        // gpio_reset_pin(RADIO2_DIO2_PIN);
-        // gpio_set_direction(RADIO2_DIO2_PIN, GPIO_MODE_INPUT);
+        gpio_reset_pin(RADIO2_DIO1_PIN);
+        gpio_set_direction(RADIO2_DIO1_PIN, GPIO_MODE_INPUT);
 
-        // // ...and call init to setup the device on the spi bus
-        // spi->init();
+        gpio_reset_pin(RADIO2_DIO2_PIN);
+        gpio_set_direction(RADIO2_DIO2_PIN, GPIO_MODE_INPUT);
 
-        // printf("Secondary radio initialised\n");
+        // ...and call init to setup the device on the spi bus
+        spi->init();
 
-        std::cout << "SX1280Hal_C3::init radio2 not done\n";
+        printf("Secondary radio initialised\n");
+        #else
+        std::cout << "second radio not enabled\n";
+        #endif // USE_SECOND_RADIO
 
     } else {
         // The primary radio is responsible for setting it's pins and the spi instance
@@ -98,11 +108,19 @@ void SX1280Hal_C3::init()
 // NB reset for double 1280 is hard-coded into the SPI class
 void SX1280Hal_C3::reset(void)
 {
-    gpio_set_level(RADIO_RESET_PIN, 1);
+    #ifdef USE_SECOND_RADIO
+    const gpio_num_t resetPin = isSecondRadio ? RADIO2_RESET_PIN : RADIO_RESET_PIN;
+    #else
+    const gpio_num_t resetPin = RADIO_RESET_PIN;
+    #endif
+
+    printf("reset on pin %u\n", resetPin);
+
+    gpio_set_level(resetPin, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    gpio_set_level(RADIO_RESET_PIN, 0);    
+    gpio_set_level(resetPin, 0);    
     vTaskDelay(200 / portTICK_PERIOD_MS);
-    gpio_set_level(RADIO_RESET_PIN, 1);
+    gpio_set_level(resetPin, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
     if (WaitOnBusy()) {
@@ -123,14 +141,12 @@ bool  SX1280Hal_C3::WaitOnBusy()
     const unsigned int MAX_WAIT = 5000; // in us
     const unsigned long t0 = micros();
 
-    if (isSecondRadio) {
-        std::cout << "SX1280Hal_C3::WaitOnBusy sx1280 disabled\n";
-        return true;
-    }
-
-    // gpio_num_t busyPin = isSecondRadio ? RADIO2_BUSY_PIN : RADIO_BUSY_PIN;
+    #ifdef USE_SECOND_RADIO
+    gpio_num_t busyPin = isSecondRadio ? RADIO2_BUSY_PIN : RADIO_BUSY_PIN;
+    #else
     gpio_num_t busyPin = RADIO_BUSY_PIN;
-    
+    #endif
+
     while (gpio_get_level(busyPin) == 1)
     {
         if (micros() > (t0 + MAX_WAIT)) {

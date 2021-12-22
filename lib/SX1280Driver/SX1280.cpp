@@ -177,6 +177,9 @@ int32_t SX1280Driver::Begin(const bool usePreamble)
     // hal->RXdoneCallback = &SX1280Driver::RXnbISR;
     hardwareInit();
 
+    hal->reset();
+
+    // This block specific to shared reset configs (needs a #define)
     // don't call reset() from the secondary or we wipe out the settings on the primary radio
     // if (isPrimary)
     // {

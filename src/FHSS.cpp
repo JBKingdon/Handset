@@ -3,51 +3,87 @@
 #include "Serial.h" // for?
 #include "config.h"
 
-uint8_t volatile FHSSptr = 0; // XXX must be 8 bit unsigned to wrap when incremented,
+uint8_t volatile FHSSptr915 = 0; // XXX must be 8 bit unsigned to wrap when incremented,
+uint8_t volatile FHSSptr2G4 = 0; // XXX must be 8 bit unsigned to wrap when incremented,
+
 #if (NR_SEQUENCE_ENTRIES != 256)
 #error "hop sequence table must be 256 entries"
 #endif
-uint8_t FHSSsequence[NR_SEQUENCE_ENTRIES] = {0};
 
-//uint8_t NumOfFHSSfrequencies = 20;
+uint8_t FHSSsequence915[NR_SEQUENCE_ENTRIES] = {0};
+uint8_t FHSSsequence2G4[NR_SEQUENCE_ENTRIES] = {0};
+
 int32_t FreqCorrection = 0;
 
-void ICACHE_RAM_ATTR FHSSsetCurrIndex(uint8_t value)
+// ---------- 915 functions ----------
+
+void ICACHE_RAM_ATTR FHSSsetCurrIndex915(uint8_t value)
 { // set the current index of the FHSS pointer
-    FHSSptr = value;
+    FHSSptr915 = value;
 }
 
-uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex()
+uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex915()
 { // get the current index of the FHSS pointer
-    return FHSSptr;
+    return FHSSptr915;
 }
 
-uint32_t ICACHE_RAM_ATTR GetInitialFreq()
+uint32_t ICACHE_RAM_ATTR GetInitialFreq915()
 {
-    return FHSSfreqs[0] - FreqCorrection;
+    return FHSSfreqs915[0] - FreqCorrection;
 }
 
-uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq()
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq915()
 {
-    return FHSSfreqs[FHSSsequence[FHSSptr]] - FreqCorrection;
+    return FHSSfreqs915[FHSSsequence915[FHSSptr915]] - FreqCorrection;
 }
 
-uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq()
+uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq915()
 {
-    FHSSptr++;  // as long as FHSSptr is uint8 it will wrap without extra code
-    return FHSSgetCurrFreq();
+    FHSSptr915++;  // as long as FHSSptr is uint8 it will wrap without extra code
+    return FHSSgetCurrFreq915();
 }
+
+// ---------- 2G4 functions ----------
+
+void ICACHE_RAM_ATTR FHSSsetCurrIndex2G4(uint8_t value)
+{ // set the current index of the FHSS pointer
+    FHSSptr2G4 = value;
+}
+
+uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex2G4()
+{ // get the current index of the FHSS pointer
+    return FHSSptr2G4;
+}
+
+uint32_t ICACHE_RAM_ATTR GetInitialFreq2G4()
+{
+    return FHSSfreqs2G4[0];
+}
+
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4()
+{
+    return FHSSfreqs2G4[FHSSsequence2G4[FHSSptr2G4]];
+}
+
+uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4()
+{
+    FHSSptr2G4++;  // as long as FHSSptr is uint8 it will wrap without extra code
+    return FHSSgetCurrFreq2G4();
+}
+
+
+// --------------------------------------------------------------------------
 
 // Set all of the flags in the array to true, except for the first one
 // which corresponds to the sync channel and is never available for normal
 // allocation.
-void ICACHE_RAM_ATTR resetIsAvailable(uint8_t *array)
+void ICACHE_RAM_ATTR resetIsAvailable(uint8_t *array, const uint8_t nEntries)
 {
     // channel 0 is the sync channel and is never considered available
     array[0] = 0;
 
     // all other entires to 1
-    for (unsigned int i = 1; i < NR_FHSS_ENTRIES; i++)
+    for (unsigned int i = 1; i < nEntries; i++)
         array[i] = 1;
 }
 
@@ -68,46 +104,28 @@ Approach:
     if the index is not a repeat, assing it to the FHSSsequence array, clear the availability flag and decrement the available count
     if there are no available channels left, reset the flags array and the count
 */
-void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence()
+void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence(uint8_t FHSSsequence[], const uint8_t nEntries, const uint8_t syncInterval)
 {
-
-#ifdef Regulatory_Domain_AU_915
-    Serial.println("Setting 915MHz Mode");
-#elif defined Regulatory_Domain_FCC_915
-    Serial.println("Setting 915MHz Mode");
-#elif defined Regulatory_Domain_EU_868
-    Serial.println("Setting 868MHz Mode");
-#elif defined Regulatory_Domain_AU_433 || defined Regulatory_Domain_EU_433
-    Serial.println("Setting 433MHz Mode");
-#elif defined Regulatory_Domain_ISM_2400 || defined Regulatory_Domain_ISM_2400_NA
-    Serial.println("Setting 2400MHz Mode");
-#else
-#error No regulatory domain defined, please define one in common.h
-#endif
-
     Serial.print("Number of FHSS frequencies =");
-    Serial.println(NR_FHSS_ENTRIES);
+    Serial.println(nEntries);
 
     long macSeed = ((long)UID[2] << 24) + ((long)UID[3] << 16) + ((long)UID[4] << 8) + UID[5];
     rngSeed(macSeed);
     // srandom(macSeed);
 
-    uint8_t isAvailable[NR_FHSS_ENTRIES];
+    uint8_t isAvailable[nEntries];
 
-    resetIsAvailable(isAvailable);
+    resetIsAvailable(isAvailable, nEntries);
 
     // Fill the FHSSsequence with channel indices
     // The 0 index is special - the 'sync' channel. The sync channel appears every
     // syncInterval hops. The other channels are randomly distributed between the
     // sync channels
-    #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
-    const int SYNC_INTERVAL = NR_FHSS_ENTRIES;
-    #else
-    const int SYNC_INTERVAL = NR_FHSS_ENTRIES -1;
-    #endif
+    const int SYNC_INTERVAL = syncInterval;
 
-    int nLeft = NR_FHSS_ENTRIES - 1; // how many channels are left to be allocated. Does not include the sync channel
-    unsigned int prev = 0;           // needed to prevent repeats of the same index
+
+    int nLeft = nEntries - 1; // how many channels are left to be allocated. Does not include the sync channel
+    unsigned int prev = 0;    // needed to prevent repeats of the same index
 
     // for each slot in the sequence table
     for (int i = 0; i < NR_SEQUENCE_ENTRIES; i++)
@@ -124,13 +142,13 @@ void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence()
             unsigned int index;
             do
             {
-                int c = rngN(nLeft); // returnc 0<c<nLeft
+                int c = rngN(nLeft); // returns 0 <= c < nLeft
                 // int c = random() % nLeft;
                 // find the c'th entry in the isAvailable array
                 // can skip 0 as that's the sync channel and is never available for normal allocation
                 index = 1;
                 int found = 0;
-                while (index < NR_FHSS_ENTRIES)
+                while (index < nEntries)
                 {
                     if (isAvailable[index])
                     {
@@ -140,7 +158,7 @@ void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence()
                     }
                     index++;
                 }
-                if (index == NR_FHSS_ENTRIES)
+                if (index == nEntries)
                 {
                     // This should never happen
                     Serial.print("FAILED to find the available entry!\n");
@@ -158,8 +176,8 @@ void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence()
             if (nLeft == 0)
             {
                 // we've assigned all of the channels, so reset for next cycle
-                resetIsAvailable(isAvailable);
-                nLeft = NR_FHSS_ENTRIES - 1;
+                resetIsAvailable(isAvailable, nEntries);
+                nLeft = nEntries - 1;
             }
         }
 
@@ -176,3 +194,15 @@ void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence()
 
     Serial.println();
 }
+
+void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequences()
+{
+    // uint8_t FHSSsequence[], const uint8_t nEntries, const uint8_t syncInterval)
+
+    printf("915 FHSS\n");
+    FHSSrandomiseFHSSsequence(FHSSsequence915, NR_FHSS_ENTRIES_915, 20);
+    printf("2G4 FHSS\n");
+    FHSSrandomiseFHSSsequence(FHSSsequence2G4, NR_FHSS_ENTRIES_2G4, NR_FHSS_ENTRIES_2G4);
+}
+
+

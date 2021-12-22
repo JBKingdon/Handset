@@ -161,7 +161,8 @@ void rngSeed(long newSeed)
 unsigned int rngN(unsigned int max)
 {
     unsigned long x = rng();
-    unsigned int result = (x * max) / RNG_MAX; // XXX this is wrong and needs fixing, but all rxes and txes will need to be done at the same time
+    unsigned int result = (x * max) / (RNG_MAX + 1);
+
     return result;
 }
 

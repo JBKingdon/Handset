@@ -13,7 +13,6 @@
 // XXX where's the best place for these?
 
 #define DUAL_BAND_BREADBOARD
-
 // #define C3_PCB_V0
 // #define USE_SECOND_RADIO
 
@@ -26,7 +25,9 @@
 
     #define Regulatory_Domain_FCC_915
 
-#else // not E22
+#endif // E22
+
+#if defined(RADIO_E28_12) || defined(RADIO_E28_20) || defined(RADIO_E28_27)
 
 #ifdef ELRS_OG_COMPATIBILITY
     #define Regulatory_Domain_ISM_2400
@@ -34,7 +35,7 @@
     #define Regulatory_Domain_ISM_2400_NA
 #endif
 
-#endif // E22
+#endif // 2G4 radios
 
 
 #ifdef RADIO_E28_12
@@ -208,20 +209,23 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
+// common pins for spi
+
+#define RADIO_MOSI_PIN  GPIO_NUM_1
+#define RADIO_MISO_PIN  GPIO_NUM_2
+#define RADIO_SCK_PIN   GPIO_NUM_0
+
 // These are for the sx1262
 
 #define RADIO_RESET_PIN GPIO_NUM_12
-#define RADIO_MOSI_PIN  GPIO_NUM_1
-#define RADIO_MISO_PIN  GPIO_NUM_0
-#define RADIO_SCK_PIN   GPIO_NUM_2
 #define RADIO_NSS_PIN   GPIO_NUM_8
 #define RADIO_BUSY_PIN  GPIO_NUM_7
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
-#define RADIO_TXEN      GPIO_NUM_18
+#define RADIO_TXEN      GPIO_NUM_19
 
 
-#else // these are for the breadboard prototype
+#else // these are for the dual 1280 breadboard prototype
 
 #define RADIO_RESET_PIN GPIO_NUM_18
 #define RADIO_MOSI_PIN  GPIO_NUM_5
@@ -252,7 +256,15 @@
 #define RADIO2_DIO1_PIN  GPIO_NUM_10
 #define RADIO2_DIO2_PIN  GPIO_NUM_3
 
-#else // for breadboard prototype
+#elif defined(DUAL_BAND_BREADBOARD)
+
+#define RADIO2_NSS_PIN   GPIO_NUM_6
+#define RADIO2_BUSY_PIN  GPIO_NUM_18
+#define RADIO2_DIO1_PIN  GPIO_NUM_5
+#define RADIO2_DIO2_PIN  GPIO_NUM_3
+#define RADIO2_RESET_PIN GPIO_NUM_4
+
+#else // for dual 1280 breadboard prototype
 
 // #define RADIO2_RESET_PIN GPIO_NUM_8
 #define RADIO2_NSS_PIN   GPIO_NUM_1

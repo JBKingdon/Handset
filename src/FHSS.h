@@ -3,37 +3,51 @@
 #include <stdint.h>
 #include "config.h"
 
-#if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
-#include "SX1262Driver.h"
-#elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
-#include "SX1280Driver.h"
-#else
+// make sure we have a known reg domain
+#if !(defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || \
+    defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433) || \
+    defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA))
 #error "Need to set Reg domain"
 #endif
+
+#ifdef ESPC3
+#define ICACHE_RAM_ATTR IRAM_ATTR
+#endif
+
+
+// #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
+// #include "SX1262Driver.h"
+// #endif
+
+// #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
+// #include "SX1280Driver.h"
+// #endif
 
 #include "utils.h"
 #include "common.h"
 
-extern volatile uint8_t FHSSptr;
+// extern volatile uint8_t FHSSptr;
+// extern uint8_t NumOfFHSSfrequencies;
 
-extern uint8_t NumOfFHSSfrequencies;
-
+// Only used for sx1276?
 extern int32_t FreqCorrection;
 #define FreqCorrectionMax 200000
 #define FreqCorrectionMin -200000
 
-void ICACHE_RAM_ATTR FHSSsetCurrIndex(uint8_t value);
+void ICACHE_RAM_ATTR FHSSsetCurrIndex915(uint8_t value);
+uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex915();
 
-uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex();
+void ICACHE_RAM_ATTR FHSSsetCurrIndex2G4(uint8_t value);
+uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex2G4();
 
 // Our table of FHSS frequencies. Define a regulatory domain to select the correct set for your location and radio
 #ifdef Regulatory_Domain_AU_433
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs915[] = {
     433420000,
     433920000,
     434420000};
 #elif defined Regulatory_Domain_AU_915
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs915[] = {
     915500000,
     916100000,
     916700000,
@@ -67,7 +81,7 @@ const uint32_t FHSSfreqs[] = {
  * Therefore we simply maximize the usage of available spectrum so laboratory testing of the software won't disturb existing
  * 868MHz ISM band traffic too much.
  */
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs915[] = {
     863275000, // band H1, 863 - 865MHz, 0.1% duty cycle or CSMA techniques, 25mW EIRP
     863800000,
     864325000,
@@ -86,15 +100,15 @@ const uint32_t FHSSfreqs[] = {
  * Note: As is the case with the 868Mhz band, these frequencies only comply to the license free portion
  * of the spectrum, nothing else. As such, these are likely illegal to use. 
  */
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs915[] = {
     433100000,
     433925000,
     434450000};
 #elif defined Regulatory_Domain_FCC_915
 /* Very definitely not fully checked. An initial pass at increasing the hops
 */
-const uint32_t FHSSfreqs[] = {
-    903500000,
+const uint32_t FHSSfreqs915[] = {
+    903500000,  // XXX shuffle a mid-band freq to index 0 for use as the sync freq
     904100000,
     904700000,
     905300000,
@@ -143,9 +157,11 @@ const uint32_t FHSSfreqs[] = {
     925700000,
     926300000,
     926900000};
-#elif defined(Regulatory_Domain_ISM_2400_NA)
+#endif // sub gHz bands
+
+#if defined(Regulatory_Domain_ISM_2400_NA)
 // a more conservative frequency table with wider spacing.
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs2G4[] = {
     2425000000,
     2402000000,
     2403000000,
@@ -195,7 +211,7 @@ const uint32_t FHSSfreqs[] = {
     2448000000,
 };
 #elif defined(Regulatory_Domain_ISM_2400)
-const uint32_t FHSSfreqs[] = {
+const uint32_t FHSSfreqs2G4[] = {
     2400400000,
     2401400000,
     2402400000,
@@ -291,18 +307,23 @@ const uint32_t FHSSfreqs[] = {
     2477400000,
     2478400000,
     2479400000};
-#else
-#error No regulatory domain defined, please define one in user_defines.txt
 #endif
 
 // The number of FHSS frequencies in the table
-#define NR_FHSS_ENTRIES (sizeof(FHSSfreqs) / sizeof(uint32_t))
+#define NR_FHSS_ENTRIES_915 (sizeof(FHSSfreqs915) / sizeof(uint32_t))
+#define NR_FHSS_ENTRIES_2G4 (sizeof(FHSSfreqs2G4) / sizeof(uint32_t))
 
 // XXX We rely on this being 256 to match the wrap on an 8 bit index
 #define NR_SEQUENCE_ENTRIES 256
-extern uint8_t FHSSsequence[NR_SEQUENCE_ENTRIES];
+extern uint8_t FHSSsequence915[NR_SEQUENCE_ENTRIES];
+extern uint8_t FHSSsequence2G4[NR_SEQUENCE_ENTRIES];
 
-uint32_t ICACHE_RAM_ATTR GetInitialFreq();
-uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq();
-uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq();
-void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence();
+void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequences();
+
+uint32_t ICACHE_RAM_ATTR GetInitialFreq915();
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq915();
+uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq915();
+
+uint32_t ICACHE_RAM_ATTR GetInitialFreq2G4();
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4();
+uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4();

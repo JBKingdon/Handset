@@ -161,21 +161,24 @@ int ElrsSPI::init()
 
     // Full speed is 18MHz per 1280 datasheet
     printf("SPI clock at 18MHz\n");
-    devcfg.clock_speed_hz = 18*1000*1000,
+    devcfg.clock_speed_hz = 18*1000*1000;
 
     #elif defined(DUAL_BAND_BREADBOARD)
 
     // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
 
-    printf("SPI clock at 12MHz\n");
-    devcfg.clock_speed_hz = 12*1000*1000,
+    // printf("SPI clock at 12MHz\n");
+    // devcfg.clock_speed_hz = 12*1000*1000;
+
+    printf("SPI clock at 4MHz\n");
+    devcfg.clock_speed_hz = 4*1000*1000;
 
     #else
-    devcfg.clock_speed_hz = 8*1000*1000,
+    devcfg.clock_speed_hz = 8*1000*1000;
     #endif
-    // devcfg.clock_speed_hz = 4*1000*1000,
-    devcfg.spics_io_num = pinCSS,           // CS pin
-    devcfg.queue_size = 2,                  // Are we going to use queing at all?
+    // devcfg.clock_speed_hz = 4*1000*1000;
+    devcfg.spics_io_num = pinCSS;           // CS pin
+    devcfg.queue_size = 2;                  // Are we going to use queing at all?
 
     ret=spi_bus_add_device(SPI2_HOST, &devcfg, &spiHandle);
     ESP_ERROR_CHECK(ret);
@@ -192,7 +195,7 @@ int ElrsSPI::init()
         spiType = "secondary";
     }
 
-    printf("SPI %s device initialised\n", spiType);
+    printf("SPI %s device initialised on css %u\n", spiType, pinCSS);
 
     return 0; // XXX decide on ret values
 }

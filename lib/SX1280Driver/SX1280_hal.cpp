@@ -146,8 +146,8 @@ void  SX1280Hal::ReadRegister(uint16_t address, uint8_t *buffer, uint8_t size)
 
     WaitOnBusy();
 
-    // spi1_transferBytes(OutBuffer, uint8_t(sizeof(OutBuffer)));
-    spi->transfer(OutBuffer, uint8_t(sizeof(OutBuffer)));
+    spi->transfer(OutBuffer, size + 4);
+
     memcpy(buffer, OutBuffer + 4, size);
 }
 

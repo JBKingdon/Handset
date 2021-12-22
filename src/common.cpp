@@ -8,20 +8,27 @@
 #include "SX1262Driver.h"
 extern SX1262Driver Radio;
 
-// XXX add 250 and 300Hz modes for evaluation
-expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
+#ifdef DUAL_BAND_BREADBOARD
+
+expresslrs_mod_settings_915_s airRateConfig915 = 
+    // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
+
+    // 125Hz
+    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_NO_TLM,       4,             10}; // 4896 us @ 8 bytes
+
+
+expresslrs_rf_pref_params_s airRateRFPerf915 =
+    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       2000,                   5000,                3000};
+
+#else
+
+expresslrs_mod_settings_915_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
 
     #ifdef USE_PWM6
     // Fat packets for PWM. 125Hz
     {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_8,  8000, TLM_RATIO_1_64,   4,  12},
     {1, RATE_50HZ,  SX1262_LORA_BW_500, SX1262_LORA_SF8, SX1262_LORA_CR_4_6, 20000, TLM_RATIO_1_32,   4,  12}
-
-
-    #elif defined(DUAL_BAND_BREADBOARD) // XXX need a non-impl specific define for dual
-
-    // fixed 125Hz for the 915 modem
-    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_NO_TLM,   4, 10}, // 4896 us @ 8 bytes
 
     #else
 
@@ -53,21 +60,25 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     #ifdef USE_PWM6
     {0, RATE_100HZ, -112,  6432,    3500,               4000,                       2000,                   5000}, // XXX update this for 12byte payload
     {1, RATE_50HZ,  -120, 18560,    3500,               6000,                       2000,                   5000}
-    #elif defined(DUAL_BAND_BREADBOARD)
-    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       2000,                   5000,                3000} // offset tbd
+
     #else
+
     {0, RATE_200HZ, -112,  4380,    3500,               2000,                       2000,                   5000},
     {1, RATE_100HZ, -117,  8770,    3500,               4000,                       2000,                   5000},
     {2, RATE_50HZ,  -120, 17540,    3500,               6000,                       2000,                   5000},
     {3, RATE_25HZ,  -123, 17540,    3500,               12000,                      2000,                   5000}
     #endif // USE_PWM6
 };
-#endif
+
+#endif // DUAL_BAND_BREADBOARD
+
+#endif // sub gHz bands
+
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 
 #include "SX1280.h"
-extern SX1280Driver Radio;
+// extern SX1280Driver Radio;
 
 #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {

@@ -12,7 +12,7 @@
 #endif
 
 // XXX what does this do?
-#define One_Bit_Switches
+// #define One_Bit_Switches
 
 extern uint8_t UID[6];
 extern uint8_t CRCCaesarCipher;
@@ -104,19 +104,21 @@ typedef struct expresslrs_rf_pref_params_s
 } expresslrs_rf_pref_params_s;
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
-// XXX change this to N_RATES
 #ifdef USE_PWM6
+// XXX change this to N_RATES
 #define RATE_MAX 2
-#elif defined(DUAL_BAND_BREADBOARD) // XXX this will need splitting into 915/2G4 values, unless we imply single rate for 915?
-#define RATE_MAX 1
+#elif defined(DUAL_BAND_BREADBOARD)
+// dual band uses a single rate on the 915 side, RATE_MAX is only used for 2G4
 #else
 #define RATE_MAX 4
-#endif
 #define RATE_DEFAULT 0
-typedef struct expresslrs_mod_settings_s
+#endif // USE_PWM6
+
+
+typedef struct expresslrs_mod_settings_915_s
 {
     int8_t index;
-    expresslrs_RFrates_e enum_rate; // Max value of 16 since only 4 bits have been assigned in the sync package.
+    expresslrs_RFrates_e enum_rate;     // Max value of 16 since only 4 bits have been assigned in the sync package.
     SX1262_Bandwidth bw;
     SX1262_RadioLoRaSpreadingFactors_t sf;
     SX1262_RadioLoRaCodingRates_t cr;
@@ -125,16 +127,17 @@ typedef struct expresslrs_mod_settings_s
     uint8_t FHSShopInterval;            // every X packets we hope to a new frequnecy. Max value of 16 since only 4 bits have been assigned in the sync package.
     uint8_t PreambleLen;
 
-} expresslrs_mod_settings_t;
+} expresslrs_mod_settings_915_t;
 
-#endif
+#endif // sub ghz bands
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 
 #ifdef ELRS_OG_COMPATIBILITY
 #define RATE_MAX 4  // actually the number of rates, so the max value is RATE_MAX-1
 #define RATE_DEFAULT 0
-#else
+
+#else // not compatibility mode
 
 #if defined(USE_HIRES_DATA) || 1
 #define RATE_MAX 4  // actually the number of rates, so the max value is RATE_MAX-1
@@ -162,6 +165,7 @@ typedef struct expresslrs_mod_settings_s
 
 #endif // defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 
+
 expresslrs_mod_settings_s *get_elrs_airRateConfig(int8_t index);
 expresslrs_rf_pref_params_s *get_elrs_RFperfParams(int8_t index);
 
@@ -173,6 +177,15 @@ extern expresslrs_rf_pref_params_s *ExpressLRS_currAirRate_RFperfParams;
 //extern expresslrs_mod_settings_s *ExpressLRS_prevAirRate;
 
 extern bool ExpressLRS_AirRateNeedsUpdate;
+
+// XXX needs a better define
+#ifdef DUAL_BAND_BREADBOARD
+
+extern expresslrs_mod_settings_915_s airRateConfig915;
+extern expresslrs_rf_pref_params_s airRateRFPerf915;
+
+#endif // DUAL_BAND_BREADBOARD
+
 
 //ELRS SPECIFIC OTA CRC 
 //Koopman formatting https://users.ece.cmu.edu/~koopman/crc/
