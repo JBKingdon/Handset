@@ -45,7 +45,7 @@ const bool TRANSMITTER = false;
 #include "led_strip.h"
 
 // #define DEBUG_SUPPRESS
-#define PRINT_RX_SCOREBOARD 1
+// #define PRINT_RX_SCOREBOARD 1
 
 #define LED_BRIGHTNESS 32
 
@@ -188,18 +188,25 @@ uint32_t linkStatstoFCLastSent = 0;
 
 uint32_t pfdDebugCounter = 0; // when greater than 0 updatePFD will print the offset
 
-int32_t RawOffset;
-int32_t prevRawOffset;
+int32_t RawOffset915;
+int32_t prevRawOffset915;
 int32_t Offset;
 int32_t OffsetDx;
 int32_t prevOffset;
+
+int32_t RawOffset2G4;
+int32_t prevRawOffset2G4;
+
 RXtimerState_e RXtimerState = tim_disconnected;
 uint32_t GotConnectionMillis = 0;
 const uint32_t ConsiderConnGoodMillis = 1000; // minimum time before we can consider a connection to be 'good'
 
+// XXX rename to *915
 LPF LPF_Offset(2);
 LPF LPF_OffsetDx(4);
 
+LPF LPF_Offset2G4(2);
+LPF LPF_OffsetDx2G4(4);
 
 // uint32_t cycleInterval; // in ms
 uint32_t RFmodeLastCycled = 0;
@@ -311,7 +318,8 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
 
 void TentativeConnection()
 {
-    pfdLoop.reset();
+    pfdLoop.reset915();
+    pfdLoop.reset2G4();
     connectionStatePrev = connectionState;
     connectionState = tentative;
     RXtimerState = tim_disconnected;
@@ -690,12 +698,22 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     // TODO since the crc checking was moved out of this function does it make sense to move the pfd extEvent() call
     // out as well?
 
-    // XXX update this to use 2G4 packets as well
-    if (whichRadio == RadioSelection::first)
+
+    switch (whichRadio)
     {
-        // get the per mode offset
-        uint32_t pfdOffset = airRateRFPerf915.pfdOffset;
-        pfdLoop.extEvent(tPacketReceived + pfdOffset);
+        uint32_t pfdOffset;
+        case RadioSelection::first:
+            // get the per mode offset
+            pfdOffset = airRateRFPerf915.pfdOffset;
+            pfdLoop.extEvent915(tPacketReceived + pfdOffset);
+            break;
+        case RadioSelection::second:
+            // get the per mode offset
+            pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
+            pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
+            break;
+        default:
+            std::cout << "radioselection not handled\n";
     }
 
 #ifdef HYBRID_SWITCHES_8
@@ -1004,9 +1022,13 @@ bool ICACHE_RAM_ATTR HandleFHSS2G4()
     }
 
     // ok, so we might hop if we're on the right nonce, time to do the calculation
+
+    const uint8_t HopOffsets[4] = {8, 4, 2, 1};
+    const uint32_t nonce = TRANSMITTER ? nonceTX2G4 : nonceRX2G4 + HopOffsets[ExpressLRS_currAirRate_Modparams->index]; // for 1kHz
+
     // const uint32_t nonce = TRANSMITTER ? nonceTX2G4 : nonceRX2G4 + 2; // for 250Hz
     // const uint32_t nonce = TRANSMITTER ? nonceTX2G4 : nonceRX2G4 + 4; // for 500Hz
-    const uint32_t nonce = TRANSMITTER ? nonceTX2G4 : nonceRX2G4 + 8; // for 1kHz
+    // const uint32_t nonce = TRANSMITTER ? nonceTX2G4 : nonceRX2G4 + 8; // for 1kHz
 
     uint8_t modresultFHSS = nonce % hopInterval;
     if (modresultFHSS != 0)
@@ -1403,7 +1425,12 @@ static void doReceive(const int radioID)
             if (hasValidCRC((uint8_t*)radio2->RXdataBuffer))
             {
                 // lqEffective.add();                            
-                // ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second); 
+                // ProcessRFPacket((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
+
+                // XXX temporary - remove once we start doing data merges for real
+                uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
+                pfdLoop.extEvent2G4(tPacketR2 + pfdOffset);
+
                 // packetReceived = true;
                 // HandleFHSS2G4();
                 #if defined(PRINT_RX_SCOREBOARD)
@@ -1760,12 +1787,12 @@ void SetRFLinkRate(uint8_t index)
 
 
 // Why isn't this part of PFD?
-void ICACHE_RAM_ATTR updatePhaseLock()
+void ICACHE_RAM_ATTR updatePhaseLock915()
 {
     if (connectionState != disconnected)
     {
-        RawOffset = pfdLoop.calcResult();
-        pfdLoop.reset();
+        RawOffset915 = pfdLoop.calcResult915();
+        pfdLoop.reset915();
 
         // XXX shouldn't the min/max be related to the actual timer interval, not the (much slower) 915 interval?
         const int32_t max = (int32_t)airRateConfig915.interval * 2;
@@ -1773,24 +1800,24 @@ void ICACHE_RAM_ATTR updatePhaseLock()
 
         // ignore values that are out of reasonable range
         // for reasons unknown, combining these two tests causes the < min clause to always evaluate true
-        if (RawOffset > max)
+        if (RawOffset915 > max)
         {
-            printf("ign %d, max = %d\n", RawOffset, max);
+            printf("ign %d, max = %d\n", RawOffset915, max);
             return;
         }
 
-        if (RawOffset < min)
+        if (RawOffset915 < min)
         {
-            printf("ign %d, min = %d\n", RawOffset, min);
+            printf("ign %d, min = %d\n", RawOffset915, min);
             return;
         }
 
 
-        Offset = LPF_Offset.update(RawOffset);
-        OffsetDx = LPF_OffsetDx.update(RawOffset - prevRawOffset);
+        Offset = LPF_Offset.update(RawOffset915);
+        OffsetDx = LPF_OffsetDx.update(RawOffset915 - prevRawOffset915);
 
         if (Offset > 1000000 || Offset < -1000000) {
-            printf("raw %d off %d\n", RawOffset, Offset);
+            printf("raw %d off %d\n", RawOffset915, Offset);
         }
 
 
@@ -1811,13 +1838,13 @@ void ICACHE_RAM_ATTR updatePhaseLock()
 
         if (connectionState != connected)
         {
-            HwTimer::setPhaseShift(RawOffset >> 1);
+            HwTimer::setPhaseShift(RawOffset915 >> 1);
         } else {
             HwTimer::setPhaseShift(Offset >> 2);
         }
 
         prevOffset = Offset;
-        prevRawOffset = RawOffset;
+        prevRawOffset915 = RawOffset915;
 
         // if (pfdDebugCounter > 0) {
         //     printf("Offset: %d\n", Offset);
@@ -1826,10 +1853,10 @@ void ICACHE_RAM_ATTR updatePhaseLock()
     }
 
 #ifndef DEBUG_SUPPRESS
-    // printf("%ld %ld %ld %ld %u\n", Offset, RawOffset, OffsetDx, 0, uplinkLQ);
+    // printf("%ld %ld %ld %ld %u\n", Offset, RawOffset915, OffsetDx, 0, uplinkLQ);
     // Serial.print(Offset);
     // Serial.print(":");
-    // Serial.print(RawOffset);
+    // Serial.print(RawOffset915);
     // Serial.print(":");
     // Serial.print(OffsetDx);
     // Serial.print(":");
@@ -1839,6 +1866,103 @@ void ICACHE_RAM_ATTR updatePhaseLock()
 #endif
 }
 
+void ICACHE_RAM_ATTR updatePhaseLock2G4()
+{
+    if (connectionState != disconnected)
+    {
+        RawOffset2G4 = pfdLoop.calcResult2G4();
+        pfdLoop.reset2G4();
+
+        // XXX shouldn't the min/max be related to the actual timer interval?
+        const int32_t max = (int32_t) ExpressLRS_currAirRate_Modparams->interval * 2;
+        const int32_t min = -max;
+
+        // ignore values that are out of reasonable range
+        // for reasons unknown, combining these two tests causes the < min clause to always evaluate true
+        if (RawOffset2G4 > max)
+        {
+            printf("2G4 ign %d, max = %d\n", RawOffset2G4, max);
+            return;
+        }
+
+        if (RawOffset2G4 < min)
+        {
+            printf("2G4 ign %d, min = %d\n", RawOffset2G4, min);
+            return;
+        }
+
+
+        int32_t Offset2G4 = LPF_Offset2G4.update(RawOffset2G4);
+        // int32_t OffsetDx2G4 = LPF_OffsetDx2G4.update(RawOffset2G4 - prevRawOffset2G4);
+
+        if (Offset2G4 > 1000000 || Offset2G4 < -1000000) {
+            printf("2G4 raw %d off %d\n", RawOffset2G4, Offset2G4);
+        }
+
+        #ifdef PFD_CALIBRATION
+
+        // debug
+        printf("2G4 offset %d\n", Offset2G4);
+
+        #else // NOT PFD_CALIBRATIO
+
+        // loop frequency adjustment
+        if (RXtimerState == tim_locked && (lqRadio2.currentIsSet()))
+        {
+            if (nonceRX2G4 % 8 == 0) //limit rate of freq offset adjustment slightly
+            {
+                if (Offset2G4 > 0)
+                {
+                    HwTimer::incFreqOffset();
+                }
+                else if (Offset2G4 < 0)
+                {
+                    HwTimer::decFreqOffset();
+                }
+            }
+        }
+
+        // apply phase adjustment
+        // if (connectionState != connected)
+        // {
+        //     // quick and dirty to try and establish connection
+        //     HwTimer::setPhaseShift(RawOffset2G4 >> 1);
+        // } else {
+            // slow and careful to try and maintain an accurate lock
+            // HwTimer::setPhaseShift(Offset2G4 >> 2);
+        // }
+
+        // Can't use the 2G4 for phase shift until we're already locked as it prevents the 915 from
+        // getting the sync onto the right sub-frame
+        if (RXtimerState == tim_locked)
+        {
+            HwTimer::setPhaseShift(Offset2G4 >> 2);
+        }
+
+        #endif // PFD_CALIBRATION
+
+        static int32_t prevOffset2G4 = Offset2G4;
+        prevRawOffset2G4 = RawOffset2G4;
+
+        // if (pfdDebugCounter > 0) {
+        //     printf("Offset: %d\n", Offset);
+        //     pfdDebugCounter--;
+        // }
+    }
+
+#ifndef DEBUG_SUPPRESS
+    // printf("%ld %ld %ld %ld %u\n", Offset, RawOffset915, OffsetDx, 0, uplinkLQ);
+    // Serial.print(Offset);
+    // Serial.print(":");
+    // Serial.print(RawOffset915);
+    // Serial.print(":");
+    // Serial.print(OffsetDx);
+    // Serial.print(":");
+    // Serial.print(HwTimer::getFreqOffset());
+    // Serial.print(":");
+    // Serial.println(uplinkLQ);
+#endif
+}
 
 /** Aligned with (approximately) the midpoint of the radio interval (not necessarily the midpoint of the radio signal since duty cycle < 1)
  * 
@@ -1863,7 +1987,7 @@ void ICACHE_RAM_ATTR tick915()
 
     if (!TRANSMITTER)
     {
-        updatePhaseLock();
+        updatePhaseLock915();
     }
 
     // XXX remind me why we need rx and tx nonces again?
@@ -1916,11 +2040,10 @@ void ICACHE_RAM_ATTR tick2G4()
     // gpio_set_level(DEBUG_PIN, 1);
     // #endif
 
-    // XXX should we do this here, in tick915 or both?
-    // if (!TRANSMITTER)
-    // {
-    //     updatePhaseLock();
-    // }
+    if (!TRANSMITTER)
+    {
+        updatePhaseLock2G4();
+    }
 
     // XXX remind me why we need rx and tx nonces again?
     alreadyFHSS2G4 = false;
@@ -1948,7 +2071,7 @@ void ICACHE_RAM_ATTR tockRX915()
 
     tockWhere = (char *)"start";
 
-    pfdLoop.intEvent(esp_timer_get_time());
+    pfdLoop.intEvent915(esp_timer_get_time());
 
     // #ifdef DEBUG_PIN
     // gpio_set_level(DEBUG_PIN, 0);
@@ -2069,7 +2192,7 @@ void ICACHE_RAM_ATTR tockRX915()
 void ICACHE_RAM_ATTR tockRX2G4()
 {
 
-    // pfdLoop.intEvent(esp_timer_get_time());
+    pfdLoop.intEvent2G4(esp_timer_get_time());
 
     // #ifdef DEBUG_PIN
     // gpio_set_level(DEBUG_PIN, 0);
@@ -2181,7 +2304,7 @@ void lostConnection()
 
     Offset = 0;
     OffsetDx = 0;
-    RawOffset = 0;
+    RawOffset915 = 0;
     prevOffset = 0;
     GotConnectionMillis = 0;
     uplinkLQ = 0;
