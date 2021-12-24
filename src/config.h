@@ -14,7 +14,7 @@
 
 #define DUAL_BAND_BREADBOARD
 // #define C3_PCB_V0
-// #define USE_SECOND_RADIO
+#define USE_SECOND_RADIO
 
 // Not sure where best to set this, but it uses a set of modes tuned for the fullD rx code
 // Which sounds like an unnecessary thing anyway, so try and get rid of this long term

@@ -167,11 +167,11 @@ int ElrsSPI::init()
 
     // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
 
-    // printf("SPI clock at 12MHz\n");
-    // devcfg.clock_speed_hz = 12*1000*1000;
+    printf("SPI clock at 12MHz\n");
+    devcfg.clock_speed_hz = 12*1000*1000;
 
-    printf("SPI clock at 4MHz\n");
-    devcfg.clock_speed_hz = 4*1000*1000;
+    // printf("SPI clock at 4MHz\n");
+    // devcfg.clock_speed_hz = 4*1000*1000;
 
     #else
     devcfg.clock_speed_hz = 8*1000*1000;

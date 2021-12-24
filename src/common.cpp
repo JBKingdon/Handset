@@ -18,7 +18,8 @@ expresslrs_mod_settings_915_s airRateConfig915 =
 
 
 expresslrs_rf_pref_params_s airRateRFPerf915 =
-    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       2000,                   5000,                3000};
+    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset
+    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       200,                   5000,                3000};
 
 #else
 
