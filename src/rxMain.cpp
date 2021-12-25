@@ -10,7 +10,7 @@
 
 const bool TRANSMITTER = false;
 
-#define INITIAL_LINK_RATE_INDEX 0
+#define INITIAL_LINK_RATE_INDEX 1
 
 #include <stdio.h>
 #include <string.h>
@@ -1270,72 +1270,62 @@ static void ICACHE_RAM_ATTR tx_taskXXX(void* arg)
     }
 }
 
-// static void ICACHE_RAM_ATTR tx2_task(void* arg)
-// {
-//     SpiTaskInfo taskInfo;
+static void ICACHE_RAM_ATTR tx2_task(void* arg)
+{
+    SpiTaskInfo taskInfo;
 
-//     uint8_t dummyData;
-//     for(;;) {
-//         if(xQueueReceive(tx2_evt_queue, &dummyData, portMAX_DELAY))
-//         {
-//             r2LastIRQms = millis();
+    uint8_t dummyData;
+    for(;;) {
+        if(xQueueReceive(tx2_evt_queue, &dummyData, portMAX_DELAY))
+        {
+            r2LastIRQms = millis();
 
-//             uint16_t irqs = radio2->GetIrqStatus();
+            uint16_t irqs = radio2->GetIrqStatus();
 
-//             // TODO Sometimes we get preamble events even when not configured, so this needs to be guarded
-//             // Since it's not currently used, just comment it out
+            if (irqs & SX1280_IRQ_TX_DONE) {
+                // printf("tx2!\n");
 
-//             // if (irqs & SX1280_IRQ_PREAMBLE_DETECTED)
-//             // {
-//             //     // store the packet time here for use in PFD to reduce jitter on CRC failover
-//             //     tPacketR2 = esp_timer_get_time();
-//             //     radio2->ClearIrqStatus(SX1280_IRQ_PREAMBLE_DETECTED);
-//             //     // printf("p2");
-//             //     std::cout << "p2";
+                taskInfo.id = SpiTaskID::ClearIRQs;
+                taskInfo.radioID = 2;
+                taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-//             // } else if (irqs & SX1280_IRQ_TX_DONE) {
+                // give fhss a chance to run before tock()
+                HandleFHSS2G4();
 
-//             if (irqs & SX1280_IRQ_TX_DONE) {
-//                 // printf("tx2!\n");            
-//                 // give fhss a chance to run before tock()
-//                 HandleFHSS();
+                // start the next receive
+                // taskInfo.id = SpiTaskID::StartRx;
+                // taskInfo.radioID = 0; // 0 for both radios
+                // xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-//                 // start the next receive
-//                 taskInfo.id = SpiTaskID::StartRx;
-//                 taskInfo.radioID = 0; // 0 for both radios
-//                 xQueueSend(rx_evt_queue, &taskInfo, 1000);
+            } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
+                // printf("r2 timeout\n");
+                timeout2Counter++;
+                if (HwTimer::isRunning()) {
+                    radio2Timedout = true;
+                    taskInfo.id = SpiTaskID::ClearIRQs;
+                    taskInfo.radioID = 2;
+                    taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
+                    // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
+                    // std::cout << "DT2";
+                } else {
+                    // radio2->RXnb(); // implicit clear irqs
+                    taskInfo.id = SpiTaskID::StartRx;
+                    taskInfo.radioID = 2;
+                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
 
-//                 // radio1->RXnb();
-//                 // radio2->RXnb();
+                    // std::cout << "T2";
+                }
 
-//             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
-//                 // printf("r2 timeout\n");
-//                 timeout2Counter++;
-//                 if (HwTimer::isRunning()) {
-//                     radio2Timedout = true;
-//                     taskInfo.id = SpiTaskID::ClearIRQs;
-//                     taskInfo.radioID = 2;
-//                     taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
-//                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
-//                     // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
-//                     // std::cout << "DT2";
-//                 } else {
-//                     // radio2->RXnb(); // implicit clear irqs
-//                     taskInfo.id = SpiTaskID::StartRx;
-//                     taskInfo.radioID = 2;
-//                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
-
-//                     // std::cout << "T2";
-//                 }
-
-//             } else {
-//                 #ifndef DEBUG_SUPPRESS
-//                 printf("!!! tx2_task irqs %04X\n", irqs);
-//                 #endif
-//             }
-//         }
-//     }
-// }
+            } else {
+                #ifndef DEBUG_SUPPRESS
+                printf("!!! tx2_task irqs %04X\n", irqs);
+                #endif
+            }
+        }
+    }
+}
 
 
 static void doReceive(const int radioID)
@@ -1598,9 +1588,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             radio1->ClearIrqStatus(taskInfo.irqMask);
                             break;
                         case RadioSelection::second:
-                            // radio2->ClearIrqStatus(taskInfo.irqMask);
-                            std::cout << "ClearIRQs radio2 disabled\n";
-
+                            radio2->ClearIrqStatus(taskInfo.irqMask);
                             break;
                         default:
                             printf("unexpected radioID for ClearIRQs %d\n", taskInfo.radioID);
@@ -1906,9 +1894,13 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
 
         #else // NOT PFD_CALIBRATIO
 
-        // loop frequency adjustment
+        // Can't use the 2G4 for phase shift until we're already locked as it prevents the 915 from
+        // getting the sync onto the right sub-frame. But once we're locked 2G4 can be used to fine tune
+        // the sync
+
         if (RXtimerState == tim_locked && (lqRadio2.currentIsSet()))
         {
+            // loop frequency adjustment
             if (nonceRX2G4 % 8 == 0) //limit rate of freq offset adjustment slightly
             {
                 if (Offset2G4 > 0)
@@ -1920,22 +1912,8 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
                     HwTimer::decFreqOffset();
                 }
             }
-        }
 
-        // apply phase adjustment
-        // if (connectionState != connected)
-        // {
-        //     // quick and dirty to try and establish connection
-        //     HwTimer::setPhaseShift(RawOffset2G4 >> 1);
-        // } else {
-            // slow and careful to try and maintain an accurate lock
-            // HwTimer::setPhaseShift(Offset2G4 >> 2);
-        // }
-
-        // Can't use the 2G4 for phase shift until we're already locked as it prevents the 915 from
-        // getting the sync onto the right sub-frame
-        if (RXtimerState == tim_locked)
-        {
+            // apply phase adjustment
             HwTimer::setPhaseShift(Offset2G4 >> 2);
         }
 
@@ -2669,8 +2647,8 @@ void app_main()
 
     // xTaskCreate(tx_task, "tx_task", 2048, NULL,  5, NULL);
 
-    std::cout << "app_main tx2_task disabled\n";
-    // xTaskCreate(tx2_task, "tx2_task", 2048, NULL,  5, NULL);
+    // std::cout << "app_main tx2_task disabled\n";
+    xTaskCreate(tx2_task, "tx2_task", 2048, NULL,  5, NULL);
 
 
     // need to attach ISR handlers to DIO pins
@@ -2688,7 +2666,7 @@ void app_main()
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO1_PIN, dio1_isr_handler, NULL));
     // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO2_PIN, dio2_isr_handler, NULL));
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO1_PIN, r2_dio1_isr_handler, NULL));
-    // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO2_PIN, r2_dio2_isr_handler, NULL));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO2_PIN, r2_dio2_isr_handler, NULL));
 
     uint8_t linkRateIndex = INITIAL_LINK_RATE_INDEX;
     SetRFLinkRate(linkRateIndex); // sets radio2
