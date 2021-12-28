@@ -8,13 +8,14 @@
 #include "SX1280_hal.h"
 #include "SX1280.h"
 
-#include "OTA.h"
 
 extern "C" {
 #include "../../include/systick.h"
 }
 #include "../../src/utils.h"
 #include "../../src/config.h"
+
+#include "OTA.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -132,7 +133,7 @@ void SX1280Driver::setupLora()
     this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL);
     #else
     // TODO this ignores the UID based setup of IQ. Doesn't seem to matter, but seems like a problem waiting to happen
-    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
+    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH_2G4, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
     #endif
 }
 
@@ -249,7 +250,7 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, iqMode);
     #else
-    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_OFF, iqMode);
+    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH_2G4, SX1280_LORA_CRC_OFF, iqMode);
     #endif
 
     SetFrequency(freq);
@@ -363,7 +364,7 @@ void SX1280Driver::SetPacketParamsFLRC()
     buf[2] = 0x00;  // SyncWordLength FLRC_SYNC_NOSYNC 0x00
     buf[3] = 0x00;  // SyncWordMatch RX_DISABLE_SYNC_WORD 0x00
     buf[4] = 0x00;  // PacketType PACKET_FIXED_LENGTH 0x00
-    buf[5] = OTA_PACKET_LENGTH;     // PayloadLength
+    buf[5] = OTA_PACKET_LENGTH_2G4;     // PayloadLength
     buf[6] = 0x10;  // CrcLength Docs are contradictory, this may be 2 bytes: CRC_1_BYTE 0x10
     buf[7] = 0x08;  // 0x08 Whitening must be disabled for FLRC
 
@@ -613,7 +614,7 @@ void SX1280Driver::readRXData()
     // }
 
     // assume we always read from offset 0 (won't work with free running receives)
-    hal->ReadBuffer(0, RXdataBuffer, OTA_PACKET_LENGTH);
+    hal->ReadBuffer(0, RXdataBuffer, OTA_PACKET_LENGTH_2G4);
 }
 
 void SX1280Driver::RXnb()

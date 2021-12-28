@@ -101,6 +101,8 @@ public:
     void ICACHE_RAM_ATTR SetFrequency(uint32_t freq);
     void ICACHE_RAM_ATTR SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr);
     void SetOutputPower(int8_t power);
+    void setPacketLength(uint8_t packetLen);
+
 
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();

@@ -356,7 +356,7 @@ void SX1262Driver::setupLora()
     // TODO this ignores the UID based setup of IQ. Doesn't seem to matter, but seems like a problem waiting to happen
     // TODO also note use of fixed preamble length instead of the value from the configured radio params
     // printf("set packet params\n\r");
-    this->SetPacketParams(12, SX1262_LORA_PACKET_FIXED_LENGTH, OTA_PACKET_LENGTH, SX1262_LORA_CRC_OFF, SX1262_LORA_IQ_NORMAL);
+    this->SetPacketParams(12, SX1262_LORA_PACKET_FIXED_LENGTH, OTA_PACKET_LENGTH_915, SX1262_LORA_CRC_OFF, SX1262_LORA_IQ_NORMAL);
     #endif
     // GetStatus();
 
@@ -364,6 +364,11 @@ void SX1262Driver::setupLora()
     hal.WriteCommand(SX1262_RADIO_SET_RXTX_FALLBACK_MODE, 0x40);    // Table 13-23: enable FS after rx and tx finish
     // GetStatus();
 
+}
+
+void SX1262Driver::setPacketLength(uint8_t packetLen)
+{
+    SetPacketParams(12, SX1262_LORA_PACKET_FIXED_LENGTH, packetLen, SX1262_LORA_CRC_OFF, SX1262_LORA_IQ_NORMAL);
 }
 
 void SX1262Driver::Begin()
@@ -529,7 +534,7 @@ void ICACHE_RAM_ATTR SX1262Driver::Config(const SX1262_RadioLoRaBandwidths_t bw,
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(preambleLength, SX1262_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1262_LORA_CRC_ON, iqMode);
     #else
-    SetPacketParams(preambleLength, SX1262_LORA_PACKET_FIXED_LENGTH, OTA_PACKET_LENGTH, SX1262_LORA_CRC_OFF, iqMode);
+    SetPacketParams(preambleLength, SX1262_LORA_PACKET_FIXED_LENGTH, OTA_PACKET_LENGTH_915, SX1262_LORA_CRC_OFF, iqMode);
     #endif
 
     optimizeIQ(iqMode == SX1262_LORA_IQ_INVERTED);
@@ -837,7 +842,12 @@ void SX1262Driver::ClearIrqStatus(uint16_t irqMask)
 // }
 
 
-
+/**
+ *  NB the length param is currently only used for copying the data into the radio's memory,
+ * and not for setting the packet length used by the lora modem over the air.
+ * This doesn't make much sense, so update the drivers to consistently use a length param on
+ * rx and tx calls.
+ */
 void SX1262Driver::TXnb(volatile uint8_t *data, uint8_t length)
 {
     hal.TXenable(); // do first to allow PA to stabilise
@@ -902,7 +912,7 @@ void SX1262Driver::readRXData()
     // first do the errata fixup for the rx timeout
     clearRxTimeout();
     uint8_t fifoAddr = GetRxBufferAddr();
-    hal.ReadBuffer(fifoAddr, instance->RXdataBuffer, OTA_PACKET_LENGTH);
+    hal.ReadBuffer(fifoAddr, instance->RXdataBuffer, OTA_PACKET_LENGTH_915);
 }
 
 void SX1262Driver::RXnb()

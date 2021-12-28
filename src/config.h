@@ -16,6 +16,9 @@
 // #define C3_PCB_V0
 #define USE_SECOND_RADIO
 
+// Enable the new DB specific packet formats
+#define USE_DB_PACKETS
+
 // Not sure where best to set this, but it uses a set of modes tuned for the fullD rx code
 // Which sounds like an unnecessary thing anyway, so try and get rid of this long term
 #define FULL_DIVERSITY_MODES
@@ -303,8 +306,9 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
-#define LED2812_PIN     GPIO_NUM_9
-// #define CRSF_TX_PIN     GPIO_NUM_21
+#define DEBUG_PIN     GPIO_NUM_9
+// #define LED2812_PIN   GPIO_NUM_9
+// #define CRSF_TX_PIN   GPIO_NUM_21
 
 #define LED_STATUS_INDEX 0
 // #define LED_RADIO1_INDEX 1

@@ -4,7 +4,7 @@
 // #define H_OTA
 
 #include <stdint.h>
-#include "../../src/user_config.h"
+#include "../../src/config.h"
 
 #define PACKED __attribute__((packed))
 
@@ -26,7 +26,67 @@ typedef struct Pwm6Payload_s {
     unsigned int crc : 14; // 14 + 74 = 88 = 11 bytes with 0 bits spare
 } PACKED Pwm6Payload_t;
 
+// Dual band packet formats
 
+
+
+// 915 uplink packets. Max 18 bytes to work with
+typedef struct DB915Packet_s {
+    unsigned int crc : 16;       // 16 bits
+    unsigned int nonce : 16;     // 16 bits
+
+    unsigned int ch0 : 10;
+    unsigned int ch1 : 10;
+    unsigned int ch2 : 10;
+    unsigned int ch3 : 10;       // 40 bits
+
+    // Extra full res channels spread across packets with odd/even nonce
+    // odd: chA = ch4, chB = ch5
+    // even: chA = ch6, chB = ch7
+    unsigned int chA : 12;
+    unsigned int chB : 12;       // 24 bits
+
+    // Switches spread across packets with odd/even nonce
+    // odd: channels 8 through 11
+    // even: channels 12 through 15
+    unsigned int swA : 2;
+    unsigned int swB : 2;
+    unsigned int swC : 2;
+    unsigned int swD : 2;        // 8 bits
+
+    unsigned int txPower : 8;    // 8 bits
+
+    unsigned int rateIndex : 2;
+    unsigned int armed : 1;      // 3 bits
+
+} PACKED DB915Packet_t;          // total 15 bytes
+
+typedef struct DB915Telem_s {
+    unsigned int crc : 16;       // 16 bits (only 14 used, can be shrunk and moved to the end)
+
+    int rssi915 : 8;
+    unsigned int lq915 : 8;
+
+    int rssi2G4 : 8;
+    unsigned int lq2G4 : 8;     // 32 bits
+
+    uint8_t serialData[8];
+
+    unsigned int serialDataLength : 4;
+
+    unsigned int packetType : 2;
+
+} PACKED DB915Telem_t;  // total 7 bytes
+
+typedef struct DB2G4Packet_s {
+    unsigned int ch0 : 12;
+    unsigned int ch1 : 12;
+    unsigned int ch2 : 12;
+    unsigned int ch3 : 12;
+    unsigned int armed : 1;
+    unsigned int crc : 14;       // total 8 bytes
+
+} PACKED DB2G4Packet_t;
 
 // expresslrs packet header types
 // 00 -> standard 4 channel data packet
@@ -47,9 +107,16 @@ typedef struct Pwm6Payload_s {
 
 #define OTA_PACKET_LENGTH 11
 
+#elif defined(USE_DB_PACKETS)
+
+#define OTA_PACKET_LENGTH_2G4 8
+#define OTA_PACKET_LENGTH_915 15
+
+#define OTA_PACKET_LENGTH_TELEM 15
+
 #else
 
-#define OTA_PACKET_LENGTH 8
+#define OTA_PACKET_LENGTH_915 8
 
 #endif // USE_HIRES_DATA
 

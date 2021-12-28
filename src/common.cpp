@@ -11,15 +11,18 @@ extern SX1262Driver Radio;
 #ifdef DUAL_BAND_BREADBOARD
 
 expresslrs_mod_settings_915_s airRateConfig915 = 
-    // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
+    // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
 
     // 125Hz
-    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_NO_TLM,       4,             10}; // 4896 us @ 8 bytes
-
+    {0, RATE_100HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_8,       4,             12}; // 4896 us @ 8 bytes, 6432 @ 15b, 7200 @ 18b
+                                                                                                          // pdfOffset at 125Hz 2750               1198
+    // measured: 4920 @ 7 bytes, 6520 @ 15 bytes with CR_4_6, preamble 12
+    // measured: 4680 @ 7 bytes, 6000 @ 15 bytes with CR_4_5, preamble 10 (turn-around 440us)
 
 expresslrs_rf_pref_params_s airRateRFPerf915 =
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset
-    {0, RATE_100HZ, -112,  4896,    3500,               4000,                       200,                   5000,                3000};
+    //       83                     NA                  NA                          NA                      NA
+    {0, RATE_100HZ, -112,  6432,    3500,               4000,                       200,                   5000,                1165};
 
 #else
 
