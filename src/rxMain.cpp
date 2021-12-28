@@ -8,7 +8,7 @@
  *   Figure out why the radios stop talking
  */
 
-const bool TRANSMITTER = false;
+const bool TRANSMITTER = true;
 
 #define INITIAL_LINK_RATE_INDEX 0
 
@@ -21,6 +21,11 @@ const bool TRANSMITTER = false;
 
 // only need to recompile rx:
 // #define PFD_CALIBRATION
+
+
+// Time in ms of no TLM response to consider that we have lost connection
+#define RX_CONNECTION_LOST_TIMEOUT 3000
+
 
 #include <stdio.h>
 #include <string.h>
@@ -162,6 +167,9 @@ uint32_t errCounter = 0;
 static uint32_t r1LastIRQms = 0;
 static uint32_t r2LastIRQms = 0;
 
+static uint32_t lastTelemPacketTimeMs = 0;
+static bool telemPacketExpected = false;
+
 static xQueueHandle rx_evt_queue = NULL;
 static xQueueHandle rx2G4_evt_queue = NULL;
 static xQueueHandle tx_evt_queue = NULL;
@@ -240,7 +248,7 @@ LPF LPF_rcvInterval(4);
 LPF lpfLq(3);
 
 /// LQ Calculation //////////
-LQCALC<99> lqRadio1, lqRadio2, lqEffective;
+LQCALC<99> lqRadio1, lqRadio2, lqEffective, lqTelem;
 uint8_t uplinkLQ;
 
 uint8_t scanIndex = RATE_DEFAULT; // used when cycling through RF modes
@@ -1416,14 +1424,28 @@ bool ICACHE_RAM_ATTR HandleFHSS2G4()
 
 bool ICACHE_RAM_ATTR isTelemetryFrame()
 {
-    if (airRateConfig915.TLMinterval == TLM_RATIO_NO_TLM)
+    uint32_t nonce = (TRANSMITTER) ? nonceTX915 : nonceRX915;
+
+    // start the tlmInterval at 1:128 until we get a link, then switch to the configured value
+    expresslrs_tlm_ratio_e tlmInterval = TLM_RATIO_1_128;
+    if (TRANSMITTER) {
+        if (isRXconnected) {
+            tlmInterval = airRateConfig915.TLMinterval;
+        }
+    } else {
+        if (connectionState == connectionState_e::connected) {
+            tlmInterval = airRateConfig915.TLMinterval;
+        }
+    }
+
+    if (tlmInterval == TLM_RATIO_NO_TLM)
     {
         return false;
     }
 
-    uint32_t nonce = (TRANSMITTER) ? nonceTX915 : nonceRX915;
+    const uint8_t modresult = nonce % TLMratioEnumToValue(tlmInterval);
 
-    const uint8_t modresult = nonce % TLMratioEnumToValue(airRateConfig915.TLMinterval);
+    if (modresult == 0) telemPacketExpected = true;
 
     return (modresult == 0);
 }
@@ -1710,6 +1732,12 @@ static void handleEvents915()
 
             if (hasValidCRC915DB((DB915Telem_t *)radio1->RXdataBuffer)) {
                 memcpy(&telemData, (const void *)(radio1->RXdataBuffer), OTA_PACKET_LENGTH_TELEM);
+                lastTelemPacketTimeMs = millis();
+                if (!isRXconnected) {
+                    std::cout << "link established\n";
+                    isRXconnected = true;
+                }
+                lqTelem.add();
             }
 
             // need to clear irqs, next transmit will be started from tock
@@ -2182,7 +2210,7 @@ void ICACHE_RAM_ATTR updatePhaseLock915()
         }
 
 
-        if (RXtimerState == tim_locked && (lqRadio1.currentIsSet() || lqRadio2.currentIsSet()))
+        if (RXtimerState == tim_locked && lqRadio1.currentIsSet())
         {
             if (nonceRX915 % 8 == 0) //limit rate of freq offset adjustment slightly
             {
@@ -2342,6 +2370,11 @@ void ICACHE_RAM_ATTR tick915()
     if (!TRANSMITTER)
     {
         updatePhaseLock915();
+    } else {
+        if (telemPacketExpected) {
+            lqTelem.inc();
+            telemPacketExpected = false;
+        }
     }
 
     // XXX remind me why we need rx and tx nonces again?
@@ -3129,13 +3162,19 @@ void app_main()
 
             if (TRANSMITTER)
             {
-                // Can't print the packed values directly, have to localize them first (printf bug?)
-                int8_t rssi915 = telemData.rssi915;
-                uint8_t lq915 = telemData.lq915;
-                int8_t rssi2G4 = telemData.rssi2G4;
-                uint8_t lq2G4 = telemData.lq2G4;
-                printf("Telem 915: %d %u, 2G4: %d, %u\n", rssi915, lq915, rssi2G4, lq2G4);
-
+                printf("lqTelem %2u ", lqTelem.getLQ());
+                // Telemetry is only valid when isRXconnected is true
+                if (isRXconnected)
+                {
+                    // Can't print the packed values directly, have to localize them first (printf bug?)
+                    int8_t rssi915 = telemData.rssi915;
+                    uint8_t lq915 = telemData.lq915;
+                    int8_t rssi2G4 = telemData.rssi2G4;
+                    uint8_t lq2G4 = telemData.lq2G4;
+                    printf("Telem 915: %d %u, 2G4: %d, %u\n", rssi915, lq915, rssi2G4, lq2G4);
+                } else {
+                    std::cout << "No Telem\n";
+                }
             } else {
 
                 #if defined(PRINT_RX_SCOREBOARD)
@@ -3231,10 +3270,10 @@ void app_main()
         {
             static uint32_t lastModeChange = 0; // STATIC for persistence
 
+            // temporary link rate change via keyboard input
             uint8_t buf;
             int nread = uart_read_bytes(UART_NUM_0, &buf, 1, 0);
             if (nread != 0) {
-                printf("read %d bytes, '%c'\n", nread, buf);
                 if (buf == '+' && (ExpressLRS_currAirRate_Modparams->index > 0)) {
                     uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index - 1;
                     SetRFLinkRate(newIndex);
@@ -3243,7 +3282,17 @@ void app_main()
                     SetRFLinkRate(newIndex);
                 }
             }
-        }
+
+            // have we lost connection with the quad?
+            uint32_t localLastTelem = lastTelemPacketTimeMs; // avoid race conditions
+            if (isRXconnected && ((millis() - localLastTelem) > RX_CONNECTION_LOST_TIMEOUT))
+            {
+                isRXconnected = false;
+                lqTelem.reset(); // zero out the lq
+                std::cout << "RX connection lost\n";
+            }
+
+        } // if (TRANSMITTER)
 
 
     } // while true
