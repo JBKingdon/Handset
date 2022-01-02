@@ -8,9 +8,13 @@
  *   Figure out why the radios stop talking
  */
 
-const bool TRANSMITTER = true;
+// #define TRANSMITTER true
+#define TRANSMITTER false
 
-#define INITIAL_LINK_RATE_INDEX 0
+#define INITIAL_LINK_RATE_INDEX 1
+
+#define TX_POWER_915 (-9)
+#define TX_POWER_2G4 (-10)
 
 // recompile both rx & tx when changing this:
 // XXX doesn't work, needs updating after change to conventional telemetry
@@ -200,6 +204,7 @@ static bool radio2Timedout = false;
 volatile uint32_t tPacketR1 = 0;
 volatile uint32_t tPacketR2 = 0;
 volatile uint32_t lastValidPacket = 0;
+volatile uint32_t last2G4DataMs = 0;
 volatile uint32_t lastSyncPacket = 0;
 
 uint32_t linkStatstoFCLastSent = 0;
@@ -565,16 +570,10 @@ void GenerateSyncPacketData()
 /**
  * Test out the new DB specific packet format
  */
-void ICACHE_RAM_ATTR sendRCdataToRF915_DB()
+void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 {
     // printf("%u\n", nonceTX915);
-
-    // XXX temporary data for testing
-    uint16_t scaledADC[4];
-    scaledADC[0] = 750;
-    scaledADC[1] = 750;
-    scaledADC[2] = 750;
-    scaledADC[3] = 750;
+    // std::cout << 'S';
 
     // uint8_t currentSwitches[4] = {0};
     // GenerateChannelDataHybridSwitch8(radio1->TXdataBuffer, scaledADC, currentSwitches, nextSwitchIndex, DeviceAddr);
@@ -591,23 +590,36 @@ void ICACHE_RAM_ATTR sendRCdataToRF915_DB()
     DB915Packet_t * packet = (DB915Packet_t *)(radio1->TXdataBuffer);
 
     packet->nonce = timerNonce;
-    packet->armed = 0;
+    packet->armed = crsf.ChannelDataIn[8] > 1024;
     packet->txPower = 1;
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
-    packet->ch0 = scaledADC[0];
-    packet->ch1 = scaledADC[1];
-    packet->ch2 = scaledADC[2];
-    packet->ch3 = scaledADC[3];
+    packet->ch0 = crsf.ChannelDataIn[0] >> 1; // input data is 11 bit, backup channels are 10 bit
+    packet->ch1 = crsf.ChannelDataIn[1] >> 1;
+    packet->ch2 = crsf.ChannelDataIn[2] >> 1;
+    packet->ch3 = crsf.ChannelDataIn[3] >> 1;
+
+    bool firstGroup = (timerNonce >> 4) % 2;
 
     // these will eventually be set with different channels depending on whether we're on odd or even (nonce / rfModeDivisor915)
-    packet->chA = 0;
-    packet->chB = 0;
-    packet->swA = 0;
-    packet->swB = 0;
-    packet->swC = 0;
-    packet->swD = 0;
+    if (firstGroup)
+    {
+        packet->chA = crsf.ChannelDataIn[4] << 1;
+        packet->chB = crsf.ChannelDataIn[5] << 1;
+        packet->swA = CRSF_to_N(crsf.ChannelDataIn[8],3);
+        packet->swB = CRSF_to_N(crsf.ChannelDataIn[9],3);
+        packet->swC = CRSF_to_N(crsf.ChannelDataIn[10],3);
+        packet->swD = CRSF_to_N(crsf.ChannelDataIn[11],3);
+    } else {
+        packet->chA = crsf.ChannelDataIn[6] << 1;
+        packet->chB = crsf.ChannelDataIn[7] << 1;
+        packet->swA = CRSF_to_N(crsf.ChannelDataIn[12],3);
+        packet->swB = CRSF_to_N(crsf.ChannelDataIn[13],3);
+        packet->swC = CRSF_to_N(crsf.ChannelDataIn[14],3);
+        packet->swD = CRSF_to_N(crsf.ChannelDataIn[15],3);
+    }
 
+    // printf("c[0]=%u\n", crsf.ChannelDataIn[0] >> 1);
 
     // Calculate the CRC
 
@@ -827,14 +839,12 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 {
     DB2G4Packet_t * packet = (DB2G4Packet_t *) radio2->TXdataBuffer;
 
-    // XXX temporary data for testing
+    packet->ch0 = crsf.ChannelDataIn[0] << 1; // otx is 11 bit, main channels are 12 bit
+    packet->ch1 = crsf.ChannelDataIn[1] << 1;
+    packet->ch2 = crsf.ChannelDataIn[2] << 1;
+    packet->ch3 = crsf.ChannelDataIn[3] << 1;
 
-    packet->ch0 = 3071;
-    packet->ch1 = 3071;
-    packet->ch2 = 3071;
-    packet->ch3 = 3071;
-
-    packet->armed = 0;
+    packet->armed = crsf.ChannelDataIn[8] > 1024;
 
     packet->crc = 0;
 
@@ -920,7 +930,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     const uint8_t SwitchEncModeExpected = 0b00;
 #endif
     uint8_t SwitchEncMode;
-    uint8_t indexIN;
+    // uint8_t indexIN;
     uint8_t TLMrateIn;
     #if defined(ENABLE_TELEMETRY) && defined(HYBRID_SWITCHES_8)
     bool telemetryConfirmValue;
@@ -974,7 +984,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
         (void)SwitchEncModeExpected; // suppress compiler warnings
         (void)SwitchEncMode;
 
-        indexIN = ((rxBuffer[3] & 0b11100000) >> 5);
+        // indexIN = ((rxBuffer[3] & 0b11100000) >> 5);
         TLMrateIn = ((rxBuffer[3] & 0b00011100) >> 2);
         // SwitchEncMode = (rxBuffer[3] & 0b00000110) >> 1;
         SwitchEncMode = HYBRID_SWITCHES_8; // fixed when not running in compatibility mode
@@ -1113,6 +1123,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket(uint8_t *rxBuffer, uint32_t tPacketRecei
     return 1;
 }
 
+#if (TRANSMITTER == false)
+
 /** For dual band format 2G4 packets.
  * 
  * These only contain the primary channels plus arm state
@@ -1130,16 +1142,27 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
 
     lastValidPacket = millis(); // XXX add a specific 2G4 timestamp so that we can do data merging
+    last2G4DataMs = lastValidPacket;
 
     DB2G4Packet_t * packet = (DB2G4Packet_t *)rxBuffer;
 
+    // XXX new packet format needed to carry 8 * 12bit + 8 * 2bit data to the FC
+
     // copy data into crsf storage (or find a better place to keep it
-    crsf.PackedHiResRCdataOut.chan0 = packet->ch0;
-    crsf.PackedHiResRCdataOut.chan1 = packet->ch1;
-    crsf.PackedHiResRCdataOut.chan2 = packet->ch2;
-    crsf.PackedHiResRCdataOut.chan3 = packet->ch3;
+    // crsf.elrsPackedHiResRCdataOut.chan0 = packet->ch0;
+    // crsf.elrsPackedHiResRCdataOut.chan1 = packet->ch1;
+    // crsf.elrsPackedHiResRCdataOut.chan2 = packet->ch2;
+    // crsf.elrsPackedHiResRCdataOut.chan3 = packet->ch3;
+
+    // 12 bits in, 11 bits out
+    crsf.PackedRCdataOut.ch0 = packet->ch0 >> 1;
+    crsf.PackedRCdataOut.ch1 = packet->ch1 >> 1;
+    crsf.PackedRCdataOut.ch2 = packet->ch2 >> 1;
+    crsf.PackedRCdataOut.ch3 = packet->ch3 >> 1;
+
 
     // XXX figure out the arm channel
+    // crsf.elrsPackedHiResRCdataOut.aux1 = packet->armed * 2;
 
     // send to fc
     if (connectionState != disconnected)
@@ -1151,6 +1174,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
 
     return 1;
 }
+
+#endif  // TRANSMITTER
 
 /** Process packets from the tx to the rx on the 915 channel
  * 
@@ -1198,18 +1223,76 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
     } else {
 
         // If we are connected then store the RC command data and check for rate changes and nonce slips
-        crsf.LinkStatistics.txPower = packet->txPower;
 
-        // XXX Only merge the primary channels if the data is newer than the last 2G4 packet
-        // crsf.ChannelDataOut[0] = packet->ch0;
-        // crsf.ChannelDataOut[1] = packet->ch1;
-        // crsf.ChannelDataOut[2] = packet->ch2;
-        // crsf.ChannelDataOut[3] = packet->ch3;
+        crsf.elrsLinkStatistics.txPower = packet->txPower;
+
+        // need the timestamp of the last 2G4 packet
+        uint32_t age2G4 = millis() - (last2G4DataMs - (ExpressLRS_currAirRate_RFperfParams->TOA/1000));
+
+        const bool primaryChannelIsOld = (age2G4 > (airRateRFPerf915.TOA/1000));
+
+        // Only merge the primary channels if the data is newer than the last 2G4 packet
+
+        // the approximate age of this data is the 915 OTA time
+        if (primaryChannelIsOld)
+        {
+            // std::cout << "915 fallback data\n";
+            // crsf.PackedHiResRCdataOut.chan0 = packet->ch0 << 2;
+            // crsf.PackedHiResRCdataOut.chan1 = packet->ch1 << 2;
+            // crsf.PackedHiResRCdataOut.chan2 = packet->ch2 << 2;
+            // crsf.PackedHiResRCdataOut.chan3 = packet->ch3 << 2;
+
+            // crsf.PackedHiResRCdataOut.aux1 = packet->armed * 2;
+
+            // 10 bit in, 11 bit out
+
+            crsf.PackedRCdataOut.ch0 = packet->ch0 << 1;
+            crsf.PackedRCdataOut.ch1 = packet->ch1 << 1;
+            crsf.PackedRCdataOut.ch2 = packet->ch2 << 1;
+            crsf.PackedRCdataOut.ch3 = packet->ch3 << 1;
+
+            // crsf.PackedRCdataOut.ch8 = packet->armed ? CRSF_CHANNEL_VALUE_2000 : CRSF_CHANNEL_VALUE_1000;
+        }
 
         // XXX and unpack other channels
+        // crsf.PackedHiResRCdataOut.aux2 = packet->swB;
+        // crsf.PackedHiResRCdataOut.aux3 = packet->swC;
+        // crsf.PackedHiResRCdataOut.aux4 = packet->swD;
+
+        bool firstGroup = (newTimerNonce >> 4) % 2;
+
+        // 12 bit in, 11 bit out
+        if (firstGroup)
+        {
+            crsf.PackedRCdataOut.ch4 = packet->chA >> 1;
+            crsf.PackedRCdataOut.ch5 = packet->chB >> 1;
+
+            crsf.PackedRCdataOut.ch8 = SWITCH2b_to_CRSF(packet->swA);
+            crsf.PackedRCdataOut.ch9 = SWITCH2b_to_CRSF(packet->swB);
+            crsf.PackedRCdataOut.ch10 = SWITCH2b_to_CRSF(packet->swC);
+            crsf.PackedRCdataOut.ch11 = SWITCH2b_to_CRSF(packet->swD);
+        } else {
+            crsf.PackedRCdataOut.ch6 = packet->chA >> 1;
+            crsf.PackedRCdataOut.ch7 = packet->chB >> 1;
+
+            crsf.PackedRCdataOut.ch12 = SWITCH2b_to_CRSF(packet->swA);
+            crsf.PackedRCdataOut.ch13 = SWITCH2b_to_CRSF(packet->swB);
+            crsf.PackedRCdataOut.ch14 = SWITCH2b_to_CRSF(packet->swC);
+            crsf.PackedRCdataOut.ch15 = SWITCH2b_to_CRSF(packet->swD);            
+        }
+
+        // uint16_t ch0In = packet->ch0;
+        // uint16_t ch0Out = crsf.PackedRCdataOut.ch0;
+        // printf("c0 in %u out %u\n", ch0In, ch0Out);
+
 
         #ifdef CRSF_TX_PIN
-        crsf.sendRCFrameToFC();
+        // We can use the same age based condition to gate sending data to the FC
+        if (primaryChannelIsOld)
+        {
+            // crsf.sendHiResRCFrameToFC();
+            crsf.sendRCFrameToFC();
+        }
         #endif
 
         // check for packet rate change
@@ -1231,7 +1314,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
         if (deltaNonce > 1) // single step slips seem to happen at rate change (why?) but fix themselves. XXX figure out what's going on
         {
             #ifndef DEBUG_SUPPRESS
-            // printf("nonce slip: current %u, expected %u\n", currentNonce, expectedNonce);
+            printf("nonce slip: current %u, expected %u\n", currentNonce, expectedNonce);
             #endif
 
             // std::cout << "slip correction disabled\n";
@@ -1472,9 +1555,9 @@ bool ICACHE_RAM_ATTR sendTelemetryResponse()
 
     telemP->crc = 0;
     telemP->packetType = TLM_PACKET;
-    telemP->rssi915 = -crsf.LinkStatistics.rssi0;
+    telemP->rssi915 = LPF_UplinkRSSI0.SmoothDataINT;
     telemP->lq915 = lqRadio1.getLQ();
-    telemP->rssi2G4 = -crsf.LinkStatistics.rssi1;
+    telemP->rssi2G4 = LPF_UplinkRSSI1.SmoothDataINT;
     telemP->lq2G4 = lqRadio2.getLQ();
 
     uint16_t crc = ota_crc.calc(radio1->TXdataBuffer, OTA_PACKET_LENGTH_TELEM);
@@ -1740,6 +1823,23 @@ static void handleEvents915()
                 lqTelem.add();
             }
 
+
+            crsf.LinkStatistics.uplink_RSSI_1 = (uint8_t)telemData.rssi915;
+            crsf.LinkStatistics.uplink_RSSI_2 = (uint8_t)telemData.rssi2G4;
+            // crsf.LinkStatistics.uplink_SNR = Radio.RXdataBuffer[4];
+            crsf.LinkStatistics.uplink_Link_quality = telemData.lq2G4;
+
+            // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
+            crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;
+            crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
+            //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
+            crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
+            crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
+
+            // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
+
+            crsf.sendLinkStatisticsToTX();
+
             // need to clear irqs, next transmit will be started from tock
             radio1->ClearIrqStatus(SX1262_IRQ_RX_DONE);
 
@@ -1812,6 +1912,7 @@ static void handleEvents915()
 
 }
 
+#if (TRANSMITTER == false)
 
 /** receive a packet from the 2G4 channel
  * Only expected to be used on the receiver since 2G4 is currently unidirectional
@@ -1872,6 +1973,7 @@ static void receive2G4()
     // tRcvLast = tRcv;
 }
 
+#endif
 
 /** Handle received packets
  * 
@@ -2003,9 +2105,12 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
 }
 
 
+#if (TRANSMITTER == false)
+
 /** Handle received packets on 2G4
  * 
  * This should be simpler than 915, it only needs to deal with RC data on the 4 primary channels
+ * and the arm flag
  * 
  */
 static void ICACHE_RAM_ATTR rx_task2G4(void* arg)
@@ -2027,6 +2132,8 @@ static void ICACHE_RAM_ATTR rx_task2G4(void* arg)
         }
     }
 }
+
+#endif // TRANSMITTER
 
 /** dio1 interrupt when packet is received or preamble detected
  */
@@ -2095,6 +2202,10 @@ void liveUpdateRFLinkRate(uint8_t index)
     expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(index);
     expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
 
+    #if (TRANSMITTER)
+    crsf.setSyncParams(ModParams->interval);
+    #endif
+
     rfModeDivisor2G4 = ModParams->interval / 1000;
 
     // Since we have a new divisor, we need to refresh the NonceRX
@@ -2146,6 +2257,10 @@ void SetRFLinkRate(uint8_t index)
 
     expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(index);
     expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
+
+    #if (TRANSMITTER)
+    crsf.setSyncParams(ModParams->interval);
+    #endif
 
 #ifdef USE_FLRC
     if (index == 0)
@@ -2583,7 +2698,7 @@ void ICACHE_RAM_ATTR tockTX915()
     HandleFHSS915();
 
     if (!isTelemetryFrame()) {
-        sendRCdataToRF915_DB();
+        sendRCdataToRF915DB();
     }
 }
 
@@ -2603,7 +2718,10 @@ void ICACHE_RAM_ATTR tockTX2G4()
     HandleFHSS2G4();
 
     #ifndef DISABLE_2G4
-    sendRCdataToRF2G4DB();
+    if (isRXconnected)
+    {
+        sendRCdataToRF2G4DB();
+    }
     #endif
 }
 
@@ -2619,8 +2737,6 @@ void ICACHE_RAM_ATTR tockTX2G4()
  */
 void ICACHE_RAM_ATTR tickTock()
 {
-    // std::cout << 'O';
-
     timerNonce++;
     // if (timerNonce == 0) std::cout << 'W';
 
@@ -2953,9 +3069,7 @@ void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue)
 
 extern "C"
 {
-
 extern char * wcWhere;
-
 
 void app_main()
 {
@@ -3025,8 +3139,8 @@ void app_main()
         setLedColour(LED_STATUS_INDEX, LED_BRIGHTNESS, 0, 0);
     }
 
-    radio1->SetOutputPower(-9);    // XXX figure out what to do for tx and rx powers
-    radio2->SetOutputPower(0);
+    radio1->SetOutputPower(TX_POWER_915);
+    radio2->SetOutputPower(TX_POWER_2G4);
 
     // radio1 settings are fixed, so we can do them once here
     radio1->Config(airRateConfig915.bw, airRateConfig915.sf, airRateConfig915.cr, GetInitialFreq915(), airRateConfig915.PreambleLen, false);
@@ -3040,9 +3154,14 @@ void app_main()
     rx2G4_evt_queue = xQueueCreate(10, sizeof(SpiTaskInfo));
     tx2_evt_queue = xQueueCreate(10, 0);
 
-    //start tasks
+    // NB Task needs renaming, it's used on both rx and tx and handles SPI commands as well as receiving packets
     xTaskCreate(rx_task915, "rx_task915", 2048, NULL, 16, NULL); // Task priority 1=min, max is ??? Default main task is pri 1
+
+    //start tasks
+    #if (TRANSMITTER == false)
     xTaskCreate(rx_task2G4, "rx_task2G4", 2048, NULL, 17, NULL);
+    #endif
+
 
     // xTaskCreate(tx_task, "tx_task", 2048, NULL,  5, NULL);
 
@@ -3090,8 +3209,9 @@ void app_main()
     } else {
         radio1->RXnb();
         radio2->RXnb();
-        crsf.Begin();
     }
+
+    crsf.Begin();
 
     delay(500);
 
@@ -3114,6 +3234,8 @@ void app_main()
         //delay(100);   // idle watchdog has to be disabled if we comment this out
 
         // taskYIELD(); // does this do anything useful? Need to check what the freertos idle task actually does
+
+        vTaskDelay(50/portTICK_PERIOD_MS);
 
         unsigned long now = millis();
         if (now - prevTime > 200) {
@@ -3190,6 +3312,11 @@ void app_main()
                 if (tockStartMs && ((now - tockStartMs) > 100))
                 {
                     printf("XXX tock hung at tock %s, telem %s, wc %s\n", tockWhere, telemWhere, wcWhere);
+                }
+
+                if (r1LastIRQms + 5000 < now)
+                {
+                    std::cout << "R1 missing\n";
                 }
 
                 printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u ", 

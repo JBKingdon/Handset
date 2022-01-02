@@ -11,9 +11,6 @@
 #error "Can't use hires data in compatibility mode (yet)"
 #endif
 
-#ifdef ESPC3
-#define ICACHE_RAM_ATTR IRAM_ATTR
-#endif
 
 void ICACHE_RAM_ATTR TXnbISR();
 

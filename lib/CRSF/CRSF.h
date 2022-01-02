@@ -1,6 +1,7 @@
 #pragma once
 
 #define CRSF_RX_MODULE
+// #define CRSF_TX_MODULE
 
 #define CRSF_PORT_NUM 1
 
@@ -43,7 +44,7 @@ private:
 
     static volatile bool CRSFframeActive;  //since we get a copy of the serial data use this flag to know when to ignore it
 
-#if CRSF_TX_MODULE
+    #if defined(CRSF_TX_MODULE)
     /// OpenTX mixer sync ///
     static volatile uint32_t OpenTXsyncLastSent;
     static uint32_t RequestedRCpacketInterval;
@@ -51,9 +52,9 @@ private:
     static volatile int32_t OpenTXsyncOffset;
     static uint32_t OpenTXsyncOffsetSafeMargin;
     static uint8_t CRSFoutBuffer[CRSF_MAX_PACKET_LEN];
-#ifdef FEATURE_OPENTX_SYNC_AUTOTUNE
+    #ifdef FEATURE_OPENTX_SYNC_AUTOTUNE
     static uint32_t SyncWaitPeriodCounter;
-#endif
+    #endif
 
     /// UART Handling ///
     static uint32_t GoodPktsCount;
@@ -61,19 +62,19 @@ private:
     static uint32_t UARTwdtLastChecked;
     static uint32_t UARTcurrentBaud;
     static bool CRSFstate;
-    static uint8_t MspData[ELRS_MSP_BUFFER];
+    // static uint8_t MspData[ELRS_MSP_BUFFER];
     static uint8_t MspDataLength;
-#ifdef PLATFORM_ESP32
+    #if defined(PLATFORM_ESP32) || defined(ESPC3)
     static void ESP32uartTask(void *pvParameters);
     static void ESP32syncPacketTask(void *pvParameters);
-#endif
+    #endif
 
     static void duplex_set_RX();
     static void duplex_set_TX();
     static bool ProcessPacket();
     static void handleUARTout();
     static bool UARTwdt();
-#endif
+    #endif // CRSF_TX_MODULE
 
     static void flush_port_input(void);
 
@@ -110,14 +111,14 @@ public:
 
     /////Variables/////
 
-    #ifdef USE_ELRS_CRSF_EXTENSIONS
-    static volatile crsf_elrs_channels_s PackedRCdataOut;
-    static volatile crsf_elrs_channels_hiRes_s PackedHiResRCdataOut;
-    static volatile elrsPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
-    #else
+    // #ifdef USE_ELRS_CRSF_EXTENSIONS
+    static volatile crsf_elrs_channels_s elrsPackedRCdataOut;
+    static volatile crsf_elrs_channels_hiRes_s elrsPackedHiResRCdataOut;
+    static volatile elrsPayloadLinkstatistics_s elrsLinkStatistics; // Link Statisitics Stored as Struct
+    // #else
     static volatile crsfPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
     static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
-    #endif
+    // #endif
 
     
     static volatile crsf_sensor_battery_s TLMbattSensor;
@@ -132,9 +133,14 @@ public:
     static void End(); //stop timers etc
 
     void ICACHE_RAM_ATTR sendRCFrameToFC();
+
+    #if defined(USE_HIRES_DATA) || defined(USE_DB_PACKETS)
+    void ICACHE_RAM_ATTR sendHiResRCFrameToFC();
+    #endif
+
     // void ICACHE_RAM_ATTR sendMSPFrameToFC(uint8_t* data);
     void sendLinkStatisticsToFC();
-    void ICACHE_RAM_ATTR sendLinkStatisticsToTX();
+    static void ICACHE_RAM_ATTR sendLinkStatisticsToTX();
     void ICACHE_RAM_ATTR sendTelemetryToTX(uint8_t *data);
 
     // void sendLUAresponse(uint8_t val[], uint8_t len);
@@ -145,10 +151,12 @@ public:
     void ICACHE_RAM_ATTR setSentSwitch(uint8_t index, uint8_t value);
 
 ///// Variables for OpenTX Syncing //////////////////////////
-    // #define OpenTXsyncPacketInterval 200 // in ms
-    // static void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
-    // static void ICACHE_RAM_ATTR JustSentRFpacket();
-    // static void ICACHE_RAM_ATTR sendSyncPacketToTX();
+    #define OpenTXsyncPacketInterval 200 // in ms
+    static void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
+    // void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
+
+    static void ICACHE_RAM_ATTR JustSentRFpacket();
+    static void ICACHE_RAM_ATTR sendSyncPacketToTX();
 
     /////////////////////////////////////////////////////////////
 
@@ -160,11 +168,11 @@ public:
 
     static void handleUARTin();
     bool RXhandleUARTout();
-#if CRSF_TX_MODULE
+#if defined(CRSF_TX_MODULE)
     static uint8_t* GetMspMessage();
     static void UnlockMspMessage();
     static void AddMspMessage(const uint8_t length, volatile uint8_t* data);
-    static void AddMspMessage(mspPacket_t* packet);
+    // static void AddMspMessage(mspPacket_t* packet);
     static void ResetMspQueue();
 #endif
 };

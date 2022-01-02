@@ -52,12 +52,13 @@ typedef struct DB915Packet_s {
     unsigned int swA : 2;
     unsigned int swB : 2;
     unsigned int swC : 2;
-    unsigned int swD : 2;        // 8 bits
+    unsigned int swD : 2;
+                                // 8 bits
 
     unsigned int txPower : 8;    // 8 bits
 
-    unsigned int rateIndex : 2;
-    unsigned int armed : 1;      // 3 bits
+    unsigned int rateIndex : 2; // 2 bits
+    unsigned int armed : 1;     // 1 bit
 
 } PACKED DB915Packet_t;          // total 15 bytes
 
@@ -68,7 +69,7 @@ typedef struct DB915Telem_s {
     unsigned int lq915 : 8;
 
     int rssi2G4 : 8;
-    unsigned int lq2G4 : 8;     // 32 bits
+    unsigned int lq2G4 : 8;     // 8 bits
 
     uint8_t serialData[8];
 
@@ -76,7 +77,7 @@ typedef struct DB915Telem_s {
 
     unsigned int packetType : 2;
 
-} PACKED DB915Telem_t;  // total 7 bytes
+} PACKED DB915Telem_t;  // total 15 bytes
 
 typedef struct DB2G4Packet_s {
     unsigned int ch0 : 12;
@@ -84,9 +85,9 @@ typedef struct DB2G4Packet_s {
     unsigned int ch2 : 12;
     unsigned int ch3 : 12;
     unsigned int armed : 1;
-    unsigned int crc : 14;       // total 8 bytes
+    unsigned int crc : 14;
 
-} PACKED DB2G4Packet_t;
+} PACKED DB2G4Packet_t;       // total 8 bytes
 
 // expresslrs packet header types
 // 00 -> standard 4 channel data packet

@@ -32,11 +32,12 @@
 #define CRSF_RX_BAUDRATE 400000
 #else
 
-#ifdef USE_ELRS_CRSF_EXTENSIONS
-#define CRSF_RX_BAUDRATE 691200
-#else
-#define CRSF_RX_BAUDRATE 420000
-#endif
+// #ifdef USE_ELRS_CRSF_EXTENSIONS
+// #define CRSF_RX_BAUDRATE 691200
+#define CRSF_RX_BAUDRATE 921600
+// #else
+// #define CRSF_RX_BAUDRATE 420000
+// #endif
 
 #endif
 
@@ -54,9 +55,10 @@
 
 #define CRSF_SYNC_BYTE 0xC8
 
+#define RCHiResframeLength 7        // length of the RC HiRes data frame. 4 x 12 bit analog + 4 x 2bit switches
+
 #ifdef USE_ELRS_CRSF_EXTENSIONS
 #define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
-#define RCHiResframeLength 7        // length of the RC HiRes data frame. 4 x 12 bit analog + 4 x 2bit switches
 #define LinkStatisticsFrameLength 5
 #else
 #define RCframeLength 22             // length of the RC data packed bytes frame. 16 channels in 11 bits each.

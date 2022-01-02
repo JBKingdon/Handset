@@ -10,6 +10,13 @@
 // #define PCB_V1_0
 // #define RX_C3
 
+#ifdef ESPC3
+#define ICACHE_RAM_ATTR IRAM_ATTR
+#endif
+
+// For crsf tx module to openTX handset
+#define UART_INVERTED
+
 // XXX where's the best place for these?
 
 #define DUAL_BAND_BREADBOARD
@@ -306,9 +313,10 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
-#define DEBUG_PIN     GPIO_NUM_9
+// #define DEBUG_PIN     GPIO_NUM_9
 // #define LED2812_PIN   GPIO_NUM_9
 // #define CRSF_TX_PIN   GPIO_NUM_21
+#define CRSF_TX_PIN   GPIO_NUM_9
 
 #define LED_STATUS_INDEX 0
 // #define LED_RADIO1_INDEX 1
