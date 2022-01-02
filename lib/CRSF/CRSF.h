@@ -1,7 +1,9 @@
 #pragma once
 
-#define CRSF_RX_MODULE
-// #define CRSF_TX_MODULE
+// #define CRSF_RX_MODULE
+#define CRSF_TX_MODULE
+
+#define FEATURE_OPENTX_SYNC_AUTOTUNE
 
 #define CRSF_PORT_NUM 1
 

@@ -8,8 +8,8 @@
  *   Figure out why the radios stop talking
  */
 
-// #define TRANSMITTER true
-#define TRANSMITTER false
+#define TRANSMITTER true
+// #define TRANSMITTER false
 
 #define INITIAL_LINK_RATE_INDEX 1
 
@@ -838,6 +838,9 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4()
 void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 {
     DB2G4Packet_t * packet = (DB2G4Packet_t *) radio2->TXdataBuffer;
+
+    crsf.JustSentRFpacket(); // for external module sync
+
 
     packet->ch0 = crsf.ChannelDataIn[0] << 1; // otx is 11 bit, main channels are 12 bit
     packet->ch1 = crsf.ChannelDataIn[1] << 1;

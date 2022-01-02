@@ -5,6 +5,7 @@
 #include <string.h>
 #include <iostream>
 #include "FIFO.h"
+#include "../../src/LowPassFilter.h"
 
 #include "../../src/utils.h"
 
@@ -84,6 +85,8 @@ uint32_t CRSF::RequestedRCpacketInterval = 5000; // default to 200hz as per 'nor
 volatile uint32_t CRSF::RCdataLastRecv = 0;
 volatile int32_t CRSF::OpenTXsyncOffset = 0;
 
+static uint8_t baudrateIndex = 1;
+
 #define MAX_BYTES_SENT_IN_UART_OUT 32
 uint8_t CRSF::CRSFoutBuffer[CRSF_MAX_PACKET_LEN] = {0};
 
@@ -128,7 +131,7 @@ void CRSF::Begin()
     uart_config.source_clk = UART_SCLK_APB;
 
     #ifdef CRSF_TX_MODULE
-    uart_config.baud_rate = CRSF_OPENTX_FAST_BAUDRATE;
+    uart_config.baud_rate = OPENTX_BAUDS[baudrateIndex];
     #else
     uart_config.baud_rate = CRSF_RX_BAUDRATE;
     #endif
@@ -163,7 +166,7 @@ void CRSF::Begin()
     #endif // CRSF_TX_PIN
 
 #ifdef CRSF_TX_MODULE
-    UARTcurrentBaud = CRSF_OPENTX_FAST_BAUDRATE;
+    UARTcurrentBaud = OPENTX_BAUDS[baudrateIndex];
     UARTwdtLastChecked = millis() + UARTwdtInterval; // allows a delay before the first time the UARTwdt() function is called
 
 #if defined(PLATFORM_ESP32) || defined(ESPC3)
@@ -626,30 +629,30 @@ bool ICACHE_RAM_ATTR CRSF::ProcessPacket()
 //     }
 // }
 
+/**
+ * This is the main input routine for edgeTx -> module serial traffic
+ * 
+ * The current implementation isn't a great fit. We should probably rewrite this
+ * with HAL or LL and handle the FIFO interrupts ourselves.
+ * 
+ */
 void ICACHE_RAM_ATTR CRSF::handleUARTin()
 {
     volatile uint8_t *SerialInBuffer = CRSF::inBuffer.asUint8_t;
-
-    // std::cout << 'I';
 
     if (UARTwdt())
     {
         return;
     }
 
-    uint8_t inByte;
+    // uint8_t inByte;
+    char inChar;
     int nRead = 1;
 
     while (nRead > 0)
     {
-        nRead = uart_read_bytes(CRSF_PORT_NUM, &inByte, 1, 1);
-
+        nRead = uart_read_bytes(CRSF_PORT_NUM, &inChar, 1, 1);
         if (nRead != 1) break;
-
-        // char const inChar = CRSF::Port.read();
-        char const inChar = (char) inByte;
-
-        // printf("got %02X\n", inChar);
 
         if (CRSFframeActive == false)
         {
@@ -699,16 +702,12 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
             if (SerialInPacketPtr >= (SerialInPacketLen + 2)) // plus 2 because the packlen is referenced from the start of the 'type' flag, IE there are an extra 2 bytes.
             {
                 char CalculatedCRC = crsf_crc.calc((uint8_t *)SerialInBuffer + 2, SerialInPacketPtr - 3);
-                // printf("read %u\n", SerialInPacketPtr);
                 if (CalculatedCRC == inChar)
                 {
-                    // std::cout << 'I';
                     if (ProcessPacket())
                     {
-                        // esp_rom_delay_us(300);
-                        // std::cout << 'O';
                         handleUARTout();
-                    }
+                    }                        // esp_rom_delay_us(300);
                 }
                 else
                 {
@@ -722,7 +721,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
                 SerialInPacketLen = 0;
                 break; // exit the loop and give wdt a chance to run
             }
-        }
+        } // if (frame active or not)
     } // while (something was read from the uart)
 }
 
@@ -769,9 +768,6 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
             // Needs to be a blocking write - see Begin() for setup of port
             uart_write_bytes(CRSF_PORT_NUM, CRSFoutBuffer + sendingOffset, writeLength);
             uart_wait_tx_done(CRSF_PORT_NUM, 1);
-            // uart_flush(CRSF_PORT_NUM); // synonym for uart_flush_input, not likely to be what we want here
-
-            // std::cout << 'S';
 
             sendingOffset += writeLength;
             packageLength -= writeLength;
@@ -781,13 +777,12 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
                 sendingOffset = 0;
             }
 
-            // printf("write %u\n", writeLength);
-
         } // while (still data to send)
 
         duplex_set_RX();
 
         // make sure there is no garbage on the UART left over
+        // This seems dangerous, so far not much sign of downside of not having it
         // flush_port_input();
 
     } // if (something to send)
@@ -842,8 +837,7 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
 
 
 /**
- * What's this about then?
- * Ah, it's the thing that tries different baud rates and also prints packet stats
+ * Check packets received and cycle baud rate if necessary
  */
 bool CRSF::UARTwdt()
 {
@@ -868,8 +862,11 @@ bool CRSF::UARTwdt()
                 CRSFstate = false;
             }
 
-            uint32_t UARTrequestedBaud = (UARTcurrentBaud == CRSF_OPENTX_FAST_BAUDRATE) ?
-                CRSF_OPENTX_SLOW_BAUDRATE : CRSF_OPENTX_FAST_BAUDRATE;
+            // uint32_t UARTrequestedBaud = (UARTcurrentBaud == CRSF_OPENTX_FAST_BAUDRATE) ?
+            //     CRSF_OPENTX_SLOW_BAUDRATE : CRSF_OPENTX_FAST_BAUDRATE;
+
+            baudrateIndex = (baudrateIndex+1) % OPENTX_N_BAUDS;
+            uint32_t UARTrequestedBaud = OPENTX_BAUDS[baudrateIndex];
 
             std::cout << "UART WDT: Switch to: ";
             std::cout << UARTrequestedBaud;

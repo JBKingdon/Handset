@@ -41,8 +41,19 @@
 
 #endif
 
-#define CRSF_OPENTX_FAST_BAUDRATE 400000
-#define CRSF_OPENTX_SLOW_BAUDRATE 115200 // Used for QX7 not supporting 400kbps
+// #define CRSF_OPENTX_FAST_BAUDRATE 400000
+// #define CRSF_OPENTX_SLOW_BAUDRATE 115200 // Used for QX7 not supporting 400kbps
+
+const uint32_t OPENTX_BAUDS[] = {
+    115200,
+    400000,
+    921600,
+    1870000,
+    3750000,
+    5250000
+};
+
+#define OPENTX_N_BAUDS 6;
 
 #define CRSF_NUM_CHANNELS 16
 #define CRSF_CHANNEL_VALUE_MIN  172
