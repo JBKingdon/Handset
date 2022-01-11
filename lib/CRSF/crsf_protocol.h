@@ -19,7 +19,6 @@
 #error "Invalid configuration!"
 #endif
 
-
 #define PACKED __attribute__((packed))
 
 #ifndef ICACHE_RAM_ATTR
@@ -41,9 +40,7 @@
 
 #endif
 
-// #define CRSF_OPENTX_FAST_BAUDRATE 400000
-// #define CRSF_OPENTX_SLOW_BAUDRATE 115200 // Used for QX7 not supporting 400kbps
-
+// extended baud rates for EdgeTx
 const uint32_t OPENTX_BAUDS[] = {
     115200,
     400000,
@@ -66,7 +63,8 @@ const uint32_t OPENTX_BAUDS[] = {
 
 #define CRSF_SYNC_BYTE 0xC8
 
-#define RCHiResframeLength 7        // length of the RC HiRes data frame. 4 x 12 bit analog + 4 x 2bit switches
+#define ELRS_RCHiResframeLength 7        // length of the RC HiRes data frame
+#define ELRS_RCDBframeLength 14          // length of the RC Dual Band data frame
 
 #ifdef USE_ELRS_CRSF_EXTENSIONS
 #define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
@@ -142,9 +140,12 @@ typedef enum
     CRSF_FRAMETYPE_RADIO_ID = 0x3A,
     CRSF_FRAMETYPE_RC_CHANNELS_PACKED = 0x16,
 
-    CRSF_FRAMETYPE_LINK_STATISTICS_ELRS = 0x15,
-    CRSF_FRAMETYPE_RC_ELRS         = 0x17,
-    CRSF_FRAMETYPE_RC_ELRS_HIRES   = 0x18,
+    CRSF_FRAMETYPE_ELRS_LINKSTATS    = 0x15,
+                                    // 0x16 used
+    CRSF_FRAMETYPE_ELRS_RC           = 0x17,
+    CRSF_FRAMETYPE_ELRS_RC_HIRES     = 0x18,
+    CRSF_FRAMETYPE_ELRS_RC_DB        = 0x19,
+    CRSF_FRAMETYPE_ELRS_LINKSTATS_DB = 0x1A,
 
     CRSF_FRAMETYPE_ATTITUDE = 0x1E,
     CRSF_FRAMETYPE_FLIGHT_MODE = 0x21,
@@ -290,6 +291,29 @@ typedef struct crsf_elrs_channels_hiRes_s {
     unsigned int aux4 : 2;
 } PACKED crsf_elrs_channels_hiRes_t;
 
+// packet for initial dual band format data
+// 8 x 12 bit channels
+// 8 x  2 bit switches
+typedef struct crsf_elrs_channels_DB_s {
+    // 112 bits of data (12 bits per channel * 8 channels + 2 bits per switch * 8 switches) = 14 bytes.
+    unsigned int chan0  : 12;
+    unsigned int chan1  : 12;
+    unsigned int chan2  : 12;
+    unsigned int chan3  : 12;
+    unsigned int chan4  : 12;
+    unsigned int chan5  : 12;
+    unsigned int chan6  : 12;
+    unsigned int chan7  : 12;    
+    unsigned int chan8  : 2;
+    unsigned int chan9  : 2;
+    unsigned int chan10 : 2;
+    unsigned int chan11 : 2;
+    unsigned int chan12 : 2;
+    unsigned int chan13 : 2;
+    unsigned int chan14 : 2;
+    unsigned int chan15 : 2;
+} PACKED crsf_elrs_channels_DB_t;
+
 
 
 /**
@@ -371,6 +395,18 @@ typedef struct elrsPayloadLinkstatistics_s
     uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
     int8_t txPower;     // power in dBm
 } elrsLinkStatistics_t;
+
+// expanded linkstats for dual band receivers
+#define ELRS_LINKSTATS_DB_FRAMELENGTH 6
+typedef struct elrsPayloadLinkstatistics_DB_s
+{
+    uint8_t rssi0, rssi1;
+    uint8_t lq0, lq1;   // range 0-99
+    // int8_t  snr;
+    uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
+    int8_t txPower;     // power in dBm
+} elrsLinkStatistics_DB_t;
+
 
 
 // typedef struct crsfOpenTXsyncFrame_s

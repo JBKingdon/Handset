@@ -1,7 +1,7 @@
 #pragma once
 
-// #define CRSF_RX_MODULE
-#define CRSF_TX_MODULE
+#define CRSF_RX_MODULE
+// #define CRSF_TX_MODULE
 
 #define FEATURE_OPENTX_SYNC_AUTOTUNE
 
@@ -116,10 +116,13 @@ public:
     // #ifdef USE_ELRS_CRSF_EXTENSIONS
     static volatile crsf_elrs_channels_s elrsPackedRCdataOut;
     static volatile crsf_elrs_channels_hiRes_s elrsPackedHiResRCdataOut;
-    static volatile elrsPayloadLinkstatistics_s elrsLinkStatistics; // Link Statisitics Stored as Struct
+    static volatile crsf_elrs_channels_DB_t elrsPackedDBDataOut;
+    static volatile elrsPayloadLinkstatistics_s elrsLinkStatistics; // Link statisitics stored as struct
+    static volatile elrsLinkStatistics_DB_t elrsLinkStatsDB;        // extended version for dual band
+
     // #else
-    static volatile crsfPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
-    static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
+    static volatile crsfPayloadLinkstatistics_s LinkStatistics;     // Link Statisitics stored as Struct
+    static volatile crsf_channels_s PackedRCdataOut;                // RC data in packed format for output.
     // #endif
 
     
@@ -136,12 +139,16 @@ public:
 
     void ICACHE_RAM_ATTR sendRCFrameToFC();
 
-    #if defined(USE_HIRES_DATA) || defined(USE_DB_PACKETS)
+    #if defined(USE_HIRES_DATA)
     void ICACHE_RAM_ATTR sendHiResRCFrameToFC();
+    #elif defined(USE_DB_PACKETS)
+    void ICACHE_RAM_ATTR sendDBRCFrameToFC();
     #endif
 
     // void ICACHE_RAM_ATTR sendMSPFrameToFC(uint8_t* data);
     void sendLinkStatisticsToFC();
+    void sendLinkStatsDBtoFC();
+
     static void ICACHE_RAM_ATTR sendLinkStatisticsToTX();
     void ICACHE_RAM_ATTR sendTelemetryToTX(uint8_t *data);
 

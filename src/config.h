@@ -318,6 +318,8 @@
 // #define CRSF_TX_PIN   GPIO_NUM_21
 #define CRSF_TX_PIN   GPIO_NUM_9
 
+// #define LATENCY_INPUT_PIN GPIO_NUM_9
+
 #define LED_STATUS_INDEX 0
 // #define LED_RADIO1_INDEX 1
 // #define LED_RADIO2_INDEX 2

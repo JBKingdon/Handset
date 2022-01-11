@@ -72,6 +72,9 @@ volatile uint8_t CRSF::ParameterUpdateData[2] = {0};
 volatile crsf_elrs_channels_s CRSF::elrsPackedRCdataOut;
 volatile crsf_elrs_channels_hiRes_s CRSF::elrsPackedHiResRCdataOut;
 volatile elrsPayloadLinkstatistics_s CRSF::elrsLinkStatistics;
+volatile elrsLinkStatistics_DB_t CRSF::elrsLinkStatsDB;
+volatile crsf_elrs_channels_DB_t CRSF::elrsPackedDBDataOut;
+
 // #else
 volatile crsf_channels_s CRSF::PackedRCdataOut;
 volatile crsfPayloadLinkstatistics_s CRSF::LinkStatistics;
@@ -791,7 +794,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
 {
-    #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_TX_PIN)
     ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_TX_PIN, GPIO_MODE_INPUT));
     // gpio_matrix_in((gpio_num_t)CRSF_TX_PIN, U1RXD_IN_IDX, true);
 
@@ -809,12 +812,12 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
 
     digitalWrite(GPIO_PIN_BUFFER_OE, LOW ^ GPIO_PIN_BUFFER_OE_INVERTED);
 
-    #endif
+    #endif // esp32 or espc3
 }
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
 {
-    #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    #if (defined(PLATFORM_ESP32) || defined(ESPC3))  && defined(CRSF_TX_PIN)
 
     gpio_matrix_in((gpio_num_t)-1, U1RXD_IN_IDX, false);
     ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_TX_PIN, GPIO_FLOATING));
@@ -998,6 +1001,27 @@ void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToFC()
     #endif
 }
 
+
+void ICACHE_RAM_ATTR CRSF::sendLinkStatsDBtoFC()
+{
+    uint8_t outBuffer[ELRS_LINKSTATS_DB_FRAMELENGTH + 4] = {0};
+
+    outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+    outBuffer[1] = ELRS_LINKSTATS_DB_FRAMELENGTH + 2;
+    outBuffer[2] = CRSF_FRAMETYPE_ELRS_LINKSTATS_DB;
+
+    memcpy(outBuffer + 3, (uint8_t *)&elrsLinkStatsDB, ELRS_LINKSTATS_DB_FRAMELENGTH);
+
+    uint8_t crc = crsf_crc.calc(&outBuffer[2], ELRS_LINKSTATS_DB_FRAMELENGTH + 1);
+
+    outBuffer[ELRS_LINKSTATS_DB_FRAMELENGTH + 3] = crc;
+
+    #if !defined(DEBUG_CRSF_NO_OUTPUT) && defined(CRSF_TX_PIN)
+    uart_write_bytes(CRSF_PORT_NUM, outBuffer, ELRS_LINKSTATS_DB_FRAMELENGTH + 4);
+    #endif
+}
+
+
 /**
  * Send an original RCFrame to the FC using data in PackedRCdataOut
  */
@@ -1030,12 +1054,10 @@ void ICACHE_RAM_ATTR CRSF::sendRCFrameToFC()
 #endif
 }
 
-#if defined(USE_HIRES_DATA) || defined(USE_DB_PACKETS)
+#if defined(USE_HIRES_DATA)
 void ICACHE_RAM_ATTR CRSF::sendHiResRCFrameToFC()
 {
     uint8_t outBuffer[RCHiResframeLength + 4] = {0};
-
-    // std::cout << "S";
 
     outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
     outBuffer[1] = RCHiResframeLength + 2;
@@ -1049,6 +1071,25 @@ void ICACHE_RAM_ATTR CRSF::sendHiResRCFrameToFC()
 
     #ifndef DEBUG_CRSF_NO_OUTPUT
     uart_write_bytes(CRSF_PORT_NUM, outBuffer, RCHiResframeLength + 4);
+    #endif
+}
+#elif defined(USE_DB_PACKETS)
+void ICACHE_RAM_ATTR CRSF::sendDBRCFrameToFC()
+{
+    uint8_t outBuffer[ELRS_RCDBframeLength + 4] = {0};
+
+    outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+    outBuffer[1] = ELRS_RCDBframeLength + 2;
+    outBuffer[2] = CRSF_FRAMETYPE_ELRS_RC_DB;
+
+    memcpy(outBuffer + 3, (void *)&elrsPackedDBDataOut, ELRS_RCDBframeLength);
+
+    uint8_t crc = CalcCRC(&outBuffer[2], ELRS_RCDBframeLength + 1);
+
+    outBuffer[ELRS_RCDBframeLength + 3] = crc;
+
+    #ifndef DEBUG_CRSF_NO_OUTPUT
+    uart_write_bytes(CRSF_PORT_NUM, outBuffer, ELRS_RCDBframeLength + 4);
     #endif
 }
 #endif // use_hires_data or use_db_packets

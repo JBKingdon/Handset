@@ -72,6 +72,15 @@ typedef enum
     // RATE_ENUM_MAX = 8
     RATE_LAST = RATE_4HZ
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
+#elif defined(USE_DB_PACKETS)
+typedef enum
+{
+    RATE_1KHZ  = 0,
+    RATE_500HZ = 1,
+    RATE_250HZ = 2,
+    RATE_125HZ = 3,
+    RATE_LAST = RATE_125HZ
+} expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 #else
 typedef enum
 {

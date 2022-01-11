@@ -8,13 +8,15 @@
  *   Figure out why the radios stop talking
  */
 
-#define TRANSMITTER true
-// #define TRANSMITTER false
+// #define TRANSMITTER true
+#define TRANSMITTER false
 
-#define INITIAL_LINK_RATE_INDEX 1
+#define INITIAL_LINK_RATE_INDEX 0
 
-#define TX_POWER_915 (-9)
-#define TX_POWER_2G4 (-10)
+// #define TX_POWER_915 (-9)
+#define TX_POWER_915 (-6)
+// #define TX_POWER_2G4 (-10)
+#define TX_POWER_2G4 (0)
 
 // recompile both rx & tx when changing this:
 // XXX doesn't work, needs updating after change to conventional telemetry
@@ -329,6 +331,16 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
 
     // crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
     crsf.LinkStatistics.rf_Mode = RATE_MAX;
+
+    #elif defined(USE_DB_PACKETS)
+
+    // BetaFlight/iNav expect positive values for -dBm (e.g. -80dBm -> sent as 80)
+    crsf.elrsLinkStatsDB.rssi0 = -rssiDBM0;
+    crsf.elrsLinkStatsDB.rssi1 = -rssiDBM1;
+    crsf.elrsLinkStatsDB.lq0 = lqRadio1.getLQ();
+    crsf.elrsLinkStatsDB.lq1 = lqRadio2.getLQ();
+    crsf.elrsLinkStatsDB.rf_Mode = (uint8_t)RATE_LAST - (uint8_t)ExpressLRS_currAirRate_Modparams->enum_rate;
+    // crsf.elrsLinkStatsDB.txPower = 
 
     #else // standard crsf link stats packet
 
@@ -844,7 +856,14 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 
     packet->ch0 = crsf.ChannelDataIn[0] << 1; // otx is 11 bit, main channels are 12 bit
     packet->ch1 = crsf.ChannelDataIn[1] << 1;
+
+    #ifdef LATENCY_INPUT_PIN
+    int latPin = gpio_get_level(LATENCY_INPUT_PIN);
+    packet->ch2 = 3000 * latPin;
+    #else
     packet->ch2 = crsf.ChannelDataIn[2] << 1;
+    #endif // LATENCY_INPUT_PIN
+
     packet->ch3 = crsf.ChannelDataIn[3] << 1;
 
     packet->armed = crsf.ChannelDataIn[8] > 1024;
@@ -1158,10 +1177,16 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     // crsf.elrsPackedHiResRCdataOut.chan3 = packet->ch3;
 
     // 12 bits in, 11 bits out
-    crsf.PackedRCdataOut.ch0 = packet->ch0 >> 1;
-    crsf.PackedRCdataOut.ch1 = packet->ch1 >> 1;
-    crsf.PackedRCdataOut.ch2 = packet->ch2 >> 1;
-    crsf.PackedRCdataOut.ch3 = packet->ch3 >> 1;
+    // crsf.PackedRCdataOut.ch0 = packet->ch0 >> 1;
+    // crsf.PackedRCdataOut.ch1 = packet->ch1 >> 1;
+    // crsf.PackedRCdataOut.ch2 = packet->ch2 >> 1;
+    // crsf.PackedRCdataOut.ch3 = packet->ch3 >> 1;
+
+    // 12 in, 12 out
+    crsf.elrsPackedDBDataOut.chan0 = packet->ch0;
+    crsf.elrsPackedDBDataOut.chan1 = packet->ch1;
+    crsf.elrsPackedDBDataOut.chan2 = packet->ch2;
+    crsf.elrsPackedDBDataOut.chan3 = packet->ch3;
 
 
     // XXX figure out the arm channel
@@ -1171,7 +1196,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     if (connectionState != disconnected)
     {
         #ifdef CRSF_TX_PIN
-        crsf.sendRCFrameToFC();
+        crsf.sendDBRCFrameToFC();
         #endif
     }
 
@@ -1227,8 +1252,11 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
 
         // If we are connected then store the RC command data and check for rate changes and nonce slips
 
+        #ifdef USE_DB_PACKETS
+        crsf.elrsLinkStatsDB.txPower = packet->txPower;
+        #else
         crsf.elrsLinkStatistics.txPower = packet->txPower;
-
+        #endif
         // need the timestamp of the last 2G4 packet
         uint32_t age2G4 = millis() - (last2G4DataMs - (ExpressLRS_currAirRate_RFperfParams->TOA/1000));
 
@@ -1247,6 +1275,19 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
 
             // crsf.PackedHiResRCdataOut.aux1 = packet->armed * 2;
 
+            #ifdef USE_DB_PACKETS
+
+            // 10 bit in, 12 bit out
+
+            crsf.elrsPackedDBDataOut.chan0 = packet->ch0 << 2;
+            crsf.elrsPackedDBDataOut.chan1 = packet->ch1 << 1;
+            crsf.elrsPackedDBDataOut.chan2 = packet->ch2 << 1;
+            crsf.elrsPackedDBDataOut.chan3 = packet->ch3 << 1;
+
+            // crsf.PackedRCdataOut.ch8 = packet->armed ? CRSF_CHANNEL_VALUE_2000 : CRSF_CHANNEL_VALUE_1000;
+
+            #else
+
             // 10 bit in, 11 bit out
 
             crsf.PackedRCdataOut.ch0 = packet->ch0 << 1;
@@ -1255,15 +1296,34 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
             crsf.PackedRCdataOut.ch3 = packet->ch3 << 1;
 
             // crsf.PackedRCdataOut.ch8 = packet->armed ? CRSF_CHANNEL_VALUE_2000 : CRSF_CHANNEL_VALUE_1000;
-        }
 
-        // XXX and unpack other channels
-        // crsf.PackedHiResRCdataOut.aux2 = packet->swB;
-        // crsf.PackedHiResRCdataOut.aux3 = packet->swC;
-        // crsf.PackedHiResRCdataOut.aux4 = packet->swD;
+            #endif // USE_DB_PACKETS
+        }
 
         bool firstGroup = (newTimerNonce >> 4) % 2;
 
+        #ifdef USE_DB_PACKETS
+        if (firstGroup)
+        {
+            // 12 bit in, 12 bit out
+            crsf.elrsPackedDBDataOut.chan4  = packet->chA;
+            crsf.elrsPackedDBDataOut.chan5  = packet->chB;
+
+            crsf.elrsPackedDBDataOut.chan8  = packet->swA;
+            crsf.elrsPackedDBDataOut.chan9  = packet->swB;
+            crsf.elrsPackedDBDataOut.chan10 = packet->swC;
+            crsf.elrsPackedDBDataOut.chan11 = packet->swD;
+        } else {
+            // 12 bit in, 12 bit out
+            crsf.elrsPackedDBDataOut.chan6 = packet->chA;
+            crsf.elrsPackedDBDataOut.chan7 = packet->chB;
+
+            crsf.elrsPackedDBDataOut.chan12 = packet->swA;
+            crsf.elrsPackedDBDataOut.chan13 = packet->swB;
+            crsf.elrsPackedDBDataOut.chan14 = packet->swC;
+            crsf.elrsPackedDBDataOut.chan15 = packet->swD;            
+        }
+        #else
         // 12 bit in, 11 bit out
         if (firstGroup)
         {
@@ -1283,18 +1343,15 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
             crsf.PackedRCdataOut.ch14 = SWITCH2b_to_CRSF(packet->swC);
             crsf.PackedRCdataOut.ch15 = SWITCH2b_to_CRSF(packet->swD);            
         }
-
-        // uint16_t ch0In = packet->ch0;
-        // uint16_t ch0Out = crsf.PackedRCdataOut.ch0;
-        // printf("c0 in %u out %u\n", ch0In, ch0Out);
-
+        #endif // USE_DB_PACKETS
 
         #ifdef CRSF_TX_PIN
         // We can use the same age based condition to gate sending data to the FC
         if (primaryChannelIsOld)
         {
             // crsf.sendHiResRCFrameToFC();
-            crsf.sendRCFrameToFC();
+            // crsf.sendRCFrameToFC();
+            crsf.sendDBRCFrameToFC();
         }
         #endif
 
@@ -1887,14 +1944,15 @@ static void handleEvents915()
 
             // XXX How are we going to make sure that sending linkstats is thread safe?
 
-            // static unsigned long SendLinkStatstoFCintervalLastSent = 0; // static for persistence between calls
-            // if (connectionState != disconnected && 
-            //     (alreadyTLMresp || ((millis() - SendLinkStatstoFCintervalLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL))
-            //    )
-            // {
-            //     crsf.sendLinkStatisticsToFC();
-            //     SendLinkStatstoFCintervalLastSent = millis();
-            // }
+            static unsigned long linkStatsLastSent = 0; // static for persistence between calls
+            if (connectionState != disconnected && 
+                ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)
+            )
+            {
+                // crsf.sendLinkStatisticsToFC();
+                crsf.sendLinkStatsDBtoFC();
+                linkStatsLastSent = millis();
+            }
 
             // check for variation in the intervals between sending packets
             // static unsigned long tRcvLast = 0;
@@ -1952,16 +2010,6 @@ static void receive2G4()
     HandleFHSS2G4();
     
     radio2->RXnb();  // includes clearing the irqs
-
-    // send link stats here so that it can never collide with the uart use in ProcessRFPacket.
-    static unsigned long SendLinkStatstoFCintervalLastSent = 0; // static for persistence between calls
-    if (connectionState != disconnected && 
-        ((millis() - SendLinkStatstoFCintervalLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)
-       )
-    {
-        crsf.sendLinkStatisticsToFC();
-        SendLinkStatstoFCintervalLastSent = millis();
-    }
 
 
     // check for variaton in the intervals between sending packets
@@ -2328,20 +2376,20 @@ void ICACHE_RAM_ATTR updatePhaseLock915()
         }
 
 
-        if (RXtimerState == tim_locked && lqRadio1.currentIsSet())
-        {
-            if (nonceRX915 % 8 == 0) //limit rate of freq offset adjustment slightly
-            {
-                if (Offset > 0)
-                {
-                    HwTimer::incFreqOffset();
-                }
-                else if (Offset < 0)
-                {
-                    HwTimer::decFreqOffset();
-                }
-            }
-        }
+        // if (RXtimerState == tim_locked && lqRadio1.currentIsSet())
+        // {
+        //     if (nonceRX915 % 8 == 0) //limit rate of freq offset adjustment slightly
+        //     {
+        //         if (Offset > 0)
+        //         {
+        //             HwTimer::incFreqOffset();
+        //         }
+        //         else if (Offset < 0)
+        //         {
+        //             HwTimer::decFreqOffset();
+        //         }
+        //     }
+        // }
 
         if (connectionState != connected)
         {
@@ -2423,17 +2471,17 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
         if (RXtimerState == tim_locked && (lqRadio2.currentIsSet()) && Offset < 100 && Offset > -100)
         {
             // loop frequency adjustment
-            if (nonceRX2G4 % 8 == 0) //limit rate of freq offset adjustment slightly
-            {
-                if (Offset2G4 > 0)
-                {
-                    HwTimer::incFreqOffset();
-                }
-                else if (Offset2G4 < 0)
-                {
-                    HwTimer::decFreqOffset();
-                }
-            }
+            // if (nonceRX2G4 % 8 == 0) //limit rate of freq offset adjustment slightly
+            // {
+            //     if (Offset2G4 > 0)
+            //     {
+            //         HwTimer::incFreqOffset();
+            //     }
+            //     else if (Offset2G4 < 0)
+            //     {
+            //         HwTimer::decFreqOffset();
+            //     }
+            // }
 
             // apply phase adjustment
             HwTimer::setPhaseShift(Offset2G4 >> 2);
@@ -3076,9 +3124,11 @@ extern char * wcWhere;
 
 void app_main()
 {
+    // uart_set_baudrate(UART_NUM_0, 115200);
+    // uart_set_baudrate(UART_NUM_0, 420000);
+    // uart_set_baudrate(UART_NUM_0, 460800);
     // uart_set_baudrate(UART_NUM_0, 921600);
     uart_set_baudrate(UART_NUM_0, 2000000);
-    // uart_set_baudrate(UART_NUM_0, 420000);
     std::cout << "ESP32-C3 FreeRTOS Dual Band RX\n";
 
     // The default uart setup doesn't enable input, so have to do it manually
@@ -3095,8 +3145,22 @@ void app_main()
 
     #endif // DEBUG_PIN
 
+    #ifdef LATENCY_INPUT_PIN
+
+    // set the pin as an input
+    gpio_reset_pin(LATENCY_INPUT_PIN);
+    gpio_set_direction(LATENCY_INPUT_PIN, GPIO_MODE_INPUT);
+
+    #endif // LATENCY_INPUT_PIN
+
     printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
     printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
+
+    // while (true) {
+    //     std::cout << "Hello\n";
+    //     delay(2000);
+    //     setupPWM(); // does nothing if pwm not being used
+    // }
 
 
     setupPWM(); // does nothing if pwm not being used
@@ -3214,7 +3278,9 @@ void app_main()
         radio2->RXnb();
     }
 
+    #if defined(CRSF_TX_PIN)
     crsf.Begin();
+    #endif
 
     delay(500);
 
