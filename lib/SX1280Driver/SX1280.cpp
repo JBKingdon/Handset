@@ -451,6 +451,7 @@ void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_Radio
      * If the Spreading Factor selected is SF5 or SF6, it is required to use WriteRegister( 0x925, 0x1E )
      • If the Spreading Factor is SF7 or SF-8 then the command WriteRegister( 0x925, 0x37 ) must be used
      • If the Spreading Factor is SF9, SF10, SF11 or SF12, then the command WriteRegister( 0x925, 0x32 ) must be used
+     * In all cases 0x1 must be written to the Frequency Error Compensation mode register 0x093C
     */
     switch (sf) {
         case SX1280_RadioLoRaSpreadingFactors_t::SX1280_LORA_SF5:
@@ -464,6 +465,8 @@ void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_Radio
         default:
             hal->WriteRegister(0x925, 0x32); // for SF9 and above
     }
+
+    hal->WriteRegister(0x93C, 1); // Freq error compensation mode
 
     setHighSensitivity();
 }
@@ -504,17 +507,24 @@ int32_t SX1280Driver::GetFrequencyError()
     uint8_t efeRaw[3] = {0}; //TODO make word alignmed
     uint32_t efe = 0;
     double efeHz = 0.0;
+    uint32_t a,b,c;
 
-    efeRaw[0] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
-    efeRaw[1] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
-    efeRaw[2] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
-    efe = (efeRaw[0] << 16) | (efeRaw[1] << 8) | efeRaw[2];
+    // TODO convert to multi-reg read
 
-    efe &= SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MASK;
+    // efeRaw[0] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
+    // efeRaw[1] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
+    // efeRaw[2] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
+    a = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
+    b = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
+    c = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
+    // efe = (efeRaw[0] << 16) | (efeRaw[1] << 8) | efeRaw[2];
 
-    printf("GetFrequencyError IMPL NEEDED\n");
+    // efe &= SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MASK;
 
-    //efeHz = 1.55 * (double)complement2(efe, 20) / (1600.0 / (double)GetLoRaBandwidth() * 1000.0); XXX wuuuuut?
+    // printf("GetFrequencyError IMPL NEEDED\n");
+    printf("GFE: %u %u %u\n", a, b, c);
+
+    //efeHz = 1.55 * (double)complement2(efe, 20) / (1600.0 / (double)GetLoRaBandwidth() * 1000.0);
     return efeHz;
 }
 
