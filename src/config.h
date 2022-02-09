@@ -14,13 +14,24 @@
 #define ICACHE_RAM_ATTR IRAM_ATTR
 #endif
 
+// #define IS_RECEIVER
+#define IS_TRANSMITTER
+
+#ifdef IS_TRANSMITTER
 // For crsf tx module to openTX handset
 #define UART_INVERTED
+#endif
 
 // XXX where's the best place for these?
 
-#define DUAL_BAND_BREADBOARD
+// #define DUAL_BAND_BREADBOARD
+
+// The first PCB: bare C3, modules for radios
+#define DUAL_BAND_PROTOTYPE
+
+// This was for dual sx1280 with a c3 module
 // #define C3_PCB_V0
+
 #define USE_SECOND_RADIO
 
 // Enable the new DB specific packet formats
@@ -67,6 +78,7 @@
 #endif
 
 
+// Not used by dual band
 // how many switches do we have?
 // hybrid 8 currently deals with up to 8 switches, but if we only have 4 fitted we can save some time by
 // setting the lower value here
@@ -234,6 +246,23 @@
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
 #define RADIO_TXEN      GPIO_NUM_19
 
+#elif defined(DUAL_BAND_PROTOTYPE)
+
+// common pins for spi
+
+#define RADIO_MOSI_PIN  GPIO_NUM_1
+#define RADIO_MISO_PIN  GPIO_NUM_0
+#define RADIO_SCK_PIN   GPIO_NUM_2
+
+// These are for the sx1262, the sx1280 pins are later under "USE_SECOND_RADIO"
+
+#define RADIO_RESET_PIN GPIO_NUM_12
+#define RADIO_NSS_PIN   GPIO_NUM_8
+#define RADIO_BUSY_PIN  GPIO_NUM_7
+#define RADIO_DIO1_PIN  GPIO_NUM_10
+// #define RADIO_DIO2_PIN  GPIO_NUM_19  XXX needs testing
+#define RADIO_TXEN      GPIO_NUM_13
+
 
 #else // these are for the dual 1280 breadboard prototype
 
@@ -274,6 +303,14 @@
 #define RADIO2_DIO2_PIN  GPIO_NUM_3
 #define RADIO2_RESET_PIN GPIO_NUM_4
 
+#elif defined(DUAL_BAND_PROTOTYPE)
+
+#define RADIO2_NSS_PIN   GPIO_NUM_6
+#define RADIO2_BUSY_PIN  GPIO_NUM_18
+#define RADIO2_DIO1_PIN  GPIO_NUM_5
+#define RADIO2_DIO2_PIN  GPIO_NUM_3
+#define RADIO2_RESET_PIN GPIO_NUM_4
+
 #else // for dual 1280 breadboard prototype
 
 // #define RADIO2_RESET_PIN GPIO_NUM_8
@@ -295,8 +332,8 @@
 #define PWM_CH4_PIN     GPIO_NUM_9  // problematical pin, used for strapping
 #define PWM_CH5_PIN     GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
 #define PWM_CH6_PIN     GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
-// #define PWM_CH5_PIN     -1 // GPIO_NUM_20 // overlaps with the debug/flash uart. Maybe use 1 (after txen is auto)
-// #define PWM_CH6_PIN     -1 // GPIO_NUM_21 // overlaps with the debug/flash uart. Maybe use 2 (after disabling dio2)
+// #define PWM_CH5_PIN     -1 //
+// #define PWM_CH6_PIN     -1 //
 
 #else // not using pwm
 
@@ -314,15 +351,50 @@
 #elif defined(DUAL_BAND_BREADBOARD)
 
 // #define DEBUG_PIN     GPIO_NUM_9
+
 // #define LED2812_PIN   GPIO_NUM_9
-// #define CRSF_TX_PIN   GPIO_NUM_21
-#define CRSF_TX_PIN   GPIO_NUM_9
+// #define LED_STATUS_INDEX 0
+// #define LED_RADIO1_INDEX 2
+// #define LED_RADIO2_INDEX 1
 
 // #define LATENCY_INPUT_PIN GPIO_NUM_9
 
+#ifdef IS_TRANSMITTER
+// For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
+#define CRSF_SPORT_PIN     GPIO_NUM_9
+// #define CRSF_SPORT_PIN     GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21
+#endif
+
+#ifdef IS_RECEIVER
+#define CRSF_TX_PIN   GPIO_NUM_21
+// #define CRSF_RX_PIN   GPIO_NUM_20
+#endif
+
+
+#elif defined(DUAL_BAND_PROTOTYPE)
+
+// #define DEBUG_PIN     GPIO_NUM_9
+#define LED2812_PIN   GPIO_NUM_9
+// #define LATENCY_INPUT_PIN GPIO_NUM_9
+
+#ifdef IS_TRANSMITTER
+// For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
+// #define CRSF_SPORT_PIN     GPIO_NUM_9
+#define CRSF_SPORT_PIN  GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21
+#endif
+
+#ifdef IS_RECEIVER
+
+#define CRSF_TX_PIN   GPIO_NUM_21
+// #define CRSF_RX_PIN   GPIO_NUM_20
+#endif
+
 #define LED_STATUS_INDEX 0
-// #define LED_RADIO1_INDEX 1
-// #define LED_RADIO2_INDEX 2
+#define LED_RADIO1_INDEX 2
+#define LED_RADIO2_INDEX 1
+
 
 #else
 

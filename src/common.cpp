@@ -8,7 +8,7 @@
 #include "SX1262Driver.h"
 extern SX1262Driver Radio;
 
-#ifdef DUAL_BAND_BREADBOARD
+#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 
 expresslrs_mod_settings_915_s airRateConfig915 = 
     // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
@@ -113,16 +113,20 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
 #else // not ELRS_OG_COMPATIBILITY
 
 #if defined(FULL_DIVERSITY_MODES) 
+//                                          bw,                 sf,                 cr,             PreambleLen
+lora_modem_settings_t loraModem_1khz  = { SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 12};
+lora_modem_settings_t loraModem_500hz = { SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 12};
+lora_modem_settings_t loraModem_250hz = { SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 12};
+lora_modem_settings_t loraModem_125hz = { SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 12};
 
 // NB Any changes to these modes will require recalibrating the PFD offsets!
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, ignored,    FHSShopInterval, PreambleLen
     //                                                                                                                        len  8        9
-    {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 1000,  TLM_RATIO_1_128,     4,          12}, //   675      714us
-    {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 2000,  TLM_RATIO_1_128,     4,          12}, //  1507     1586us, 79%
-    {2, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000,  TLM_RATIO_1_64,      4,          12}, //  3172     3330us, 
-    {3, RATE_125HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 8000,  TLM_RATIO_1_32,      4,          12}, //  5872     6187us
-
+    {0, RATE_1KHZ,  TLM_RATIO_1_128, 4, 1000, ModemType::LORA, loraModem_1khz},  //   675      714us
+    {1, RATE_500HZ, TLM_RATIO_1_128, 4, 2000, ModemType::LORA, loraModem_500hz}, //  1507     1586us, 79%
+    {2, RATE_250HZ, TLM_RATIO_1_64,  4, 4000, ModemType::LORA, loraModem_250hz}, //  3172     3330us, 
+    {3, RATE_125HZ, TLM_RATIO_1_32,  4, 8000, ModemType::LORA, loraModem_125hz}, //  5872     6187us
 };
 
 // TOA for 9 byte hires packets

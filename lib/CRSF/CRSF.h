@@ -1,13 +1,18 @@
 #pragma once
 
-#define CRSF_RX_MODULE
-// #define CRSF_TX_MODULE
-
 #define FEATURE_OPENTX_SYNC_AUTOTUNE
 
 #define CRSF_PORT_NUM 1
 
 #include "../../src/config.h"
+
+#ifdef IS_RECEIVER
+#define CRSF_RX_MODULE
+#endif
+#ifdef IS_TRANSMITTER
+#define CRSF_TX_MODULE
+#endif
+
 
 // #include "targets.h"
 #include "crsf_protocol.h"

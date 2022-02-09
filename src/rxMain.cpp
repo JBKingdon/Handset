@@ -7,16 +7,27 @@
  *      add code to try harder when the modem stops talking
  *   Figure out why the radios stop talking
  */
+#include "user_config.h"
+#include "config.h"
 
-// #define TRANSMITTER true
+#ifdef IS_TRANSMITTER
+#define TRANSMITTER true
+#else
 #define TRANSMITTER false
+#endif
 
-#define INITIAL_LINK_RATE_INDEX 0
+#define INITIAL_LINK_RATE_INDEX 2   // edgeTX only goes up to 500, so don't use 0
 
-// #define TX_POWER_915 (-9)
-#define TX_POWER_915 (-6)
+// sx1262 runs from -9 to +22
+#define TX_POWER_915 (-9)
+// #define TX_POWER_915 (-6)
+
+// Bare sx1280 from -18 to +13 
 // #define TX_POWER_2G4 (-10)
 #define TX_POWER_2G4 (0)
+
+// Which channel to use for arming, 0 through 15
+#define ARM_CHANNEL 8
 
 // recompile both rx & tx when changing this:
 // XXX doesn't work, needs updating after change to conventional telemetry
@@ -27,6 +38,11 @@
 
 // only need to recompile rx:
 // #define PFD_CALIBRATION
+
+// #define DEBUG_SUPPRESS
+// #define PRINT_RX_SCOREBOARD 1
+
+
 
 
 // Time in ms of no TLM response to consider that we have lost connection
@@ -47,9 +63,6 @@
 
 #include "freertos/queue.h"
 
-#include "user_config.h"
-#include "config.h"
-
 #include "common.h"
 #include "FHSS.h"
 #include "SX1262Driver.h"
@@ -64,9 +77,6 @@
 
 #include "driver/rmt.h"
 #include "led_strip.h"
-
-// #define DEBUG_SUPPRESS
-// #define PRINT_RX_SCOREBOARD 1
 
 #define LED_BRIGHTNESS 32
 
@@ -363,8 +373,12 @@ void TentativeConnection()
     connectionStatePrev = connectionState;
     connectionState = tentative;
     RXtimerState = tim_disconnected;
+
+    #ifndef DEBUG_SUPPRESS
     // printf("tentative conn\n");
     std::cout << "TC";
+    #endif
+
     FreqCorrection = 0;
     Offset = 0;
     prevOffset = 0;
@@ -521,7 +535,7 @@ void setRadioParams(uint8_t index, RadioSelection targetRadio)
             break;
         case RadioSelection::second:
             #ifdef USE_SECOND_RADIO
-            radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq2G4(), ModParams->PreambleLen, invertIQ);
+            radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, GetInitialFreq2G4(), ModParams->lora_settings.PreambleLen, invertIQ);
             #endif
             break;
         case RadioSelection::both:
@@ -596,13 +610,13 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     {
         std::cout << "915 OTA_LENGTH ERROR!\n";
         while (true) {};
-    }
+    };
     #endif
 
     DB915Packet_t * packet = (DB915Packet_t *)(radio1->TXdataBuffer);
 
     packet->nonce = timerNonce;
-    packet->armed = crsf.ChannelDataIn[8] > 1024;
+    packet->armed = crsf.ChannelDataIn[ARM_CHANNEL] > 1024;
     packet->txPower = 1;
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
@@ -611,12 +625,12 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     packet->ch2 = crsf.ChannelDataIn[2] >> 1;
     packet->ch3 = crsf.ChannelDataIn[3] >> 1;
 
-    bool firstGroup = (timerNonce >> 4) % 2;
+    // This will send the arm channel even though it's going to be ignored. Seems like a waste of bandwidth
 
-    // these will eventually be set with different channels depending on whether we're on odd or even (nonce / rfModeDivisor915)
+    bool firstGroup = (timerNonce >> 4) % 2; // alternate the two groups of channels
     if (firstGroup)
     {
-        packet->chA = crsf.ChannelDataIn[4] << 1;
+        packet->chA = crsf.ChannelDataIn[4] << 1;   // edgeTX only supplies 10 bit data for now, so need to scale it up
         packet->chB = crsf.ChannelDataIn[5] << 1;
         packet->swA = CRSF_to_N(crsf.ChannelDataIn[8],3);
         packet->swB = CRSF_to_N(crsf.ChannelDataIn[9],3);
@@ -713,7 +727,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915()
         //    if (syncPacketIndex == 0) syncPacketIndex = 1; // skip index 0 as it collides with telemetry
         // }
 
-        std::cout << "sync\n";
+        // std::cout << "sync\n";
     }
     else
     { // Send a normal RC packet
@@ -853,7 +867,6 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 
     crsf.JustSentRFpacket(); // for external module sync
 
-
     packet->ch0 = crsf.ChannelDataIn[0] << 1; // otx is 11 bit, main channels are 12 bit
     packet->ch1 = crsf.ChannelDataIn[1] << 1;
 
@@ -866,7 +879,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 
     packet->ch3 = crsf.ChannelDataIn[3] << 1;
 
-    packet->armed = crsf.ChannelDataIn[8] > 1024;
+    packet->armed = (crsf.ChannelDataIn[ARM_CHANNEL] > 1024);
 
     packet->crc = 0;
 
@@ -1163,24 +1176,12 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
     pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
 
-    lastValidPacket = millis(); // XXX add a specific 2G4 timestamp so that we can do data merging
+    lastValidPacket = millis();
     last2G4DataMs = lastValidPacket;
 
     DB2G4Packet_t * packet = (DB2G4Packet_t *)rxBuffer;
 
-    // XXX new packet format needed to carry 8 * 12bit + 8 * 2bit data to the FC
-
     // copy data into crsf storage (or find a better place to keep it
-    // crsf.elrsPackedHiResRCdataOut.chan0 = packet->ch0;
-    // crsf.elrsPackedHiResRCdataOut.chan1 = packet->ch1;
-    // crsf.elrsPackedHiResRCdataOut.chan2 = packet->ch2;
-    // crsf.elrsPackedHiResRCdataOut.chan3 = packet->ch3;
-
-    // 12 bits in, 11 bits out
-    // crsf.PackedRCdataOut.ch0 = packet->ch0 >> 1;
-    // crsf.PackedRCdataOut.ch1 = packet->ch1 >> 1;
-    // crsf.PackedRCdataOut.ch2 = packet->ch2 >> 1;
-    // crsf.PackedRCdataOut.ch3 = packet->ch3 >> 1;
 
     // 12 in, 12 out
     crsf.elrsPackedDBDataOut.chan0 = packet->ch0;
@@ -1190,7 +1191,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
 
 
     // XXX figure out the arm channel
-    // crsf.elrsPackedHiResRCdataOut.aux1 = packet->armed * 2;
+    crsf.elrsPackedHiResRCdataOut.aux1 = packet->armed * 2;
 
     // send to fc
     if (connectionState != disconnected)
@@ -1797,6 +1798,14 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
 
                     // std::cout << "T2";
                 }
+            } else if (irqs & SX1280_IRQ_PREAMBLE_DETECTED) {
+                // std::cout << "P";
+                taskInfo.id = SpiTaskID::ClearIRQs;
+                taskInfo.radioID = 2;
+                taskInfo.irqMask = SX1280_IRQ_PREAMBLE_DETECTED;
+                xQueueSend(rx_evt_queue, &taskInfo, 1000);
+
+                // radio2->GetFrequencyError();
 
             } else {
                 // somehow we get here repeatedly with irqs set to 0. Why?
@@ -1816,8 +1825,7 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
 /** Handle all the possible DIO interrupts for the 915 modem
  * 
  *  Will be called on both the transmitter and receiver.
- * 
- * The 915 channel uses a ping-pong command/telemetry exchange in each frame, so direction reverses on every *done interrupt
+ *
  */
 static void handleEvents915()
 {
@@ -1877,28 +1885,35 @@ static void handleEvents915()
                 memcpy(&telemData, (const void *)(radio1->RXdataBuffer), OTA_PACKET_LENGTH_TELEM);
                 lastTelemPacketTimeMs = millis();
                 if (!isRXconnected) {
+                    #ifndef DEBUG_SUPPRESS
                     std::cout << "link established\n";
+                    #endif
                     isRXconnected = true;
+
+                    #ifdef LED2812_PIN
+                    strip->set_pixel(strip, LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
+                    strip->set_pixel(strip, LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
+                    strip->refresh(strip, 10);
+                    #endif
                 }
                 lqTelem.add();
+
+                crsf.LinkStatistics.uplink_RSSI_1 = (uint8_t)telemData.rssi915;
+                crsf.LinkStatistics.uplink_RSSI_2 = (uint8_t)telemData.rssi2G4;
+                // crsf.LinkStatistics.uplink_SNR = Radio.RXdataBuffer[4];
+                crsf.LinkStatistics.uplink_Link_quality = telemData.lq2G4;
+
+                // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
+                crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;
+                crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
+                //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
+                crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
+                crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
+
+                // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
+
+                crsf.sendLinkStatisticsToTX();
             }
-
-
-            crsf.LinkStatistics.uplink_RSSI_1 = (uint8_t)telemData.rssi915;
-            crsf.LinkStatistics.uplink_RSSI_2 = (uint8_t)telemData.rssi2G4;
-            // crsf.LinkStatistics.uplink_SNR = Radio.RXdataBuffer[4];
-            crsf.LinkStatistics.uplink_Link_quality = telemData.lq2G4;
-
-            // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
-            crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;
-            crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
-            //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
-            crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
-            crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
-
-            // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
-
-            crsf.sendLinkStatisticsToTX();
 
             // need to clear irqs, next transmit will be started from tock
             radio1->ClearIrqStatus(SX1262_IRQ_RX_DONE);
@@ -1946,8 +1961,7 @@ static void handleEvents915()
 
             static unsigned long linkStatsLastSent = 0; // static for persistence between calls
             if (connectionState != disconnected && 
-                ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)
-            )
+                ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL) )
             {
                 // crsf.sendLinkStatisticsToFC();
                 crsf.sendLinkStatsDBtoFC();
@@ -1968,7 +1982,9 @@ static void handleEvents915()
         } // if (transmitter or receiver)
 
     } else {
+        #ifndef DEBUG_SUPPRESS
         printf("handleEvents915 irqS %u\n", irqS);
+        #endif
     }
 
 }
@@ -2278,7 +2294,7 @@ void liveUpdateRFLinkRate(uint8_t index)
     #endif
     {
         #ifdef USE_SECOND_RADIO
-        radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, freq, ModParams->PreambleLen, invertIQ);
+        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, freq, ModParams->lora_settings.PreambleLen, invertIQ);
         #endif
     }
 
@@ -2323,7 +2339,7 @@ void SetRFLinkRate(uint8_t index)
     {
         // radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
         #ifdef USE_SECOND_RADIO
-        radio2->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq2G4(), ModParams->PreambleLen, invertIQ);
+        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, GetInitialFreq2G4(), ModParams->lora_settings.PreambleLen, invertIQ);
         #endif
     }
 
@@ -2655,7 +2671,7 @@ void ICACHE_RAM_ATTR tockRX915()
     {
         radio1->RXnb(); // XXX convert to event messages
         radio1Timedout = false;
-        std::cout << "HM1";
+        // std::cout << "HM1";
         r1LastIRQms = now; // stop it spamming
     }
 
@@ -2902,7 +2918,9 @@ void gotConnection()
     RXtimerState = tim_tentative;
     GotConnectionMillis = millis();
 
+    #ifndef DEBUG_SUPPRESS
     printf("got conn\n");
+    #endif
 
     #ifdef LED_STATUS_INDEX
     setLedColour(LED_STATUS_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -3038,33 +3056,11 @@ void setupPWM()
     #endif // USE_PWM6
 }
 
-void initLeds()
+void ledRamp()
 {
-    #ifdef LED2812_PIN
-
-    // const uint32_t brightness = 64;
-
-    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(LED2812_PIN, RMT_CHANNEL_0);
-    // set counter clock to 40MHz
-    config.clk_div = 2;
-    config.tx_config.loop_count = 0;
-
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
-
-    // install ws2812 driver
-    const uint8_t N_LEDS = 3;
-    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(N_LEDS, (led_strip_dev_t)config.channel);
-    strip = led_strip_new_rmt_ws2812(&strip_config);
-    if (!strip) {
-        printf("install WS2812 driver failed\n");
-        return;
-    }
-
-    // Clear LED strip (turn off all LEDs)
-    ESP_ERROR_CHECK(strip->clear(strip, 100));
-
     // gratuitous startup test
+
+    #ifdef LED2812_PIN
 
     // ramp red
     for(int i=0; i<256; i++)
@@ -3110,6 +3106,35 @@ void initLeds()
     #endif // LED2812_PIN
 }
 
+void initLeds()
+{
+    #ifdef LED2812_PIN
+
+    // const uint32_t brightness = 64;
+
+    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(LED2812_PIN, RMT_CHANNEL_0);
+    // set counter clock to 40MHz
+    config.clk_div = 2;
+    config.tx_config.loop_count = 0;
+
+    ESP_ERROR_CHECK(rmt_config(&config));
+    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
+
+    // install ws2812 driver
+    const uint8_t N_LEDS = 3;
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(N_LEDS, (led_strip_dev_t)config.channel);
+    strip = led_strip_new_rmt_ws2812(&strip_config);
+    if (!strip) {
+        printf("install WS2812 driver failed\n");
+        return;
+    }
+
+    // Clear LED strip (turn off all LEDs)
+    ESP_ERROR_CHECK(strip->clear(strip, 100));
+
+    #endif // LED2812_PIN
+}
+
 void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue)
 {
     #ifdef LED2812_PIN
@@ -3124,17 +3149,52 @@ extern char * wcWhere;
 
 void app_main()
 {
-    // uart_set_baudrate(UART_NUM_0, 115200);
-    // uart_set_baudrate(UART_NUM_0, 420000);
-    // uart_set_baudrate(UART_NUM_0, 460800);
-    // uart_set_baudrate(UART_NUM_0, 921600);
-    uart_set_baudrate(UART_NUM_0, 2000000);
-    std::cout << "ESP32-C3 FreeRTOS Dual Band RX\n";
+    // Need to reconfigure debug output to go to a different serial port, or disable it entirely
 
-    // The default uart setup doesn't enable input, so have to do it manually
-    const int uart_buffer_size = (1024 * 2);
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, UART_PIN_NO_CHANGE, GPIO_NUM_20, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 0, 0, 0));
+    if (!TRANSMITTER)
+    {
+        // uart_set_baudrate(UART_NUM_0, 115200);
+        // uart_set_baudrate(UART_NUM_0, 420000);
+        // uart_set_baudrate(UART_NUM_0, 460800);
+        // uart_set_baudrate(UART_NUM_0, 921600);
+
+        uart_set_baudrate(UART_NUM_0, 2000000);
+        std::cout << "ESP32-C3 FreeRTOS Dual Band RX\n";
+
+    } else {
+        // If crsf is using the same port, don't bother messing with the settings here as the crsf code will overrride it all
+        if (CRSF_PORT_NUM != UART_NUM_0)
+        {
+            // delete the default uart0 driver and recreate
+            uart_driver_delete(UART_NUM_0);
+
+            static uart_config_t uart_config;
+            memset(&uart_config, 0, sizeof(uart_config));
+            uart_config.data_bits = UART_DATA_8_BITS;
+            uart_config.parity    = UART_PARITY_DISABLE;
+            uart_config.stop_bits = UART_STOP_BITS_1;
+            uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+            uart_config.source_clk = UART_SCLK_APB;
+            uart_config.baud_rate = 2000000;
+            // uart_config.baud_rate = 115200;
+
+            const int intr_alloc_flags = 0;
+            const uint32_t rxBufferSize = 512;  // not going to use rx, but we have to set a buffer size anyway
+            const uint32_t txBufferSize = 1024;
+            ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
+            ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
+            ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, DEBUG_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+
+            // The default uart setup doesn't enable input, so have to do it manually
+            // const int uart_buffer_size = (1024 * 2);
+            // ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 0, 0, 0));
+            // uart_set_baudrate(UART_NUM_0, 2000000);
+
+            std::cout << "uart0 configured for output only\n";
+        }
+    }
+
 
     #ifdef DEBUG_PIN
 
@@ -3153,19 +3213,19 @@ void app_main()
 
     #endif // LATENCY_INPUT_PIN
 
-    printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
-    printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
+    // printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
+    // printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
+
+    initLeds();
+    ledRamp();
 
     // while (true) {
     //     std::cout << "Hello\n";
     //     delay(2000);
-    //     setupPWM(); // does nothing if pwm not being used
+    //     ledRamp();
     // }
 
-
     setupPWM(); // does nothing if pwm not being used
-
-    initLeds();
 
     // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
     HwTimer::init();
@@ -3190,6 +3250,9 @@ void app_main()
 
     radio1->Begin(); // XXX need to add result value to sx1262 driver
 
+    #ifdef LED2812_PIN
+    setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
+
     // if (radio1->Begin(usePreambleDetect) == 0) {
         // set led green
         // setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -3201,10 +3264,15 @@ void app_main()
     if (radio2->Begin(usePreambleDetect) == 0) {
         // set led green
         setLedColour(LED_STATUS_INDEX, 0, LED_BRIGHTNESS, 0);
+        setLedColour(LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
     } else {
         // set led red
         setLedColour(LED_STATUS_INDEX, LED_BRIGHTNESS, 0, 0);
+        setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
     }
+    #else
+    radio2->Begin(usePreambleDetect);
+    #endif // LED2812_PIN
 
     radio1->SetOutputPower(TX_POWER_915);
     radio2->SetOutputPower(TX_POWER_2G4);
@@ -3278,8 +3346,9 @@ void app_main()
         radio2->RXnb();
     }
 
-    #if defined(CRSF_TX_PIN)
+    #if defined(CRSF_SPORT_PIN)
     crsf.Begin();
+    // std::cout << "crsf disabled\n";
     #endif
 
     delay(500);
@@ -3292,10 +3361,10 @@ void app_main()
     unsigned long lastDebug = 0;
     #endif
 
-    // unsigned long lastLEDUpdate = 0;
+    unsigned long lastLEDUpdate = 0;
     unsigned long prevTime = 0;
 
-    // uint32_t lastRX1Events = 0, lastRX2Events = 0;
+    uint32_t lastRX1Events = 0, lastRX2Events = 0;
 
     // loop
     while(true) {
@@ -3312,15 +3381,16 @@ void app_main()
         }
         prevTime = now;
 
-        // if (lastLEDUpdate + 100 < now)
-        // {
-        //     lastLEDUpdate = now;
+        // TODO What status display do we want for the transmitter?
+        if (!TRANSMITTER && ((lastLEDUpdate + 100) < now))
+        {
+            lastLEDUpdate = now;
 
-            // uint32_t delta1 = totalRX1Events - lastRX1Events;
-            // uint32_t delta2 = totalRX2Events - lastRX2Events;
+            uint32_t delta1 = totalRX1Events - lastRX1Events;
+            uint32_t delta2 = totalRX2Events - lastRX2Events;
 
-            // lastRX1Events = totalRX1Events;
-            // lastRX2Events = totalRX2Events;
+            lastRX1Events = totalRX1Events;
+            lastRX2Events = totalRX2Events;
 
             // uint32_t totalPackets = delta1 + delta2 + timeout1Counter + timeout2Counter + crc1Counter + crc2Counter + 1;
 
@@ -3335,15 +3405,23 @@ void app_main()
             // uint32_t red1 = (brightness1 - green1);
             // uint32_t red2 = (brightness2 - green2);
 
-            // uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / totalPackets;
-            // uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / totalPackets;
+            uint32_t red1 = (99 - lqRadio1.getLQ()) * LED_BRIGHTNESS / 99;
+            uint32_t red2 = (99 - lqRadio2.getLQ()) * LED_BRIGHTNESS / 99;
 
-            // strip->set_pixel(strip, LED_RADIO1_INDEX, red1, green1, blue1);
-            // strip->set_pixel(strip, LED_RADIO2_INDEX, red2, green2, blue2);
-            // strip->refresh(strip, 10);
+            uint32_t green1 = LED_BRIGHTNESS - red1;
+            uint32_t green2 = LED_BRIGHTNESS - red2;
+
+            uint32_t blue1 = timeout1Counter * LED_BRIGHTNESS / (delta1 + timeout1Counter + crc1Counter);
+            uint32_t blue2 = timeout2Counter * LED_BRIGHTNESS / (delta2 + timeout2Counter + crc2Counter);
+
+            #ifdef LED2812_PIN
+            strip->set_pixel(strip, LED_RADIO1_INDEX, red1, green1, blue1);
+            strip->set_pixel(strip, LED_RADIO2_INDEX, red2, green2, blue2);
+            strip->refresh(strip, 10);
+            #endif
 
             // printf("delta %u bright %u green %u\n", delta1, brightness1, green1);
-        // }
+        }
 
         #ifndef DEBUG_SUPPRESS
         if (lastDebug + 1000 < now)
@@ -3372,6 +3450,10 @@ void app_main()
                 // printf("\n");
                 std::cout << '\n';
                 #endif
+
+                uint16_t c0 = crsf.elrsPackedDBDataOut.chan0;
+                std::cout << c0;
+                std::cout << ' ';
 
                 // check for hung callbacks
                 if (tickStartMs && ((now - tickStartMs) > 100))
@@ -3465,19 +3547,29 @@ void app_main()
         if (TRANSMITTER)
         {
             static uint32_t lastModeChange = 0; // STATIC for persistence
+            static uint32_t ledSlot = 0;
 
-            // temporary link rate change via keyboard input
-            uint8_t buf;
-            int nread = uart_read_bytes(UART_NUM_0, &buf, 1, 0);
-            if (nread != 0) {
-                if (buf == '+' && (ExpressLRS_currAirRate_Modparams->index > 0)) {
-                    uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index - 1;
-                    SetRFLinkRate(newIndex);
-                } else if (buf == '-' && (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1))) {
-                    uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index + 1;
-                    SetRFLinkRate(newIndex);
-                }
-            }
+            #ifndef CRSF_SPORT_PIN
+            // // temporary link rate change via keyboard input
+            // uint8_t buf;
+            // int nread = uart_read_bytes(UART_NUM_0, &buf, 1, 0);
+            // if (nread != 0) {
+            //     // std::cout << 'C';
+            //     // std::cout.flush();
+            //     for(int i=0; i<3; i++) {
+            //         strip->set_pixel(strip, i, 0, i==ledSlot ? 40 : 0, 0);
+            //     }
+            //     strip->refresh(strip, 100);
+            //     ledSlot = (ledSlot + 1) % 3;
+            //     if (buf == '+' && (ExpressLRS_currAirRate_Modparams->index > 0)) {
+            //         uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index - 1;
+            //         SetRFLinkRate(newIndex);
+            //     } else if (buf == '-' && (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1))) {
+            //         uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index + 1;
+            //         SetRFLinkRate(newIndex);
+            //     }
+            // }
+            #endif
 
             // have we lost connection with the quad?
             uint32_t localLastTelem = lastTelemPacketTimeMs; // avoid race conditions
@@ -3485,7 +3577,15 @@ void app_main()
             {
                 isRXconnected = false;
                 lqTelem.reset(); // zero out the lq
+                #ifndef DEBUG_SUPPRESS
                 std::cout << "RX connection lost\n";
+                #endif
+
+                #ifdef LED2812_PIN
+                strip->set_pixel(strip, LED_RADIO1_INDEX, LED_BRIGHTNESS, 0, 0);
+                strip->set_pixel(strip, LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
+                strip->refresh(strip, 10);
+                #endif
             }
 
         } // if (TRANSMITTER)

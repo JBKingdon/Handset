@@ -163,7 +163,7 @@ int ElrsSPI::init()
     printf("SPI clock at 18MHz\n");
     devcfg.clock_speed_hz = 18*1000*1000;
 
-    #elif defined(DUAL_BAND_BREADBOARD)
+    #elif defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 
     // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
 

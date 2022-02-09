@@ -14,7 +14,15 @@
 // #include "../../lib/FIFO/FIFO.h"
 // #include "telemetry_protocol.h"
 
-// #define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
+#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART to the FC
+
+#include "led_strip.h"
+
+#ifdef LED2812_PIN
+extern led_strip_t *strip;
+void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
+#endif
+
 
 #if defined(PLATFORM_ESP32) || defined(ESPC3)
 // HardwareSerial SerialPort(1);
@@ -123,7 +131,12 @@ void CRSF::Begin()
     // Serial.println("About to start CRSF task...");
     printf("About to start CRSF task...\n");
 
-    #ifdef CRSF_TX_PIN
+    #ifdef CRSF_SPORT_PIN
+    // std::cout << "crsf config disabled\n";
+
+    if (CRSF_PORT_NUM == UART_NUM_0) {
+        uart_driver_delete(UART_NUM_0);
+    }
 
     uart_config_t uart_config;
     memset(&uart_config, 0, sizeof(uart_config));
@@ -134,18 +147,18 @@ void CRSF::Begin()
     uart_config.source_clk = UART_SCLK_APB;
 
     #ifdef CRSF_TX_MODULE
-    uart_config.baud_rate = OPENTX_BAUDS[baudrateIndex];
+    // uart_config.baud_rate = OPENTX_BAUDS[baudrateIndex];
+    uart_config.baud_rate = 400000;
+    // uart_config.baud_rate = 115200;
     #else
     uart_config.baud_rate = CRSF_RX_BAUDRATE;
     #endif
 
     int intr_alloc_flags = 0;
 
-// #if CONFIG_UART_ISR_IN_IRAM
-//     intr_alloc_flags = ESP_INTR_FLAG_IRAM;
-// #endif
-
-    // XXX we need to set this up so that multiple inbound packets aren't buffered
+    // #if CONFIG_UART_ISR_IN_IRAM
+    //     intr_alloc_flags = ESP_INTR_FLAG_IRAM;
+    // #endif
 
     // Need to use a zero sized tx buffer so that we can control when data is sent on the bidir s.port wire
     const uint32_t rxBufferSize = 512;
@@ -155,13 +168,27 @@ void CRSF::Begin()
     uart_set_rx_full_threshold(CRSF_PORT_NUM, 2);
 
     #ifdef CRSF_TX_MODULE
-    // s.port, rx and tx share the same pin
-    ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_TX_PIN, CRSF_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    // using s.port so rx and tx share the same pin
+    gpio_reset_pin(CRSF_SPORT_PIN);
+    // ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_SPORT_PIN, CRSF_SPORT_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_SPORT_PIN, CRSF_SPORT_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    // uart_set_line_inverse(CRSF_PORT_NUM, UART_SIGNAL_RXD_INV | UART_SIGNAL_TXD_INV);
+
+    // std::cout << "crsf config disabled, inverting input only\n";
+    gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U1RXD_IN_IDX, true);
+    gpio_pulldown_en((gpio_num_t)CRSF_SPORT_PIN);
+    gpio_pullup_dis((gpio_num_t)CRSF_SPORT_PIN);
+
+    // gpio_pullup_en((gpio_num_t)CRSF_SPORT_PIN);
+    // gpio_pulldown_dis((gpio_num_t)CRSF_SPORT_PIN);
+
     #else
     // full uart with separate rx and tx pins
     // XXX add RX pin
     ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     #endif // CRSF_TX_MODULE
+
 
     // Configure a temporary buffer for the incoming data
     // uint8_t *data = (uint8_t *) malloc(BUF_SIZE);
@@ -199,11 +226,9 @@ void CRSF::Begin()
     CRSF::Port.flush();
 #endif
 
-    flush_port_input();
+    // flush_port_input();
 #endif // CRSF_TX_MODULE
 
-    //The master module requires that the serial communication is bidirectional
-    //The Reciever uses seperate rx and tx pins
 }
 
 void CRSF::End()
@@ -643,6 +668,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
 {
     volatile uint8_t *SerialInBuffer = CRSF::inBuffer.asUint8_t;
 
+
     if (UARTwdt())
     {
         return;
@@ -657,18 +683,32 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
         nRead = uart_read_bytes(CRSF_PORT_NUM, &inChar, 1, 1);
         if (nRead != 1) break;
 
+        // std::cout << 'C';
+
+        #ifdef LED2812_PIN
+        static uint32_t ledSlot = 0;
+        for(int i=0; i<3; i++) {
+            strip->set_pixel(strip, i, 0, i==ledSlot ? 40 : 0, 0);
+        }
+        strip->refresh(strip, 100);
+        ledSlot = (ledSlot + 1) % 3;
+        #endif
+
         if (CRSFframeActive == false)
         {
             // stage 1 wait for sync byte //
             if (inChar == CRSF_ADDRESS_CRSF_TRANSMITTER ||
                 inChar == CRSF_SYNC_BYTE)
             {
+                // std::cout << 'S';
                 // we got sync, reset write pointer
                 SerialInPacketPtr = 0;
                 SerialInPacketLen = 0;
                 CRSFframeActive = true;
                 SerialInBuffer[SerialInPacketPtr] = inChar;
                 SerialInPacketPtr++;
+            } else {
+                // std::cout << 'C';
             }
         }
         else // frame is active so we do the processing
@@ -710,7 +750,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
                     if (ProcessPacket())
                     {
                         handleUARTout();
-                    }                        // esp_rom_delay_us(300);
+                    }
                 }
                 else
                 {
@@ -794,18 +834,27 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
 {
-    #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_TX_PIN)
-    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_TX_PIN, GPIO_MODE_INPUT));
-    // gpio_matrix_in((gpio_num_t)CRSF_TX_PIN, U1RXD_IN_IDX, true);
+    // std::cout << "setRX disabled\n";
+    // return;
+
+    #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_SPORT_PIN)
+    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_INPUT));
+
+    // disconnect the output
+    gpio_matrix_out((gpio_num_t)0x3A, U1TXD_OUT_IDX, true, false); // XXX this needs to be configured to match the crsf port!
+
 
     #ifdef UART_INVERTED
-    gpio_matrix_in((gpio_num_t)CRSF_TX_PIN, U1RXD_IN_IDX, true);
-    gpio_pulldown_en((gpio_num_t)CRSF_TX_PIN);
-    gpio_pullup_dis((gpio_num_t)CRSF_TX_PIN);
+    gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U1RXD_IN_IDX, true); // XXX this needs to be configured to match the crsf port!
+    gpio_pulldown_en((gpio_num_t)CRSF_SPORT_PIN);
+    gpio_pullup_dis((gpio_num_t)CRSF_SPORT_PIN);
+    // gpio_pullup_en((gpio_num_t)CRSF_SPORT_PIN);
+    // gpio_pulldown_dis((gpio_num_t)CRSF_SPORT_PIN);
+
     #else
-    gpio_matrix_in((gpio_num_t)CRSF_TX_PIN, U1RXD_IN_IDX, false);
-    gpio_pullup_en((gpio_num_t)CRSF_TX_PIN);
-    gpio_pulldown_dis((gpio_num_t)CRSF_TX_PIN);
+    gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U1RXD_IN_IDX, false);
+    gpio_pullup_en((gpio_num_t)CRSF_SPORT_PIN);
+    gpio_pulldown_dis((gpio_num_t)CRSF_SPORT_PIN);
     #endif
 
     #elif defined(GPIO_PIN_BUFFER_OE) && (GPIO_PIN_BUFFER_OE != UNDEF_PIN)
@@ -817,18 +866,23 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
 {
-    #if (defined(PLATFORM_ESP32) || defined(ESPC3))  && defined(CRSF_TX_PIN)
+    // std::cout << "setTX\n";
 
-    gpio_matrix_in((gpio_num_t)-1, U1RXD_IN_IDX, false);
-    ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_TX_PIN, GPIO_FLOATING));
+    #if (defined(PLATFORM_ESP32) || defined(ESPC3))  && defined(CRSF_SPORT_PIN)
+
+    // disconnect the rx input
+    // Could use 0x3A for "input nothing"?
+    gpio_matrix_in((gpio_num_t)0x3A, U1RXD_IN_IDX, false); // XXX this needs to be configured to match the crsf port!
+
+    ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_FLOATING));
     // ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_TX_PIN, GPIO_FLOATING));
-    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_TX_PIN, 0));
-    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_TX_PIN, GPIO_MODE_OUTPUT));
+    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0));
+    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_OUTPUT));
 
     #ifdef UART_INVERTED
-    gpio_matrix_out((gpio_num_t)CRSF_TX_PIN, U1TXD_OUT_IDX, true, false);
+    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, U1TXD_OUT_IDX, true, false); // XXX this needs to be configured to match the crsf port!
     #else
-    gpio_matrix_out((gpio_num_t)CRSF_TX_PIN, U1TXD_OUT_IDX, false, false);
+    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, U1TXD_OUT_IDX, false, false);
     #endif
     
     #elif defined(GPIO_PIN_BUFFER_OE) && (GPIO_PIN_BUFFER_OE != UNDEF_PIN)
@@ -844,6 +898,8 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
  */
 bool CRSF::UARTwdt()
 {
+    static bool ledOn = false;
+
     uint32_t now = millis();
     bool retval = false;
     if (now >= (UARTwdtLastChecked + UARTwdtInterval))
@@ -871,14 +927,27 @@ bool CRSF::UARTwdt()
             baudrateIndex = (baudrateIndex+1) % OPENTX_N_BAUDS;
             uint32_t UARTrequestedBaud = OPENTX_BAUDS[baudrateIndex];
 
+            #ifdef LED2812_PIN
+            if (ledOn) {
+                setLedColour(0, 40, 0, 0);
+            } else {
+                setLedColour(0, 0, 0, 0);
+            }
+            ledOn = !ledOn;
+            #endif
+
+            SerialOutFIFO.flush();
+            #if defined(PLATFORM_ESP32) || defined (ESPC3)
+            uart_flush_input(CRSF_PORT_NUM);
+
+            // std::cout << "WDT autobaud disabled\n";
+
             std::cout << "UART WDT: Switch to: ";
             std::cout << UARTrequestedBaud;
             std::cout << " baud\n";
 
-            SerialOutFIFO.flush();
-            #if defined(PLATFORM_ESP32) || defined (ESPC3)
-            uart_flush(CRSF_PORT_NUM);
             uart_set_baudrate(CRSF_PORT_NUM, UARTrequestedBaud);
+
             // CRSF::Port.flush();
             // CRSF::Port.updateBaudRate(UARTrequestedBaud);
             #else
@@ -898,6 +967,12 @@ bool CRSF::UARTwdt()
             retval = true;
 
         } // if (more bad than good)
+        else
+        {
+            #ifdef LED2812_PIN
+            setLedColour(0, 0, 40, 0);
+            #endif
+        }
 
         printf("UART STATS Bad:Good = %u:%u\n", BadPktsCount, GoodPktsCount);
         // std::cout << "UART STATS Bad:Good = ";
@@ -927,7 +1002,7 @@ void ICACHE_RAM_ATTR CRSF::ESP32uartTask(void *pvParameters)
     //                  GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX,
     //                  false, 500);
     CRSF::duplex_set_RX();
-    vTaskDelay(500);
+    vTaskDelay(500/portTICK_PERIOD_MS);
     flush_port_input();
     // XXX might as well just move the loop into handleUARTin()
     for (;;)

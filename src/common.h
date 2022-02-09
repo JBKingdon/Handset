@@ -116,7 +116,7 @@ typedef struct expresslrs_rf_pref_params_s
 #ifdef USE_PWM6
 // XXX change this to N_RATES
 #define RATE_MAX 2
-#elif defined(DUAL_BAND_BREADBOARD)
+#elif defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 // dual band uses a single rate on the 915 side, RATE_MAX is only used for 2G4
 #else
 #define RATE_MAX 4
@@ -158,17 +158,39 @@ typedef struct expresslrs_mod_settings_915_s
 
 #endif // ELRS_OG_COMPATIBILITY
 
-typedef struct expresslrs_mod_settings_s
+typedef enum
 {
-    uint8_t index;
-    expresslrs_RFrates_e enum_rate; // Max value of 16 since only 4 bits have been assigned in the sync package.
+    LORA,
+    FLRC
+} ModemType;
+
+typedef struct lora_modem_settings_s
+{
     SX1280_RadioLoRaBandwidths_t bw;
     SX1280_RadioLoRaSpreadingFactors_t sf;
     SX1280_RadioLoRaCodingRates_t cr;
-    uint32_t interval;                  //interval in us seconds that corresponds to that frequnecy
+    uint8_t PreambleLen;
+} lora_modem_settings_t;
+
+typedef struct flrc_modem_settings_s
+{
+    // flrc stuff
+} flrc_modem_settings_t;
+
+typedef struct expresslrs_mod_settings_s
+{
+    uint8_t index;                      // XXX get rid of?
+    expresslrs_RFrates_e enum_rate;     // Max value of 16 since only 4 bits have been assigned in the sync package. XXX get rid of?
     expresslrs_tlm_ratio_e TLMinterval; // every X packets is a response TLM packet, should be a power of 2
     uint8_t FHSShopInterval;            // every X packets we hope to a new frequnecy. Max value of 16 since only 4 bits have been assigned in the sync package.
-    uint8_t PreambleLen;
+    uint32_t interval;                  // interval in us seconds between packets
+
+    ModemType modemType;                // whether this mode uses lora or flrc
+
+    union {
+        lora_modem_settings_t lora_settings;
+        flrc_modem_settings_t flrc_settings;
+    };
 
 } expresslrs_mod_settings_t;
 
@@ -188,12 +210,12 @@ extern expresslrs_rf_pref_params_s *ExpressLRS_currAirRate_RFperfParams;
 extern bool ExpressLRS_AirRateNeedsUpdate;
 
 // XXX needs a better define
-#ifdef DUAL_BAND_BREADBOARD
+#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 
 extern expresslrs_mod_settings_915_s airRateConfig915;
 extern expresslrs_rf_pref_params_s airRateRFPerf915;
 
-#endif // DUAL_BAND_BREADBOARD
+#endif // DUAL_BAND
 
 
 //ELRS SPECIFIC OTA CRC 
