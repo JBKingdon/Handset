@@ -502,10 +502,11 @@ void SX1280Driver::SetFrequency(uint32_t Reqfreq)
     currFreq = Reqfreq;
 }
 
+// FEI requires explicit header (reasons unknown)
 int32_t SX1280Driver::GetFrequencyError()
 {
-    uint8_t efeRaw[3] = {0}; //TODO make word alignmed
-    uint32_t efe = 0;
+    // uint8_t efeRaw[3] = {0}; //TODO make word alignmed
+    // uint32_t efe = 0;
     double efeHz = 0.0;
     uint32_t a,b,c;
 
@@ -703,7 +704,7 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
 
     // grab snr while we have the buffer
     // LastPacketSNR = (int8_t)(status[1]/4);
-    LastPacketSNR = (int8_t)(buffer[3]/4);
+    LastPacketSNR = (int8_t)buffer[3] / 4;
 
     return LastPacketRSSI;
 }
@@ -723,10 +724,25 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
 
 uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
 {
-    uint8_t status[2];
+    int32_t buf = 0;
+    uint8_t *status = (uint8_t*) &buf;
 
     hal->ReadCommand(SX1280_RADIO_GET_IRQSTATUS, status, 2);
 
     return (((uint16_t)status[0]) << 8) + status[1];
 }
+
+
+void SX1280Driver::startCWTest(int8_t power, uint32_t freq)
+{
+    SetOutputPower(power);
+    SetFrequency(freq);
+
+    uint8_t buffer[4];
+
+    buffer[0] = SX1280_RADIO_SET_TXCONTINUOUSWAVE;
+    hal->fastWriteCommand(buffer, 1);
+}
+
+
 // #endif // GD32

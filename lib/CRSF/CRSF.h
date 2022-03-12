@@ -1,10 +1,34 @@
 #pragma once
 
-#define FEATURE_OPENTX_SYNC_AUTOTUNE
+// #define FEATURE_OPENTX_SYNC_AUTOTUNE
+
+
+#include "../../src/config.h"
+
+
+#ifdef DUAL_BAND_PROTOTYPE
+
+#ifdef IS_RECEIVER
+
+// The receiver PCB needs to share uart0 with the normal debug output
+
+#define CRSF_PORT_NUM 0
+
+#else
+
+// The transmitter can use uart1 and keep debug on uart0
+#define CRSF_PORT_NUM 1
+
+#endif // IS_RECEIVER
+
+#else
+
+// The breadboard prototype can use uart1 with pin 9 for crossfire
 
 #define CRSF_PORT_NUM 1
 
-#include "../../src/config.h"
+#endif // DUAL_BAND_PROTOTYPE
+
 
 #ifdef IS_RECEIVER
 #define CRSF_RX_MODULE
@@ -68,7 +92,7 @@ private:
     static uint32_t BadPktsCount;
     static uint32_t UARTwdtLastChecked;
     static uint32_t UARTcurrentBaud;
-    static bool CRSFstate;
+    static bool CRSFisConnected;
     // static uint8_t MspData[ELRS_MSP_BUFFER];
     static uint8_t MspDataLength;
     #if defined(PLATFORM_ESP32) || defined(ESPC3)

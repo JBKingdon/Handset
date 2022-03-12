@@ -121,18 +121,18 @@ lora_modem_settings_t loraModem_125hz = { SX1280_LORA_BW_0800, SX1280_LORA_SF7, 
 
 // NB Any changes to these modes will require recalibrating the PFD offsets!
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
-    // enum_rate,       bw,                 sf,                 cr,            interval, ignored,    FHSShopInterval, PreambleLen
-    //                                                                                                                        len  8        9
-    {0, RATE_1KHZ,  TLM_RATIO_1_128, 4, 1000, ModemType::LORA, loraModem_1khz},  //   675      714us
-    {1, RATE_500HZ, TLM_RATIO_1_128, 4, 2000, ModemType::LORA, loraModem_500hz}, //  1507     1586us, 79%
-    {2, RATE_250HZ, TLM_RATIO_1_64,  4, 4000, ModemType::LORA, loraModem_250hz}, //  3172     3330us, 
-    {3, RATE_125HZ, TLM_RATIO_1_32,  4, 8000, ModemType::LORA, loraModem_125hz}, //  5872     6187us
+    // enum_rate,   Telem,     FHSShopInterval, interval,  ignored,      modem settings
+    //                                                                                      len  8        9
+    {0, RATE_1KHZ,  TLM_RATIO_1_128, 4,         1000,   ModemType::LORA, loraModem_1khz},  //   675      714us
+    {1, RATE_500HZ, TLM_RATIO_1_128, 4,         2000,   ModemType::LORA, loraModem_500hz}, //  1507     1586us, 79%
+    {2, RATE_250HZ, TLM_RATIO_1_64,  4,         4000,   ModemType::LORA, loraModem_250hz}, //  3172     3330us, 
+    {3, RATE_125HZ, TLM_RATIO_1_32,  4,         8000,   ModemType::LORA, loraModem_125hz}, //  5872     6187us
 };
 
 // TOA for 9 byte hires packets
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset
-    {0, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       1000,                174},
+    {0, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       1000,                160},
     {1, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       1000,                317},
     {2, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                630},
     {3, RATE_125HZ, -112, 6187, 2000,               4000,                       100,                       1000,               1880},

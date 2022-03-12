@@ -15,7 +15,10 @@
 #endif
 
 // #define IS_RECEIVER
+
+#ifndef IS_RECEIVER
 #define IS_TRANSMITTER
+#endif
 
 #ifdef IS_TRANSMITTER
 // For crsf tx module to openTX handset
@@ -24,13 +27,19 @@
 
 // XXX where's the best place for these?
 
-// #define DUAL_BAND_BREADBOARD
+
+// Hardware revision:
+
+#define DUAL_BAND_BREADBOARD
 
 // The first PCB: bare C3, modules for radios
-#define DUAL_BAND_PROTOTYPE
+// #define DUAL_BAND_PROTOTYPE
 
-// This was for dual sx1280 with a c3 module
+// This was for dual sx1280 with a c3 module on a PCB
 // #define C3_PCB_V0
+
+
+// Features
 
 #define USE_SECOND_RADIO
 
@@ -350,7 +359,7 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
-// #define DEBUG_PIN     GPIO_NUM_9
+#define DEBUG_PIN     GPIO_NUM_9
 
 // #define LED2812_PIN   GPIO_NUM_9
 // #define LED_STATUS_INDEX 0
@@ -360,15 +369,17 @@
 // #define LATENCY_INPUT_PIN GPIO_NUM_9
 
 #ifdef IS_TRANSMITTER
-// For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
+// For the transmitter module, s.port pin:
 #define CRSF_SPORT_PIN     GPIO_NUM_9
 // #define CRSF_SPORT_PIN     GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 #endif
 
 #ifdef IS_RECEIVER
-#define CRSF_TX_PIN   GPIO_NUM_21
+// #define CRSF_TX_PIN   GPIO_NUM_9
+// #define CRSF_TX_PIN   GPIO_NUM_21
 // #define CRSF_RX_PIN   GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21
 #endif
 
 
@@ -381,15 +392,16 @@
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
 // #define CRSF_SPORT_PIN     GPIO_NUM_9
-#define CRSF_SPORT_PIN  GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21
-#endif
+#define CRSF_SPORT_PIN  GPIO_NUM_21
+#define DEBUG_TX_PIN    GPIO_NUM_20 // NB this would normally be the uart0 receive pin, but trying a swap with sport on tx as it didn't work well on 20
+#endif // IS_TRANSMITTER
 
 #ifdef IS_RECEIVER
-
 #define CRSF_TX_PIN   GPIO_NUM_21
 // #define CRSF_RX_PIN   GPIO_NUM_20
-#endif
+#define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
+
+#endif // IS_RECEIVER
 
 #define LED_STATUS_INDEX 0
 #define LED_RADIO1_INDEX 2

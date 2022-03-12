@@ -104,6 +104,8 @@ public:
     void SetOutputPower(int8_t power);
     void setRxTimeout(uint32_t t);
 
+    void startCWTest(int8_t power, uint32_t freq);
+
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();
 

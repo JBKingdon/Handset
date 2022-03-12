@@ -141,6 +141,9 @@ bool  SX1280Hal_C3::WaitOnBusy()
     const unsigned int MAX_WAIT = 5000; // in us
     const unsigned long t0 = micros();
 
+    // static unsigned long tMax = 0;
+    // static unsigned int debugCounter = 0;
+
     #ifdef USE_SECOND_RADIO
     gpio_num_t busyPin = isSecondRadio ? RADIO2_BUSY_PIN : RADIO_BUSY_PIN;
     #else
@@ -155,6 +158,18 @@ bool  SX1280Hal_C3::WaitOnBusy()
         }
     }
     // printf("waitOnBusy done in %lu us\n", micros()-t0);
+    // unsigned long delay = micros()-t0;
+
+    // std::cout << 'W' << delay << ' ';
+
+    // if (delay > tMax) {
+    //     tMax = delay;
+    // }
+
+    // if ((debugCounter++ & 0b11111) == 0) {
+    //     std::cout << '\n' << tMax << ' ';
+    // }
+
     return false;
 }
 

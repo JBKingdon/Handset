@@ -146,6 +146,14 @@ int ElrsSPI::init()
     spi_device_interface_config_t devcfg;
     
     memset(&devcfg, 0, sizeof(devcfg));
+
+     //   uint8_t mode;                   < SPI mode, representing a pair of (CPOL, CPHA) configuration:
+                                        //  - 0: (0, 0)
+                                        //  - 1: (0, 1)
+                                        //  - 2: (1, 0)
+                                        //  - 3: (1, 1)
+    devcfg.mode = 0;    // Datasheet for sx1280 says it's 0,0. What about 1262?
+
     
     // Tested speeds
     // Breadboard: ok up to 10 (but dropped to 8 to try and be sure)
@@ -170,11 +178,11 @@ int ElrsSPI::init()
     // printf("SPI clock at 16MHz\n");
     // devcfg.clock_speed_hz = 16*1000*1000;   // many crc errors on the sx1262 on the breadboard
 
-    printf("SPI clock at 12MHz\n");
-    devcfg.clock_speed_hz = 12*1000*1000;
+    // printf("SPI clock at 12MHz\n");
+    // devcfg.clock_speed_hz = 12*1000*1000;
 
-    // printf("SPI clock at 4MHz\n");
-    // devcfg.clock_speed_hz = 4*1000*1000;
+    printf("SPI clock at 4MHz\n");
+    devcfg.clock_speed_hz = 4*1000*1000;
 
     #else
     devcfg.clock_speed_hz = 8*1000*1000;

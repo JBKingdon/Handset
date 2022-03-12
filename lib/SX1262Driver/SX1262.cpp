@@ -1039,7 +1039,7 @@ int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketRSSI()
     // Serial.print("rssi read "); Serial.println(LastPacketRSSI);
 
     // grab snr while we have the buffer
-    LastPacketSNR = (int8_t)(buf[3]/4);
+    LastPacketSNR = (int8_t)buf[3] / 4;
 
     return LastPacketRSSI;
 }

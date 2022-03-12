@@ -47,10 +47,10 @@ const uint32_t OPENTX_BAUDS[] = {
     921600,
     1870000,
     3750000,
-    5250000
+    // 5250000  // Jumper T16 doesn't use this one, so no point wasting time cycling through it
 };
 
-#define OPENTX_N_BAUDS 6;
+#define OPENTX_N_BAUDS 5;
 
 #define CRSF_NUM_CHANNELS 16
 #define CRSF_CHANNEL_VALUE_MIN  172
@@ -397,12 +397,12 @@ typedef struct elrsPayloadLinkstatistics_s
 } elrsLinkStatistics_t;
 
 // expanded linkstats for dual band receivers
-#define ELRS_LINKSTATS_DB_FRAMELENGTH 6
+#define ELRS_LINKSTATS_DB_FRAMELENGTH 8
 typedef struct elrsPayloadLinkstatistics_DB_s
 {
     uint8_t rssi0, rssi1;
     uint8_t lq0, lq1;   // range 0-99
-    // int8_t  snr;
+    int8_t  snr0, snr1;
     uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
     int8_t txPower;     // power in dBm
 } elrsLinkStatistics_DB_t;

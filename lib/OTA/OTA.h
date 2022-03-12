@@ -71,7 +71,9 @@ typedef struct DB915Telem_s {
     int rssi2G4 : 8;
     unsigned int lq2G4 : 8;     // 8 bits
 
-    uint8_t serialData[8];
+    int snr2G4 : 8;         // signed value in tenths, so  -12.8 to +12.7 
+
+    uint8_t serialData[7];
 
     unsigned int serialDataLength : 4;
 
