@@ -209,6 +209,10 @@ extern expresslrs_rf_pref_params_s *ExpressLRS_currAirRate_RFperfParams;
 
 extern bool ExpressLRS_AirRateNeedsUpdate;
 
+#ifdef LORA_TEST
+extern expresslrs_mod_settings_915_s airRateConfig_LoraTest;
+#endif
+
 // XXX needs a better define
 #if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 

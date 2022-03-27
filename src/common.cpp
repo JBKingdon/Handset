@@ -8,13 +8,23 @@
 #include "SX1262Driver.h"
 extern SX1262Driver Radio;
 
+#ifdef LORA_TEST
+expresslrs_mod_settings_915_s airRateConfig_LoraTest = 
+
+    // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
+
+    // OTA is about 240ms
+    {0, RATE_125HZ, SX1262_LORA_BW_125, SX1262_LORA_SF12, SX1262_LORA_CR_4_5,  500000, TLM_RATIO_1_16,       4,             12};
+
+#endif // LORA_TEST
+
 #if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
 
 expresslrs_mod_settings_915_s airRateConfig915 = 
     // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
 
     // 125Hz
-    {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_16,       4,             12}; // 4896 us @ 8 bytes, 6432 @ 15b, 7200 @ 18b
+    {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_8,       4,             12}; // 4896 us @ 8 bytes, 6432 @ 15b, 7200 @ 18b
                                                                                                           // pdfOffset at 125Hz 2750               1198
     // measured: 4920 @ 7 bytes, 6520 @ 15 bytes with CR_4_6, preamble 12
     // measured: 4680 @ 7 bytes, 6000 @ 15 bytes with CR_4_5, preamble 10 (turn-around 440us)

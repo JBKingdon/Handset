@@ -10,6 +10,9 @@
 // #define PCB_V1_0
 // #define RX_C3
 
+// Simple test mode with slow lora signals to see if the chirps are measurable with hackrf
+// #define LORA_TEST
+
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
 #endif
@@ -30,10 +33,10 @@
 
 // Hardware revision:
 
-#define DUAL_BAND_BREADBOARD
+// #define DUAL_BAND_BREADBOARD
 
 // The first PCB: bare C3, modules for radios
-// #define DUAL_BAND_PROTOTYPE
+#define DUAL_BAND_PROTOTYPE
 
 // This was for dual sx1280 with a c3 module on a PCB
 // #define C3_PCB_V0
@@ -359,7 +362,7 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
-#define DEBUG_PIN     GPIO_NUM_9
+// #define DEBUG_PIN     GPIO_NUM_9
 
 // #define LED2812_PIN   GPIO_NUM_9
 // #define LED_STATUS_INDEX 0
@@ -371,8 +374,11 @@
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin:
 #define CRSF_SPORT_PIN     GPIO_NUM_9
-// #define CRSF_SPORT_PIN     GPIO_NUM_20
+// #define CRSF_SPORT_PIN     GPIO_NUM_19
+// #define CRSF_SPORT_PIN     GPIO_NUM_20  // 20 is normally the uart0 rx pin
+// #define CRSF_SPORT_PIN     GPIO_NUM_21  // 21 is normally the uart0 tx pin
 #define DEBUG_TX_PIN    GPIO_NUM_21
+// #define DEBUG_TX_PIN    GPIO_NUM_19
 #endif
 
 #ifdef IS_RECEIVER
@@ -391,9 +397,11 @@
 
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
+// #define CRSF_SPORT_PIN     GPIO_NUM_3
 // #define CRSF_SPORT_PIN     GPIO_NUM_9
 #define CRSF_SPORT_PIN  GPIO_NUM_21
-#define DEBUG_TX_PIN    GPIO_NUM_20 // NB this would normally be the uart0 receive pin, but trying a swap with sport on tx as it didn't work well on 20
+#define DEBUG_TX_PIN    GPIO_NUM_20
+// #define DEBUG_TX_PIN    GPIO_NUM_21
 #endif // IS_TRANSMITTER
 
 #ifdef IS_RECEIVER

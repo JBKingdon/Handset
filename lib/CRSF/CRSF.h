@@ -17,7 +17,8 @@
 #else
 
 // The transmitter can use uart1 and keep debug on uart0
-#define CRSF_PORT_NUM 1
+// XXX but isn't for now
+#define CRSF_PORT_NUM 0
 
 #endif // IS_RECEIVER
 
@@ -25,7 +26,7 @@
 
 // The breadboard prototype can use uart1 with pin 9 for crossfire
 
-#define CRSF_PORT_NUM 1
+#define CRSF_PORT_NUM 0
 
 #endif // DUAL_BAND_PROTOTYPE
 
@@ -189,12 +190,13 @@ public:
     void ICACHE_RAM_ATTR setSentSwitch(uint8_t index, uint8_t value);
 
 ///// Variables for OpenTX Syncing //////////////////////////
-    #define OpenTXsyncPacketInterval 200 // in ms
+    // #define OpenTXsyncPacketInterval 200 // in ms
+    #define OpenTXsyncPacketInterval 100 // in ms
     static void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
     // void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
 
     static void ICACHE_RAM_ATTR JustSentRFpacket();
-    static void ICACHE_RAM_ATTR sendSyncPacketToTX();
+    static void ICACHE_RAM_ATTR sendSyncPacketToTX(bool force);
 
     /////////////////////////////////////////////////////////////
 

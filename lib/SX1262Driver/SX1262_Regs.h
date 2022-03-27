@@ -155,6 +155,7 @@ Table 13-48
  */
 typedef enum SX1262_Bandwidth
 {
+    SX1262_LORA_BW_125 = 0x04,
     SX1262_LORA_BW_250 = 0x05,
     SX1262_LORA_BW_500 = 0x06,
  
