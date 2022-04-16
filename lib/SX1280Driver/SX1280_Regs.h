@@ -7,6 +7,27 @@
 #define SX1280_XTAL_FREQ 52000000
 #define SX1280_FREQ_STEP ((double)(SX1280_XTAL_FREQ / pow(2.0, 18.0)))
 
+
+// Error bits for FLRC packet status:
+// bit 7   reserved
+// bit 6   SyncError       sync address detection status for the current packet. Only applicable in Rx when sync address detection is enabled.
+// bit 5   LengthError     Asserted when the length of the received packet is greater than the Max length defined in the PAYLOAD_LENGTH parameter.
+//                         Only applicable in Rx for dynamic length packets.
+// bit 4   CrcError        CRC check status of the current packet. The packet is available anyway in the FIFO. Only applicable in Rx when the CRC check is enabled
+// bit 3   AbortError      Abort status indicates if the current packet in Rx/Tx was aborted. Applicable both in Rx & Tx.
+// bit 2   headerReceived  Indicates if the header for the current packet was received. Only applicable in Rx for dynamic length packets
+// bit 1   packetReceived  Indicates that the packet reception is complete. Does not signify packet validity. Only applicable in Rx.
+// bit 0   packetCtrlBusy  Indicates that the packet controller is busy. Applicable both in Rx/Tx
+
+#define FLRC_PKT_ERROR_MASK_SYNC     (1 << 6)
+#define FLRC_PKT_ERROR_MASK_LENGTH   (1 << 5)
+#define FLRC_PKT_ERROR_MASK_CRC      (1 << 4)
+#define FLRC_PKT_ERROR_MASK_ABORT    (1 << 3)
+#define FLRC_PKT_ERROR_MASK_HDR      (1 << 2)
+#define FLRC_PKT_ERROR_MASK_PKT      (1 << 1)
+#define FLRC_PKT_ERROR_MASK_CTRLBUSY (1 << 0)
+
+
 typedef enum
 {
     SX1280_RF_IDLE = 0x00, //!< The radio is idle

@@ -13,11 +13,14 @@
 // Simple test mode with slow lora signals to see if the chirps are measurable with hackrf
 // #define LORA_TEST
 
+// Caution, there's another def for this in platformio.ini
+#define USE_FLRC
+
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
 #endif
 
-// #define IS_RECEIVER
+#define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -33,10 +36,10 @@
 
 // Hardware revision:
 
-// #define DUAL_BAND_BREADBOARD
+#define DUAL_BAND_BREADBOARD
 
 // The first PCB: bare C3, modules for radios
-#define DUAL_BAND_PROTOTYPE
+// #define DUAL_BAND_PROTOTYPE
 
 // This was for dual sx1280 with a c3 module on a PCB
 // #define C3_PCB_V0
@@ -364,10 +367,10 @@
 
 // #define DEBUG_PIN     GPIO_NUM_9
 
-// #define LED2812_PIN   GPIO_NUM_9
-// #define LED_STATUS_INDEX 0
-// #define LED_RADIO1_INDEX 2
-// #define LED_RADIO2_INDEX 1
+#define LED2812_PIN   GPIO_NUM_9
+#define LED_STATUS_INDEX 0
+#define LED_RADIO1_INDEX 2
+#define LED_RADIO2_INDEX 1
 
 // #define LATENCY_INPUT_PIN GPIO_NUM_9
 

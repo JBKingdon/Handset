@@ -12,6 +12,13 @@
 #endif
 
 
+typedef struct FlrcPacketStatus_s
+{
+    uint8_t errors;
+    int8_t rssi;
+} FlrcPacketStatus_t;
+
+
 void ICACHE_RAM_ATTR TXnbISR();
 
 // enum InterruptAssignment_
@@ -27,6 +34,7 @@ private:
     SX1280Hal * hal = nullptr; // something tries to use the hal before it is created. But when adding debug to try and track it, the problem goes away
     bool isPrimary;
     uint8_t timeoutHigh = 0, timeoutLow = 0;
+    FlrcPacketStatus_s packetStatus;
 
     void setupLora();
     void setupFLRC();
@@ -139,4 +147,7 @@ public:
     int8_t ICACHE_RAM_ATTR GetLastPacketRSSI();
     int8_t ICACHE_RAM_ATTR GetLastPacketSNR();
     uint16_t ICACHE_RAM_ATTR GetIrqStatus();
+
+    FlrcPacketStatus_s * ICACHE_RAM_ATTR GetLastPacketStatusFLRC();
+
 };

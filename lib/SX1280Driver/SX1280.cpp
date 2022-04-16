@@ -110,16 +110,17 @@ void SX1280Driver::End()
 // flrc specific setup
 void SX1280Driver::setupFLRC()
 {
-    this->SetMode(SX1280_MODE_STDBY_RC);                                    //step 1 put in STDBY_RC mode
-    hal->WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_FLRC); //Step 2: set packet type
-    // this->ConfigModParamsFLRC(FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2, BT_DIS);   //Step 5: Configure Modulation Params
-    this->ConfigModParamsFLRC(FLRC_BR_1_300_BW_1_2, FLRC_CR_1_2, BT_DIS);   //Step 5: Configure Modulation Params
-    hal->WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);                        //enable auto FS
+    this->SetMode(SX1280_MODE_STDBY_RC);
+    hal->WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_FLRC);
+    // this->ConfigModParamsFLRC(FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2, BT_DIS);
+    // this->ConfigModParamsFLRC(FLRC_BR_1_300_BW_1_2, FLRC_CR_1_2, BT_DIS);
+    this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_1_2, BT_DIS);
+
+    //enable auto FS
+    hal->WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);
 
     // setpacketparams for flrc mode
     SetPacketParamsFLRC();
-
-    // setup the syncword - currently have it disabled in void SetPacketParamsFLRC, anything needed here?
 }
 
 // lora specific setup
@@ -360,15 +361,26 @@ void SX1280Driver::SetPacketParamsFLRC()
     uint8_t buf[8];
 
     buf[0] = SX1280_RADIO_SET_PACKETPARAMS;
-    buf[1] = 0x30;  // PREAMBLE_LENGTH_16_BITS 0x30
-    buf[2] = 0x00;  // SyncWordLength FLRC_SYNC_NOSYNC 0x00
-    buf[3] = 0x00;  // SyncWordMatch RX_DISABLE_SYNC_WORD 0x00
+    buf[1] = 0x30;  // PREAMBLE_LENGTH_16_BITS                  0x30
+    buf[2] = 0x04;  // SyncWordLength  FLRC_SYNC_WORD_LEN_P32S  0x04
+    buf[3] = 0x10;  // SyncWordMatch  RX_MATCH_SYNC_WORD_1      0x10
     buf[4] = 0x00;  // PacketType PACKET_FIXED_LENGTH 0x00
     buf[5] = OTA_PACKET_LENGTH_2G4;     // PayloadLength
-    buf[6] = 0x10;  // CrcLength Docs are contradictory, this may be 2 bytes: CRC_1_BYTE 0x10
+    buf[6] = 0x10;  // CrcLength CRC_2_BYTE 0x10
     buf[7] = 0x08;  // 0x08 Whitening must be disabled for FLRC
 
     hal->fastWriteCommand(buf, sizeof(buf));
+
+    // Need to write the sync value to registers for syncword 1
+
+    // must avoid 
+    //   0x 8C 38 XX XX
+    //   0x 63 0E XX XX
+
+    hal->WriteRegister(0x09CF, 0x47);
+    hal->WriteRegister(0x09D0, 0x17);
+    hal->WriteRegister(0x09D1, 0x23);
+    hal->WriteRegister(0x09D2, 0x13);
 }
 
 
@@ -432,7 +444,7 @@ void SX1280Driver::setHighSensitivity()
     hal->WriteRegister(0x0891, (hal->ReadRegister(0x0891) | 0xC0));
 }
 
-// XXX generalise to handle flrc or copy and specialise?
+
 
 void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr)
 {
@@ -685,8 +697,52 @@ bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
 void ICACHE_RAM_ATTR SX1280Driver::SetPPMoffsetReg(int32_t offset) { return; };
 
 
+
+
+/** Get the packet status data for FLRC mode
+
+ *  Reads the rssi and errors for the last packet.
+    Stores the results in the instance packetStatus structure as well as setting LastPacketRSSI
+    returns a pointer to the packetStatus struct.
+
+    packetStatus[7:0]   RFU
+    packetStatus[15:8]  rssiSync
+    packetStatus[16:23] errors
+    packetStatus[24:31] status      // doesn't look useful for now
+    packetStatus[32:39] sync        // reports which sync word matched, not needed
+
+errors:
+    bit 7   reserved
+    bit 6   SyncError       sync address detection status for the current packet. Only applicable in Rx when sync address detection is enabled.
+    bit 5   LengthError     Asserted when the length of the received packet is greater than the Max length defined in the PAYLOAD_LENGTH parameter.
+                            Only applicable in Rx for dynamic length packets.
+    bit 4   CrcError        CRC check status of the current packet. The packet is available anyway in the FIFO. Only applicable in Rx when the CRC check is enabled
+    bit 3   AbortError      Abort status indicates if the current packet in Rx/Tx was aborted. Applicable both in Rx & Tx.
+    bit 2   headerReceived  Indicates if the header for the current packet was received. Only applicable in Rx for dynamic length packets
+    bit 1   packetReceived  Indicates that the packet reception is complete. Does not signify packet validity. Only applicable in Rx.
+    bit 0   packetCtrlBusy  Indicates that the packet controller is busy. Applicable both in Rx/Tx
+
+ */
+FlrcPacketStatus_s * ICACHE_RAM_ATTR SX1280Driver::GetLastPacketStatusFLRC()
+{
+    uint8_t buffer[8] = {0,};
+
+    buffer[0] = SX1280_RADIO_GET_PACKETSTATUS;
+    hal->fastWriteCommand(buffer, 5);       // Only need to transfer 5 bytes since status and sync are not currently used
+    LastPacketRSSI = -(int8_t)(buffer[3]/2);
+    packetStatus.rssi = LastPacketRSSI;
+
+    // Serial.print("rssi read "); Serial.println(LastPacketRSSI);
+
+    packetStatus.errors = buffer[4];
+
+    return &packetStatus;
+}
+
+
 // TODO get rssi/snr can be made more efficient by using a single call to get
-// both values.
+// both values, which is hacked in here for now but needs a better interface.
+// Not for use with FLRC, see GetLastPacketStatusFLRC() instead.
 int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
 {
     // uint8_t status[2];

@@ -16,13 +16,16 @@
 // Test mode - don't try and use the radios
 // #define DISABLE_RADIOS
 
+// #define ENABLE_DYNAMIC_RATES
+
+
 #ifdef IS_TRANSMITTER
 #define TRANSMITTER true
 #else
 #define TRANSMITTER false
 #endif
 
-#define INITIAL_LINK_RATE_INDEX 3   // edgeTX only goes up to 500, so don't use 0 if mixer sync is enabled
+#define INITIAL_LINK_RATE_INDEX 0   // edgeTX only goes up to 500, so don't use 0 if mixer sync is enabled
 
 // sx1262 runs from -9 to +22
 #define TX_POWER_915 (-9)
@@ -31,11 +34,11 @@
 
 // Bare sx1280 from -18 to +13 
 // #define TX_POWER_2G4 (13)
-#define TX_POWER_2G4 (-5)
+#define TX_POWER_2G4 (0)
 // #define TX_POWER_2G4 (-10)
 // #define TX_POWER_2G4 (-13)
 
-// Which channel to use for arming, 0 through 15
+// Channel to use for arming, 0 through 15
 // XXX only partially implemented. Manual changes needed if this is changed!
 #define ARM_CHANNEL 8
 
@@ -49,7 +52,7 @@
 // only need to recompile rx:
 // #define PFD_CALIBRATION
 
-#define DEBUG_SUPPRESS
+// #define DEBUG_SUPPRESS
 // #define PRINT_RX_SCOREBOARD 1
 
 
@@ -187,6 +190,7 @@ uint32_t totalRX2 = 0;
 int32_t cumulativeRSSI = 0;
 uint32_t crc1Counter = 0;
 uint32_t crc2Counter = 0;
+uint32_t crcFLRCcounter = 0;
 uint32_t errCounter = 0;
 
 static uint32_t r1LastIRQms = 0;
@@ -287,7 +291,7 @@ uint8_t antenna = 0;    // which antenna is currently in use
 bool isRXconnected = false;
 
 #if defined(PRINT_RX_SCOREBOARD)
-static bool lastPacketCrcError;
+static bool lastPacketCrcError, lastPacketCrcError2G4;
 #endif
 
 #ifdef LED2812_PIN
@@ -334,9 +338,14 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
             break;
         case 1:
             #ifdef USE_SECOND_RADIO
+            #ifdef USE_FLRC
+            // FLRC will have already read the packet status to check for crc errors, but doesn't have SNR
+            t2 = radio2->LastPacketRSSI;
+            #else
             t2 = radio2->GetLastPacketRSSI();
-            rssiDBM1 = LPF_UplinkRSSI1.update(t2);
             LPF_UplinkSNR1.update(radio2->LastPacketSNR*10); // value was set as a side-effect of getLastPacketRSSI
+            #endif
+            rssiDBM1 = LPF_UplinkRSSI1.update(t2);
             // printf("update1 %d %d\n", t2, rssiDBM1);
             #endif
 
@@ -1224,8 +1233,11 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     // TODO since the crc checking was moved out of this function does it make sense to move the pfd extEvent() call
     // out as well?
 
+    // Can't use FLRC packets to adjust pfd yet as the pfdOffset isn't set correctly
+    #ifndef USE_FLRC
     uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
     pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
+    #endif
 
     lastValidPacket = millis();
     last2G4DataMs = lastValidPacket;
@@ -1273,7 +1285,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
     // out as well?
     pfdLoop.extEvent915(tPacketReceived + airRateRFPerf915.pfdOffset);
 
-    lastValidPacket = millis();
+    uint32_t currentTimeMs = millis();
+    lastValidPacket = currentTimeMs;
     lastSyncPacket = lastValidPacket; // XXX get rid of this
 
     uint16_t newTimerNonce = packet->nonce;
@@ -1309,10 +1322,13 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
         #else
         crsf.elrsLinkStatistics.txPower = packet->txPower;
         #endif
-        // need the timestamp of the last 2G4 packet
-        uint32_t age2G4 = millis() - (last2G4DataMs - (ExpressLRS_currAirRate_RFperfParams->TOA/1000));
+        // need to estimate the age of the last 2G4 packet from when it was sent (not received)
+        uint32_t age2G4us = ((currentTimeMs - last2G4DataMs) * 1000) + ExpressLRS_currAirRate_RFperfParams->TOA;
 
-        const bool primaryChannelIsOld = (age2G4 > (airRateRFPerf915.TOA/1000));
+        // When both channels are running 125Hz, age2G4us will usually be > the 915 TOA and we get unnecessary double FC packets,
+        // so we need to increase the threshold a bit. 2x is easy, would something less still work? We could pre-compute a value
+        // if necessary.
+        const bool primaryChannelIsOld = (age2G4us > (airRateRFPerf915.TOA * 2));
 
         // Only merge the primary channels if the data is newer than the last 2G4 packet
 
@@ -1421,8 +1437,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
             ExpressLRS_nextAirRateIndex = indexIn;
             liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
 
-            uint32_t packetHz = 1000 / (1 << indexIn);
             #ifndef DEBUG_SUPPRESS
+            uint32_t packetHz = 1000 / (1 << indexIn);
             printf("\nrate change: %u Hz\n", packetHz);
             #endif
         }
@@ -1939,11 +1955,12 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
 /** Initial test for dynamic rate changes
  * 
  */
+#ifdef ENABLE_DYNAMIC_RATES
 static void checkDynamicRate()
 {
-    #define MIN_RATE_CHANGE_INTERVAL_MS 5000
-    #define MIN_SNR 75
-    #define MAX_SNR 90
+    #define MIN_RATE_CHANGE_INTERVAL_MS 1000
+    #define MIN_SNR 80
+    #define MAX_SNR 95
 
     static unsigned long lastRateChangeMs = 0;
 
@@ -1960,14 +1977,16 @@ static void checkDynamicRate()
         uint8_t newIndex = currentIndex - 1;
         SetRFLinkRate(newIndex);
         lastRateChangeMs = now;
-        std::cout << "DR+";
+        // std::cout << "DR+";
     } else if ((crsf.LinkStatistics.uplink_SNR < (MIN_SNR - currentIndex)) && (currentIndex < (RATE_MAX-1))) {
         uint8_t newIndex = currentIndex + 1;
         SetRFLinkRate(newIndex);
         lastRateChangeMs = now;
-        std::cout << "DR-";        
+        // std::cout << "DR-";
     }
 }
+#endif // ENABLE_DYNAMIC_RATES
+
 
 /** Handle all the possible DIO interrupts for the 915 modem
  * 
@@ -2046,7 +2065,7 @@ static void handleEvents915()
         HandleFHSS915();
 
         antenna = 0;     // XXX get rid of the global and pass as a param
-        getRFlinkInfo();    // XXX need to adjust for completely missed packets
+        getRFlinkInfo();    // XXX still need to adjust for completely missed packets
 
         if (TRANSMITTER) {
             // telemetry packet
@@ -2090,7 +2109,9 @@ static void handleEvents915()
                 // XXX reduce the SNR here
             }
 
+            #ifdef ENABLE_DYNAMIC_RATES
             checkDynamicRate();
+            #endif
 
             // need to clear irqs, next transmit will be started from tock
             // radio1->ClearIrqStatus(SX1262_IRQ_RX_DONE);
@@ -2179,38 +2200,61 @@ static void receive2G4()
 {
     r2LastIRQms = millis();
 
+    uint8_t flrcErrors = 0;
+
     #ifdef DEBUG_PIN
     gpio_set_level(DEBUG_PIN, 1);
     #endif
 
-    radio2->readRXData(); // get the data from the radio chip
+    // TODO need a test for if the current mode is flrc so that we can support a mixture of lora and flrc modes
 
-    #ifdef DEBUG_PIN
-    gpio_set_level(DEBUG_PIN, 0);
+    #ifdef USE_FLRC
+    FlrcPacketStatus_s * status = radio2->GetLastPacketStatusFLRC();
+    const uint8_t anyErrorMask = FLRC_PKT_ERROR_MASK_SYNC | FLRC_PKT_ERROR_MASK_LENGTH | FLRC_PKT_ERROR_MASK_CRC | FLRC_PKT_ERROR_MASK_ABORT;
+    flrcErrors = status->errors & anyErrorMask;
     #endif
 
-    if (hasValidCRC2G4DB((DB2G4Packet_t *)radio2->RXdataBuffer))
-    {
-        ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
+    if (flrcErrors != 0) {
 
-        #if defined(PRINT_RX_SCOREBOARD)
-        // printf("2");
-        std::cout << '2';
-        #endif
-
-        totalRX2Events++;
-        lqEffective.add();
-        lqRadio2.add();
-        antenna = 1;
-        getRFlinkInfo();
+        if (flrcErrors & FLRC_PKT_ERROR_MASK_CRC)
+        {
+            crcFLRCcounter++;
+        } else {
+            printf("flrc other error %X\n", flrcErrors);
+        }
 
     } else {
-        // failed CRC check
-        crc2Counter++;
-        #ifdef PRINT_RX_SCOREBOARD
-        lastPacketCrcError = true;
+
+        radio2->readRXData(); // get the data from the radio chip
+
+        #ifdef DEBUG_PIN
+        gpio_set_level(DEBUG_PIN, 0);
         #endif
-    }
+
+        if (hasValidCRC2G4DB((DB2G4Packet_t *)radio2->RXdataBuffer))
+        {
+            ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
+
+            #if defined(PRINT_RX_SCOREBOARD)
+            // printf("2");
+            std::cout << '2';
+            #endif
+
+            totalRX2Events++;
+            lqEffective.add();
+            lqRadio2.add();
+            antenna = 1;
+            getRFlinkInfo();
+
+        } else {
+            // failed CRC check
+            crc2Counter++;
+            #ifdef PRINT_RX_SCOREBOARD
+            lastPacketCrcError2G4 = true;
+            #endif
+        }
+
+    } // else (no FLRC error flags)
 
     HandleFHSS2G4();
     
@@ -2477,9 +2521,10 @@ void liveUpdateRFLinkRate(uint8_t index)
     uint32_t freq = FHSSgetCurrFreq2G4();
 
     #ifdef USE_FLRC
-    if (index == 0)
+    // if (index == 0)
+    if (true)
     { // special case FLRC for testing
-        radio1->ConfigFLRC(GetInitialFreq());
+        radio2->ConfigFLRC(freq);
     }
     else
     #endif
@@ -2521,9 +2566,10 @@ void SetRFLinkRate(uint8_t index)
     #endif
 
 #ifdef USE_FLRC
-    if (index == 0)
+    // if (index == 0) 
+    if (true) 
     { // special case FLRC for testing
-        radio1->ConfigFLRC(GetInitialFreq());
+        radio2->ConfigFLRC(GetInitialFreq2G4());
     }
     else
 #endif
@@ -2805,7 +2851,7 @@ void ICACHE_RAM_ATTR tick2G4()
         updatePhaseLock2G4();
     }
 
-    // XXX remind me why we need rx and tx nonces again?
+    // XXX remind me why we need separate rx and tx nonces again?
     alreadyFHSS2G4 = false;
     nonceRX2G4 = timerNonce / (2 * rfModeDivisor2G4);
     nonceTX2G4 = timerNonce / (2 * rfModeDivisor2G4);
@@ -2934,13 +2980,10 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
 
     #if defined(PRINT_RX_SCOREBOARD)
-    if (!lqRadio2.currentIsSet() )
-    {
-        // XXX need a 2G4 crc error flag
-        // std::cout << (lastPacketCrcError ? 'X' : '_');
-        std::cout << '?';
+    if (!lqRadio2.currentIsSet() ) {
+        std::cout << (lastPacketCrcError2G4 ? 'X' : '_');
     }
-    // lastPacketCrcError = false;
+    lastPacketCrcError2G4 = false;
     #endif
 
 }
@@ -3754,9 +3797,9 @@ void app_main()
                     std::cout << "R1 missing\n";
                 }
 
-                printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u ", 
+                printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u, flrcCRC/s %2u ", 
                         totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
-                        crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT);
+                        crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT, crcFLRCcounter*1000/elapsedT);
 
                 int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
                 int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
@@ -3774,6 +3817,7 @@ void app_main()
                 crc1Counter = 0;
                 timeout2Counter = 0;
                 crc2Counter = 0;
+                crcFLRCcounter = 0;
 
                 if (connectionState == tentative)
                 {
