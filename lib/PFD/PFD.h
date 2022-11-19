@@ -61,6 +61,7 @@ public:
         gotExtEvent2G4 = true;
     }
 
+    // XXX should this be 64 bit given that it's microseconds?
     inline void intEvent2G4(uint32_t time) // internal osc event
     {
         intEventTime2G4 = time;

@@ -124,7 +124,11 @@ void  SX1262Hal_C3::TXenable()
     #endif
 
     #if defined(RADIO_TXEN_PIN)
+    #ifdef SX1262_TXEN_INVERTED
+    gpio_set_level(RADIO_TXEN_PIN, 0);
+    #else
     gpio_set_level(RADIO_TXEN_PIN, 1);
+    #endif // inverted
     #endif
 }
 
@@ -135,7 +139,11 @@ void  SX1262Hal_C3::RXenable()
     #endif
 
     #if defined(RADIO_TXEN_PIN)
+    #ifdef SX1262_TXEN_INVERTED
+    gpio_set_level(RADIO_TXEN_PIN, 1);
+    #else
     gpio_set_level(RADIO_TXEN_PIN, 0);
+    #endif // inverted
     #endif
 }
 
@@ -146,7 +154,11 @@ void  SX1262Hal_C3::TXRXdisable()
     #endif
 
     #if defined(RADIO_TXEN_PIN)
+    #ifdef SX1262_TXEN_INVERTED
+    gpio_set_level(RADIO_TXEN_PIN, 1);
+    #else
     gpio_set_level(RADIO_TXEN_PIN, 0);
+    #endif // inverted
     #endif
 }
 
