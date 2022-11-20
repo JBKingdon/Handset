@@ -81,6 +81,8 @@ typedef struct DB915Telem_s {
 
 } PACKED DB915Telem_t;  // total 15 bytes
 
+// NB FLRC only sends the first 6 bytes, so doesn't include 'armed'. It's sent on every 915 packet,
+// so can probably be removed from here - but make sure that failsafe works properly if the 915 goes down
 typedef struct DB2G4Packet_s {
     unsigned int ch0 : 12;
     unsigned int ch1 : 12;

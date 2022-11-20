@@ -1272,7 +1272,8 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     // TODO since the crc checking was moved out of this function does it make sense to move the pfd extEvent() call
     // out as well?
 
-    // Can't use FLRC packets to adjust pfd yet as the pfdOffset isn't set correctly
+    // Can't use FLRC packets to adjust pfd yet as the pfdOffset isn't set correctly, and we need to
+    // deal with 1st vs 2nd packets for dual send.
     #ifndef USE_FLRC
     uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
     pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
@@ -1927,7 +1928,7 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
 
                 // If using FLRC with double sends,
                 // If we've just sent the first packet then we need to move to the offset frequency
-                //   and send the second packet
+                // (the second packet will be sent from tick2G4)
                 // If we've just sent the second packet then call HandleFHSS2G4
                 //   if HandleFHSS2G4 didn't change the frequency, restore the normal frequency for sending
                 //   the next 1st packet
@@ -1960,6 +1961,7 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                     }
                 }
 
+
                 #else // not using flrc
 
                 // give fhss a chance to run before tock()
@@ -1972,7 +1974,7 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 timeout2Counter++;
 
                 #if (TRANSMITTER)
-                // transmitter only sends on 2g4 (for now), so it must be a tx timeout.
+                // transmitter only uses 2g4 for sending (for now), so it must be a tx timeout.
                 // no idea how that would happen, or what recovery would be needed.
                 // For now, just clear the IRQ
                 std::cout << 'T';
@@ -2327,6 +2329,7 @@ static void receive2G4()
         //     printf("FEI %d\n", fe);
         // }
 
+        // XXX Needs a new bidirectional SPI task
         radio2->readRXData(); // get the data from the radio chip
 
         #ifdef DEBUG_PIN
@@ -2467,9 +2470,22 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             }
                             break;
                         case RadioSelection::second:
-                            // Send a control packet 
-                            radio2->TXnb(radio2->TXdataBuffer, OTA_PACKET_LENGTH_2G4);
-
+                            // Send a control packet
+                            { // local scope for *data
+                                uint8_t *data = (uint8_t *) radio2->TXdataBuffer;
+                                #ifdef USE_FLRC
+                                // TODO Replace the #ifdef with a runtime switch so we can mix flrc and lora modes
+                                if (!flrcFirstPacket) {
+                                    // Second packet can re-use the existing data which we indicate by
+                                    // passing null to TXnb
+                                    data = NULL;
+                                    esp_rom_delay_us(20);   // Need to give the rx a little time to switch frequency and get settled down
+                                }
+                                radio2->TXnb(data, OTA_PACKET_LENGTH_2G4_FLRC);
+                                #else
+                                radio2->TXnb(data, OTA_PACKET_LENGTH_2G4);
+                                #endif
+                            }
                             break;
                         default:
                             printf("unexpected radioID for StartTx %d\n", taskInfo.radioID);
@@ -3017,7 +3033,7 @@ void ICACHE_RAM_ATTR tick2G4()
             taskInfo.id = SpiTaskID::StartRx;
             taskInfo.frequency = 0;
         
-            // Need to start the extra receive
+            // need to start the receive after changing frequency (even when using continuous rx - why?)
             qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
             if (qResult != pdTRUE) std::cout << "qFull6\n";
         }
@@ -3025,18 +3041,22 @@ void ICACHE_RAM_ATTR tick2G4()
         flrcFirstPacket = false;
 
         #endif // USE_FLRC
+
     }  else {
+        // Transmitter
         #ifdef USE_FLRC
-        // Need to start the second send
-        // Contents of the buffer should still be valid?
-        SpiTaskInfo taskInfo = {SpiTaskID::StartTx, RadioSelection::second, 0};
+        // Need to start the second send if the rx is connected
+        if (isRXconnected)
+        {
+            // Contents of the buffer should still be valid?
+            SpiTaskInfo taskInfo = {SpiTaskID::StartTx, RadioSelection::second, 0};
 
-        // esp_rom_delay_us(50);
-    
-        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-        if (qResult != pdTRUE) std::cout << "qFull8\n";
+            flrcFirstPacket = false; // clear the flag to indicate that this is the second packet of the dup pair
 
-        flrcFirstPacket = false; // clear the flag to indicate that the next packet will be a second packet
+            BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+            if (qResult != pdTRUE) std::cout << "qFull8\n";
+        }
+
         #endif // USE_FLRC
     }
 
@@ -3274,8 +3294,8 @@ void ICACHE_RAM_ATTR tockTX2G4()
     #ifndef DISABLE_2G4
     if (isRXconnected)
     {
-        sendRCdataToRF2G4DB();
         flrcFirstPacket = true;
+        sendRCdataToRF2G4DB();
     }
     #endif
 }
@@ -4307,12 +4327,19 @@ void app_main()
                 // // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
                 // printf("Offset %4d DX %4d\n", Offset, OffsetDx);
 
-                // // debug for flrc double send mode
+                #ifdef USE_FLRC
+                // debug for flrc double send mode
+
+                // This version for when always checking both sends
                 // uint32_t secondPacketOnly = flrcSecondPacketCounter - flrcBothPacketCounter;
                 // uint32_t secondPercent = secondPacketOnly * 100 / (flrcFirstPacketCounter + secondPacketOnly);
-
                 // printf("1: %4u, 2: %4u, both: %4u, only2: %4u, only2%%: %3u, LQ: %3u\n", flrcFirstPacketCounter, flrcSecondPacketCounter, 
                 //     flrcBothPacketCounter, secondPacketOnly, secondPercent, lqRadio2.getLQ());
+
+                // This version when only reading second packet if the first didn't arrive
+                printf("(DS 1: %4u, 2: %4u) ", flrcFirstPacketCounter, flrcSecondPacketCounter);
+
+                #endif // USE_FLRC
 
                 printf("LQ1 %3u LQ2 %3u \n", lqRadio1.getLQ(), lqRadio2.getLQ());
 

@@ -14,7 +14,7 @@
 // #define LORA_TEST
 
 // Caution, there's another def for this in platformio.ini
-// #define USE_FLRC
+#define USE_FLRC
 
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
@@ -22,7 +22,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-#define IS_RECEIVER
+// #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -40,10 +40,10 @@
 
 // Hardware revision:
 
-// #define DUAL_BAND_BREADBOARD
+#define DUAL_BAND_BREADBOARD
 
 // The first DB PCB: bare C3, modules for radios
-#define DUAL_BAND_PROTOTYPE
+// #define DUAL_BAND_PROTOTYPE
 
 // DB pcb with no modules
 // #define DB_PCB_V1

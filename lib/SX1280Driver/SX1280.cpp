@@ -674,14 +674,28 @@ void SX1280Driver::ClearIrqStatus(uint16_t irqMask)
 //     instance->TXdoneCallback();
 // }
 
-// TODO - how does the syncword get set on TX?
-
+/**
+ * Send data over the air
+ * 
+ * Copy length bytes from *data into the sx1280 buffer and then
+ * start the transmission
+ * 
+ * Since FLRC double sends send the same data twice, if *data is null
+ * we can skip the copy and send the existing data. (NB this implies you 
+ * shouldn't interleave a receive between the two sends. Who would do that?)
+ * 
+ * 
+ * @param data pointer to the data to be sent, or null if the previous data should be re-used
+ * @param length how many bytes to send
+*/
 void SX1280Driver::TXnb(volatile uint8_t *data, uint8_t length)
 {
     ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
     hal->TXenable(); // do first to allow PA stablise
     SetFIFOaddr(0x00, 0x00);   // not 100% sure if needed again
-    hal->WriteBuffer(0x00, data, length); //todo fix offset to equal fifo addr
+    if (data != NULL) {
+        hal->WriteBuffer(0x00, data, length); //todo fix offset to equal fifo addr
+    }
     SetMode(SX1280_MODE_TX);
     // beginTX = micros();
 }
@@ -710,8 +724,14 @@ void SX1280Driver::TXnb(volatile uint8_t *data, uint8_t length)
 
 void SX1280Driver::readRXData()
 {
+    uint8_t nBytes;
+    #ifdef USE_FLRC
+    nBytes = OTA_PACKET_LENGTH_2G4_FLRC;
+    #else
+    nBytes = OTA_PACKET_LENGTH_2G4;
+    #endif
     uint8_t FIFOaddr = GetRxBufferAddr();
-    hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH_2G4);
+    hal->ReadBuffer(FIFOaddr, RXdataBuffer, nBytes);
 
     // if (FIFOaddr != 0) {
         // printf("offset %u ", FIFOaddr);
