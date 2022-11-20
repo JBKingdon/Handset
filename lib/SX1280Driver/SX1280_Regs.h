@@ -115,9 +115,9 @@ typedef enum
 typedef enum
 {
     SX1280_RADIO_CRC_OFF = 0x00, //!< No CRC in use
-    SX1280_RADIO_CRC_1_BYTES = 0x10,
-    SX1280_RADIO_CRC_2_BYTES = 0x20,
-    SX1280_RADIO_CRC_3_BYTES = 0x30,
+    SX1280_RADIO_CRC_2_BYTES = 0x10,
+    SX1280_RADIO_CRC_3_BYTES = 0x20,
+    SX1280_RADIO_CRC_4_BYTES = 0x30,
 } SX1280_RadioCrcTypes_t;
 
 /*!
@@ -177,9 +177,14 @@ typedef enum
 {
     FLRC_BR_0_260_BW_0_3 = 0xEB,
     FLRC_BR_0_325_BW_0_3 = 0xC7,
+    FLRC_BR_0_520_BW_0_6 = 0xAA,
     FLRC_BR_0_650_BW_0_6 = 0x86,
-    FLRC_BR_1_300_BW_1_2 = 0x45
+    FLRC_BR_1_040_BW_1_2 = 0x69,
+    FLRC_BR_1_300_BW_1_2 = 0x45,
+    FLRC_BR_2_080_BW_2_4 = 0x28,
+    FLRC_BR_2_600_BW_2_4 = 0x04,
 } SX1280_RadioFLRCBandwidths_t;
+
 
 /*!
  * \brief Represents the coding rate values for the LORA packet type
@@ -197,8 +202,9 @@ typedef enum
 
 typedef enum
 {
-    FLRC_CR_1_2 = 0x00
-
+    FLRC_CR_1_2 = 0x00,
+    FLRC_CR_3_4 = 0x02,
+    FLRC_CR_1_0 = 0x04,
 } SX1280_RadioFLRCCodingRates_t;
 
 // FLRC bluetooth filter setting

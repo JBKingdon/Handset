@@ -326,4 +326,5 @@ uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq915();
 
 uint32_t ICACHE_RAM_ATTR GetInitialFreq2G4();
 uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4();
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrDupSendFreq2G4();
 uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4();

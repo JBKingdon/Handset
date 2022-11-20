@@ -113,6 +113,7 @@ typedef struct DB2G4Packet_s {
 #elif defined(USE_DB_PACKETS)
 
 #define OTA_PACKET_LENGTH_2G4 8
+#define OTA_PACKET_LENGTH_2G4_FLRC 6
 #define OTA_PACKET_LENGTH_915 15
 
 #define OTA_PACKET_LENGTH_TELEM 15

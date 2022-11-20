@@ -65,6 +65,20 @@ uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4()
     return FHSSfreqs2G4[FHSSsequence2G4[FHSSptr2G4]];
 }
 
+/** return the frequency to be used for an FLRC second packet in a double send
+ * 
+ *  Takes the existing index into the channel table and adds half the table size,
+ *  wrapping around to the beginning if necessary
+ * 
+ */
+uint32_t ICACHE_RAM_ATTR FHSSgetCurrDupSendFreq2G4()
+{
+    // NR_FHSS_ENTRIES_2G4 is the number of channels in the frequency table (needs renaming)
+    uint32_t dupIndex = (FHSSsequence2G4[FHSSptr2G4] + (NR_FHSS_ENTRIES_2G4 / 2)) % NR_FHSS_ENTRIES_2G4;
+    return FHSSfreqs2G4[dupIndex];
+}
+
+
 uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4()
 {
     FHSSptr2G4++;  // as long as FHSSptr is uint8 it will wrap without extra code
