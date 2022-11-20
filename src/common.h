@@ -116,7 +116,7 @@ typedef struct expresslrs_rf_pref_params_s
 #ifdef USE_PWM6
 // XXX change this to N_RATES
 #define RATE_MAX 2
-#elif defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
+#elif defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
 // dual band uses a single rate on the 915 side, RATE_MAX is only used for 2G4
 #else
 #define RATE_MAX 4
@@ -183,7 +183,7 @@ typedef struct expresslrs_mod_settings_s
     expresslrs_RFrates_e enum_rate;     // Max value of 16 since only 4 bits have been assigned in the sync package. XXX get rid of?
     expresslrs_tlm_ratio_e TLMinterval; // every X packets is a response TLM packet, should be a power of 2
     uint8_t FHSShopInterval;            // every X packets we hope to a new frequnecy. Max value of 16 since only 4 bits have been assigned in the sync package.
-    uint32_t interval;                  // interval in us seconds between packets
+    uint32_t interval;                  // interval in microseconds between packets
 
     ModemType modemType;                // whether this mode uses lora or flrc
 
@@ -214,7 +214,7 @@ extern expresslrs_mod_settings_915_s airRateConfig_LoraTest;
 #endif
 
 // XXX needs a better define
-#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE)
+#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
 
 extern expresslrs_mod_settings_915_s airRateConfig915;
 extern expresslrs_rf_pref_params_s airRateRFPerf915;

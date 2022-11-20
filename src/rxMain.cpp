@@ -2,13 +2,31 @@
  * Initial test code for C3 based receivers and transmitters
  * 
  * TODO:
-  * 
+ * 
+ *   Make the TX only transmit when it's getting data from the handset
+ * 
  *   Fix SPI collisions
  *      Add a new SPI thread to centralise all SPI transactions
  *      Need another queue for returning results from SPI
  *   Add code to detect if a modem stops talking to us. There should always be one of txdone, rxdone or timeout in every frame
  *      add code to try harder when the modem stops talking
  *   Figure out why the radios stop talking
+ * 
+ *   Split rxMain into rx and tx specific parts and split out the common code
+ * 
+ *   Try disabling the rx timeouts to reduce the amount of spi traffic. Don't forget to check the address of the rx data
+ * 
+ *   FLRC
+ *      second packet has lower LQ than first packet - why? (and now the first is lower than the second)
+ *          Seems to be timing related, you can change the lq by adding a delay in the sender.
+ *      Convert the hopping to only happen between first & second packets
+ *      Check the SPI bus speed
+ *      Check the LQ calc - seems lower than it should be
+ *      Don't bother with receiving the second packet if the first was ok
+
+ *      Can we optimise the timing to get a 2k raw rate?
+ *          Yes, but using highest flrc speed which is probably not a good idea.
+ *          Try removing the software CRC bits and testing slower flrc speed (also check required preamble bits)
  */
 #include "user_config.h"
 #include "config.h"
@@ -18,6 +36,9 @@
 
 // #define ENABLE_DYNAMIC_RATES
 
+// #define USE_RX_TIMEOUTS
+
+// #define WIFI_TEST
 
 #ifdef IS_TRANSMITTER
 #define TRANSMITTER true
@@ -25,16 +46,17 @@
 #define TRANSMITTER false
 #endif
 
-#define INITIAL_LINK_RATE_INDEX 0   // edgeTX only goes up to 500, so don't use 0 if mixer sync is enabled
+#define INITIAL_LINK_RATE_INDEX 0
 
 // sx1262 runs from -9 to +22
-#define TX_POWER_915 (-9)
-// #define TX_POWER_915 (-6)
-// #define TX_POWER_915 (0)
+// #define TX_POWER_915 (-9)
+#define TX_POWER_915 (-6)
+// #define TX_POWER_915 (10)
 
 // Bare sx1280 from -18 to +13 
 // #define TX_POWER_2G4 (13)
-#define TX_POWER_2G4 (0)
+#define TX_POWER_2G4 (10)
+// #define TX_POWER_2G4 (0)
 // #define TX_POWER_2G4 (-10)
 // #define TX_POWER_2G4 (-13)
 
@@ -49,12 +71,12 @@
 // only need to recompile tx:
 // #define DISABLE_2G4
 
+// XXX double check this, the use doesn't seem to make much sense?
 // only need to recompile rx:
 // #define PFD_CALIBRATION
 
 // #define DEBUG_SUPPRESS
 // #define PRINT_RX_SCOREBOARD 1
-
 
 
 // Time in ms of no TLM response to consider that we have lost connection
@@ -170,6 +192,9 @@ typedef struct
 
 } SpiTaskInfo;
 
+bool flrcFirstPacket;
+bool flrcFirstPacketSuccess;
+
 static DynamicRateStates drState = DynamicRateStates::Normal;
 // static unsigned long tDrStart;
 // static uint8_t dynamicRateTargetIndex;
@@ -192,6 +217,10 @@ uint32_t crc1Counter = 0;
 uint32_t crc2Counter = 0;
 uint32_t crcFLRCcounter = 0;
 uint32_t errCounter = 0;
+
+uint32_t flrcFirstPacketCounter = 0;
+uint32_t flrcSecondPacketCounter = 0;
+uint32_t flrcBothPacketCounter = 0;
 
 static uint32_t r1LastIRQms = 0;
 static uint32_t r2LastIRQms = 0;
@@ -422,14 +451,20 @@ void TentativeConnection()
     // set timeout based on interval?
     radio1->setRxTimeout(20000);
 
+
     #ifdef USE_SECOND_RADIO
+    #ifdef USE_RX_TIMEOUTS
     radio2->setRxTimeout(ExpressLRS_currAirRate_Modparams->interval * 2);
+    #else
+    radio2->setRxContinuous();
     #endif
+    #endif // USE_SECOND_RADIO
 
     #ifdef LED_STATUS_INDEX
     setLedColour(LED_STATUS_INDEX, 40, 20, 0);
     #endif
 
+    // Caution: this comment is _old_ and may no longer be relevant
     // The caller MUST call hwTimer.resume(). It is not done here because
     // the timer ISR will fire immediately and preempt any other code
 }
@@ -935,11 +970,15 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 
     packet->armed = (crsf.ChannelDataIn[ARM_CHANNEL] > 1024);
 
+    #ifndef USE_FLRC
+
     packet->crc = 0;
 
     uint16_t crc = ota_crc.calc(radio2->TXdataBuffer, OTA_PACKET_LENGTH_2G4);
     
     packet->crc = crc;
+
+    #endif // not flrc
 
     // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // clear the rx debug pin as we're definitely not listening now
 
@@ -1570,7 +1609,15 @@ bool ICACHE_RAM_ATTR HandleFHSS915()
     return true;
 }
 
-// Must only be called in task context, not from ISR
+/**  Changes the radio frequency for frequency hopping
+ * 
+ * If the nonce is at the appropriate interval, switch to a new frequency
+ * 
+ * @return true if the frequency is changed
+ * 
+ * 
+ * Must only be called in task context, not from ISR
+ */
 bool ICACHE_RAM_ATTR HandleFHSS2G4()
 {
     // privatize the hop interval so that it can't change between testing it for 0 and using it as a divisor
@@ -1636,11 +1683,13 @@ bool ICACHE_RAM_ATTR HandleFHSS2G4()
 
     // XXX do we need this rx call for sx1280?
 
+    // #ifndef USE_RX_TIMEOUTS
     // if (!TRANSMITTER) {
     //     taskInfo.id = SpiTaskID::StartRx;
     //     qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
     //     if (qResult != pdTRUE) std::cout << "qFull2\n";
     // }
+    // #endif
 
     return true;
 }
@@ -1861,12 +1910,12 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
             // gpio_set_level(DEBUG_PIN, 0);
             // #endif
 
-            r2LastIRQms = millis();
-
             uint16_t irqs = radio2->GetIrqStatus();
             if (irqs == 0) {
                 continue;
             }
+
+            r2LastIRQms = millis();
 
             if (irqs & SX1280_IRQ_TX_DONE) {
                 // printf("tx2!\n");
@@ -1876,13 +1925,48 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                 taskInfo.irqMask = SX1280_IRQ_TX_DONE;
                 xQueueSend(rx_evt_queue, &taskInfo, 1);
 
+                // If using FLRC with double sends,
+                // If we've just sent the first packet then we need to move to the offset frequency
+                //   and send the second packet
+                // If we've just sent the second packet then call HandleFHSS2G4
+                //   if HandleFHSS2G4 didn't change the frequency, restore the normal frequency for sending
+                //   the next 1st packet
+
+                #ifdef USE_FLRC
+                if (flrcFirstPacket) {
+                    // Shift the frequency for the second of the duplicate sends
+
+                    uint32_t freq = FHSSgetCurrDupSendFreq2G4();
+
+                    SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::second, freq};
+
+                    BaseType_t qResult;
+                    qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+                    if (qResult != pdTRUE) std::cout << "qFull7\n";
+
+                } else {
+                    bool freqUpdated = HandleFHSS2G4();
+                    if (!freqUpdated)
+                    {
+                        // Need to restore the normal frequency for the next send
+
+                        uint32_t freq = FHSSgetCurrFreq2G4();
+
+                        SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::second, freq};
+
+                        BaseType_t qResult;
+                        qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+                        if (qResult != pdTRUE) std::cout << "qFull9\n";
+                    }
+                }
+
+                #else // not using flrc
+
                 // give fhss a chance to run before tock()
                 HandleFHSS2G4();
 
-                // start the next receive
-                // taskInfo.id = SpiTaskID::StartRx;
-                // taskInfo.radioID = 0; // 0 for both radios
-                // xQueueSend(rx_evt_queue, &taskInfo, 1000);
+                #endif // USE_FLRC
+
 
             } else if (irqs & SX1280_IRQ_RX_TX_TIMEOUT) {
                 timeout2Counter++;
@@ -1907,16 +1991,19 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
                     taskInfo.id = SpiTaskID::ClearIRQs;
                     taskInfo.radioID = 2;
                     taskInfo.irqMask = SX1280_IRQ_RX_TX_TIMEOUT;
-                    xQueueSend(rx_evt_queue, &taskInfo, 1000);
-                    // radio2->ClearIrqStatus(SX1280_IRQ_RX_TX_TIMEOUT);
+                    int r = xQueueSend(rx_evt_queue, &taskInfo, 0);
+                    #ifndef DEBUG_SUPPRESS
+                    if (r != pdTRUE) std::cout << "QF1";
+                    #endif
                     // std::cout << "DT2";
                 } else {
                     // radio2->RXnb(); // implicit clear irqs
                     taskInfo.id = SpiTaskID::StartRx;
                     taskInfo.radioID = 2;
                     xQueueSend(rx_evt_queue, &taskInfo, 1000);
-
-                    std::cout << "T2";
+                    #ifndef DEBUG_SUPPRESS
+                    std::cout << "T2D";
+                    #endif
                 }
 
                 #endif // TRANSMITTER vs RECEIVER timeout handling
@@ -1924,7 +2011,9 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
             } else if (irqs & SX1280_IRQ_PREAMBLE_DETECTED) {
                 // Shouldn't get any of these at the moment as preamble detect is disabled
 
+                #ifndef DEBUG_SUPPRESS
                 std::cout << "P";
+                #endif
                 taskInfo.id = SpiTaskID::ClearIRQs;
                 taskInfo.radioID = 2;
                 taskInfo.irqMask = SX1280_IRQ_PREAMBLE_DETECTED;
@@ -2093,7 +2182,14 @@ static void handleEvents915()
                 crsf.LinkStatistics.uplink_RSSI_1 = (uint8_t)telemData.rssi915;
                 crsf.LinkStatistics.uplink_RSSI_2 = (uint8_t)telemData.rssi2G4;
                 crsf.LinkStatistics.uplink_SNR = telemData.snr2G4;
-                crsf.LinkStatistics.uplink_Link_quality = telemData.lq2G4;
+
+                // if crsf.LinkStatistics.uplink_Link_quality == 0 then edgeTX stops showing any telemetry which is really annoying
+                // So, send max(lq2G4, 1)
+                if (telemData.lq2G4 == 0) {
+                    crsf.LinkStatistics.uplink_Link_quality = 1;
+                } else {
+                    crsf.LinkStatistics.uplink_Link_quality = telemData.lq2G4;
+                }
 
                 // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
                 crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;
@@ -2209,7 +2305,7 @@ static void receive2G4()
     // TODO need a test for if the current mode is flrc so that we can support a mixture of lora and flrc modes
 
     #ifdef USE_FLRC
-    FlrcPacketStatus_s * status = radio2->GetLastPacketStatusFLRC();
+    FlrcPacketStatus_s * status = radio2->GetLastPacketStatusFLRC();    // XXX danger, SPI access
     const uint8_t anyErrorMask = FLRC_PKT_ERROR_MASK_SYNC | FLRC_PKT_ERROR_MASK_LENGTH | FLRC_PKT_ERROR_MASK_CRC | FLRC_PKT_ERROR_MASK_ABORT;
     flrcErrors = status->errors & anyErrorMask;
     #endif
@@ -2225,43 +2321,77 @@ static void receive2G4()
 
     } else {
 
+        // temporary debug, decide how to do this properly
+        // if (rfModeDivisor2G4 == 8 && nonceRX2G4 % 128 == 0) {
+        //     int32_t fe = radio2->GetFrequencyError();
+        //     printf("FEI %d\n", fe);
+        // }
+
         radio2->readRXData(); // get the data from the radio chip
 
         #ifdef DEBUG_PIN
         gpio_set_level(DEBUG_PIN, 0);
         #endif
 
+        #ifndef USE_FLRC
+        // flrc uses hardware CRC not software CRC so we can skip the check
         if (hasValidCRC2G4DB((DB2G4Packet_t *)radio2->RXdataBuffer))
+        #endif
         {
-            ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
+            if (!flrcFirstPacketSuccess) {
+                // only go to the trouble of processing and sending the packet to the FC if we haven't already sent it for this cycle
+                // TODO Send data to FC from tock() to reduce jitter
+                ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
 
-            #if defined(PRINT_RX_SCOREBOARD)
-            // printf("2");
-            std::cout << '2';
-            #endif
+                #if defined(PRINT_RX_SCOREBOARD)
+                // printf("2");
+                std::cout << '2';
+                #endif
 
-            totalRX2Events++;
-            lqEffective.add();
-            lqRadio2.add();
-            antenna = 1;
-            getRFlinkInfo();
+                totalRX2Events++;
+                lqEffective.add();
+                lqRadio2.add();
+                antenna = 1;
+                getRFlinkInfo();
+            }
 
+            if (flrcFirstPacket) {
+                flrcFirstPacketCounter++;
+                flrcFirstPacketSuccess = true;
+            } else {
+                flrcSecondPacketCounter++;
+                if (flrcFirstPacketSuccess) flrcBothPacketCounter++;
+            }
+        #ifndef USE_FLRC
         } else {
             // failed CRC check
             crc2Counter++;
             #ifdef PRINT_RX_SCOREBOARD
             lastPacketCrcError2G4 = true;
             #endif
+        #endif // USE_FLRC
         }
 
     } // else (no FLRC error flags)
 
-    HandleFHSS2G4();
-    
-    SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};
-    
-    BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-    if (qResult != pdTRUE) std::cout << "qFull2\n";
+    if (!flrcFirstPacket)
+    {
+        HandleFHSS2G4();
+
+        #ifdef USE_RX_TIMEOUTS
+        // if using timeouts we need to start a new receive, otherwise we're in continuous mode
+        // and already listening for the next packet
+        SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};        
+        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+        if (qResult != pdTRUE) std::cout << "qFull2\n";
+        #else
+        // Need to clear the IRQ or we won't get notified for the next packet
+        SpiTaskInfo taskInfo = {SpiTaskID::ClearIRQs, RadioSelection::second, SX1280_IRQ_RX_DONE};        
+        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+        if (qResult != pdTRUE) std::cout << "qFull2\n";
+
+        #endif
+    } 
 
 
     // check for variaton in the intervals between sending packets
@@ -2302,6 +2432,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
             {
                 case SpiTaskID::RxDone:
                     // has to handle all ISR cases for sx1262 (because we don't have enough pins on the prototype board for dio2)
+                    // XXX is this still true for the new PCBs?
                     handleEvents915();
                     break;
 
@@ -2495,6 +2626,7 @@ static void IRAM_ATTR r2_dio2_isr_handler(void* arg)
 void liveUpdateRFLinkRate(uint8_t index)
 {
     bool invertIQ = false;
+    bool useHeaders = false;
 
 #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
     invertIQ = (bool)(UID[5] & 0x01);
@@ -2509,6 +2641,12 @@ void liveUpdateRFLinkRate(uint8_t index)
     #endif
 
     rfModeDivisor2G4 = ModParams->interval / 1000;
+
+    if (rfModeDivisor2G4 == 8) {
+        // slowest mode uses headers for FEI
+        // TODO make this part of the ModParams struct
+        useHeaders = true;
+    }
 
     // Since we have a new divisor, we need to refresh the NonceRX
     nonceRX2G4 = timerNonce / (2 * rfModeDivisor2G4);
@@ -2530,13 +2668,18 @@ void liveUpdateRFLinkRate(uint8_t index)
     #endif
     {
         #ifdef USE_SECOND_RADIO
-        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, freq, ModParams->lora_settings.PreambleLen, invertIQ);
+        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, freq, 
+                        ModParams->lora_settings.PreambleLen, invertIQ, useHeaders);
         #endif
     }
 
     #ifdef USE_SECOND_RADIO
     // Set timeout based on the interval
+    #ifdef USE_RX_TIMEOUTS
     radio2->setRxTimeout(ModParams->interval * 5 / 2);
+    #else
+    radio2->setRxContinuous();
+    #endif
     radio2->RXnb();
     #endif
 
@@ -2552,6 +2695,7 @@ void liveUpdateRFLinkRate(uint8_t index)
 void SetRFLinkRate(uint8_t index)
 {
     bool invertIQ = false;
+    bool useHeaders = false;
 
 #if (ELRS_OG_COMPATIBILITY == COMPAT_LEVEL_1_0_0_RC2)
     invertIQ = (bool)(UID[5] & 0x01);
@@ -2560,6 +2704,13 @@ void SetRFLinkRate(uint8_t index)
 
     expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(index);
     expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
+
+    rfModeDivisor2G4 = ModParams->interval / 1000;
+    if (rfModeDivisor2G4 == 8) {
+        // slowest mode uses headers for FEI
+        // TODO make this part of the ModParams struct
+        useHeaders = true;
+    }
 
     #if (TRANSMITTER)
     crsf.setSyncParams(ModParams->interval);
@@ -2576,11 +2727,13 @@ void SetRFLinkRate(uint8_t index)
     {
         // radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
         #ifdef USE_SECOND_RADIO
-        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, GetInitialFreq2G4(), ModParams->lora_settings.PreambleLen, invertIQ);
+        radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, GetInitialFreq2G4(),
+                        ModParams->lora_settings.PreambleLen, invertIQ, useHeaders);
+
+        // XXX Set timeout?
         #endif
     }
 
-    rfModeDivisor2G4 = ModParams->interval / 1000;
 
     ExpressLRS_currAirRate_Modparams = ModParams;
     ExpressLRS_currAirRate_RFperfParams = RFperf;
@@ -2827,6 +2980,7 @@ void ICACHE_RAM_ATTR tick915()
  * 
  *  Assume that the radio modem is busy doing either rx or tx during this call, so we can only do non-radio related housekeeping in here.
  * 
+ *  Runs in task context (not ISR)
  *
  */
 void ICACHE_RAM_ATTR tick2G4()
@@ -2849,6 +3003,41 @@ void ICACHE_RAM_ATTR tick2G4()
     if (!TRANSMITTER)
     {
         updatePhaseLock2G4();
+        #ifdef USE_FLRC
+        // If we didn't get the first of the dups, shift the frequency for receiving the second and start another rx
+
+        if (!flrcFirstPacketSuccess) {
+            uint32_t freq = FHSSgetCurrDupSendFreq2G4();
+            SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::second, freq};
+
+            BaseType_t qResult;
+            qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+            if (qResult != pdTRUE) std::cout << "qFull4\n";
+
+            taskInfo.id = SpiTaskID::StartRx;
+            taskInfo.frequency = 0;
+        
+            // Need to start the extra receive
+            qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+            if (qResult != pdTRUE) std::cout << "qFull6\n";
+        }
+
+        flrcFirstPacket = false;
+
+        #endif // USE_FLRC
+    }  else {
+        #ifdef USE_FLRC
+        // Need to start the second send
+        // Contents of the buffer should still be valid?
+        SpiTaskInfo taskInfo = {SpiTaskID::StartTx, RadioSelection::second, 0};
+
+        // esp_rom_delay_us(50);
+    
+        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+        if (qResult != pdTRUE) std::cout << "qFull8\n";
+
+        flrcFirstPacket = false; // clear the flag to indicate that the next packet will be a second packet
+        #endif // USE_FLRC
     }
 
     // XXX remind me why we need separate rx and tx nonces again?
@@ -2856,12 +3045,12 @@ void ICACHE_RAM_ATTR tick2G4()
     nonceRX2G4 = timerNonce / (2 * rfModeDivisor2G4);
     nonceTX2G4 = timerNonce / (2 * rfModeDivisor2G4);
 
-    // Save the LQ value before the inc() reduces it by 1
-    uplinkLQ = lqEffective.getLQ();
-    lpfLq.update(uplinkLQ);
+    // // Save the LQ value before the inc() reduces it by 1
+    // uplinkLQ = lqEffective.getLQ();
+    // lpfLq.update(uplinkLQ);
 
-    lqEffective.inc();
-    lqRadio2.inc();
+    // lqEffective.inc();
+    // lqRadio2.inc();
 
     // printf("tickOut\n");
     // tickStartMs = 0;
@@ -2962,21 +3151,80 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
     pfdLoop.intEvent2G4(esp_timer_get_time());
 
+    // std::cout << ".";
+
     // #ifdef DEBUG_PIN
     // gpio_set_level(DEBUG_PIN, 1);
     // #endif
 
-    HandleFHSS2G4();
+    bool freqUpdated = HandleFHSS2G4();
 
+    #ifdef USE_FLRC
+    if (!freqUpdated)
+    {
+        // If we didn't get the first of the dups we would have switched frequency to try and get the second, 
+        // in which case we now need to restore the frequency for the next frame
+        if (!flrcFirstPacketSuccess)
+        {
+            uint32_t freq = FHSSgetCurrFreq2G4();
+            SpiTaskInfo taskInfo = {SpiTaskID::SetFrequency, RadioSelection::second, freq};
+            BaseType_t qResult;
+            qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+            if (qResult != pdTRUE) std::cout << "qFull5\n";
+        }
+
+    }
+
+    // if we got the first dup, then we wouldn't have listened for the 2nd and so won't have had an opportunity to start
+    // the rx early
+    if (flrcFirstPacketSuccess) 
+    {
+        SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};
+        BaseType_t qResult;
+        qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+        if (qResult != pdTRUE) std::cout << "qFull10\n";
+    }
+
+
+    flrcFirstPacket = true;
+    flrcFirstPacketSuccess = false; // reset the success flag for the current cycle
+    #endif  // USE_FLRC
+
+    // XXX unless the timeout was less than or equal to the interval this wouldn't have been sufficient
+    // We should be receiving by here, so there needs to be a test of "if not yet started receive".
 
     if (radio2Timedout) {
+        // std::cout << "T2";
         SpiTaskInfo taskInfo;
         taskInfo.id = SpiTaskID::StartRx;
         taskInfo.radioID = 2;
-        xQueueSend(rx_evt_queue, &taskInfo, 1);
+        int res = xQueueSend(rx_evt_queue, &taskInfo, 0);
+        if (res != pdTRUE) std::cout << "QFULL";
         radio2Timedout = false;
-        // std::cout << "TRX";
     }
+
+    unsigned long now = millis();
+    bool radio2Missing = (now - r2LastIRQms) > 100;
+    if (radio2Missing) {
+        // recovery - what of this is actually needed?
+        radio2->GetStatus();    // print the status, returns FS, "Transceiver has successfully processed the command"
+        radio2->RXnb();
+        radio2->GetStatus();    // print the status, returns RX, "Transceiver has successfully processed the command"
+
+        #ifndef DEBUG_SUPPRESS
+        std::cout << "R2M";
+        #endif
+
+        r2LastIRQms = now; // prevent spamming
+    }
+
+    // Save the LQ value before the inc() reduces it by 1
+    // XXX Extra LQ calcs disabled for testing
+    // uplinkLQ = lqEffective.getLQ();
+    // lpfLq.update(uplinkLQ);
+
+    // lqEffective.inc();
+    lqRadio2.inc();
 
 
     #if defined(PRINT_RX_SCOREBOARD)
@@ -3027,6 +3275,7 @@ void ICACHE_RAM_ATTR tockTX2G4()
     if (isRXconnected)
     {
         sendRCdataToRF2G4DB();
+        flrcFirstPacket = true;
     }
     #endif
 }
@@ -3117,9 +3366,13 @@ void lostConnection()
     radio1->RXnb();
 
     #ifdef USE_SECOND_RADIO
+    #ifdef USE_RX_TIMEOUTS
     radio2->setRxTimeout(ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval * 1000);
+    #else
+    radio2->setRxContinuous();
+    #endif // timeouts
     radio2->RXnb();
-    #endif
+    #endif // USE_SECOND_RADIO
 
     #ifdef LED_STATUS_INDEX
     setLedColour(LED_STATUS_INDEX, LED_BRIGHTNESS, 0, 0);
@@ -3414,6 +3667,209 @@ void runLoraTest()
 }
 #endif // LORA_TEST
 
+#ifdef WIFI_TEST
+
+#include "esp_wifi.h"
+#include "esp_log.h"
+#include "freertos/event_groups.h"
+#include "nvs_flash.h"
+
+static const char *TAG = "C3 wifi";
+
+/* FreeRTOS event group to signal when we are connected*/
+static EventGroupHandle_t s_wifi_event_group;
+
+/* The event group allows multiple bits for each event, but we only care about two events:
+ * - we are connected to the AP with an IP
+ * - we failed to connect after the maximum amount of retries */
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+
+#define EXAMPLE_ESP_MAXIMUM_RETRY (4)
+
+static int s_retry_num = 0;
+
+static void event_handler(void* arg, esp_event_base_t event_base,
+                                int32_t event_id, void* event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
+            esp_wifi_connect();
+            s_retry_num++;
+            ESP_LOGI(TAG, "retry to connect to the AP");
+        } else {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        }
+        ESP_LOGI(TAG,"connect to the AP fail");
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0;
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
+
+void wifi_init_sta(void)
+{   
+    s_wifi_event_group = xEventGroupCreate();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    cfg.nvs_enable = 0;
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config;
+
+    memset(&wifi_config, 0, sizeof(wifi_config_t));
+
+    // wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    memcpy(wifi_config.sta.ssid, "wippet3", 7);
+    memcpy(wifi_config.sta.password, "james4You", 9);
+
+
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+    ESP_ERROR_CHECK(esp_wifi_start() );
+
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
+
+}
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                    int32_t event_id, void* event_data)
+{
+    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
+        ESP_LOGI(TAG, "station " MACSTR " join, AID=%d",
+                 MAC2STR(event->mac), event->aid);
+    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
+        ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d",
+                 MAC2STR(event->mac), event->aid);
+    }
+}
+
+void wifi_init_ap()
+{
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    // cfg.nvs_enable = 0;
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        NULL));
+
+    std::cout << "setting country\n";
+    ESP_ERROR_CHECK(esp_wifi_set_country_code("CA", true));
+
+// typedef struct {
+//     uint8_t ssid[32];           /**< SSID of ESP32 soft-AP. If ssid_len field is 0, this must be a Null terminated string. Otherwise, length is set according to ssid_len. */
+//     uint8_t password[64];       /**< Password of ESP32 soft-AP. */
+//     uint8_t ssid_len;           /**< Optional length of SSID field. */
+//     uint8_t channel;            /**< Channel of ESP32 soft-AP */
+//     wifi_auth_mode_t authmode;  /**< Auth mode of ESP32 soft-AP. Do not support AUTH_WEP in soft-AP mode */
+//     uint8_t ssid_hidden;        /**< Broadcast SSID or not, default 0, broadcast the SSID */
+//     uint8_t max_connection;     /**< Max number of stations allowed to connect in, default 4, max 10 */
+//     uint16_t beacon_interval;   /**< Beacon interval which should be multiples of 100. Unit: TU(time unit, 1 TU = 1024 us). Range: 100 ~ 60000. Default value: 100 */
+//     wifi_cipher_type_t pairwise_cipher;   /**< pairwise cipher of SoftAP, group cipher will be derived using this. cipher values are valid starting from WIFI_CIPHER_TYPE_TKIP, enum values before that will be considered as invalid and default cipher suites(TKIP+CCMP) will be used. Valid cipher suites in softAP mode are WIFI_CIPHER_TYPE_TKIP, WIFI_CIPHER_TYPE_CCMP and WIFI_CIPHER_TYPE_TKIP_CCMP. */
+//     bool ftm_responder;         /**< Enable FTM Responder mode */
+// } wifi_ap_config_t;
+
+
+    wifi_config_t wifi_config = {
+        .ap = {
+            // .ssid = "TestNet",
+            // .password = "crumble",
+            .ssid_len = 7,
+            .channel = 11,
+            .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+            .max_connection = 4
+        }
+    };
+
+    memcpy(wifi_config.ap.ssid, "TestNet", 7);
+    memcpy(wifi_config.ap.password, "crumble17", 9);
+
+    // if (strlen(EXAMPLE_ESP_WIFI_PASS) == 0) {
+    //     wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    // }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(84));
+
+    ESP_LOGI(TAG, "wifi_init_softap finished.");
+
+}
+
+void runWifiTest()
+{
+
+    std::cout << "Wifi Test\n";
+
+    ESP_LOGI("jbk", "test a log msg");
+
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+
+    // wifi_init_sta();
+
+    wifi_init_ap();
+
+
+    wifi_ap_record_t ap_info;
+    // esp_err_t ret;
+    while(true)
+    {
+        vTaskDelay(2000/portTICK_PERIOD_MS);
+
+        std::cout << "Test\n"; 
+
+        // ret = esp_wifi_sta_get_ap_info(&ap_info);
+        // if (ret == ESP_OK) {
+        //     printf("rssi %d\n", ap_info.rssi);
+        // } else {
+        //     std::cout << "failed to get ap info\n";
+        // }
+    }
+}
+#endif // WIFI_TEST
+
 
 void app_main()
 {
@@ -3478,7 +3934,7 @@ void app_main()
             std::cout << "A miracle! stdout remapped to uart1\n";
         }
     } else {
-        #ifdef DUAL_BAND_PROTOTYPE
+        #if false // defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
         uart_set_baudrate(UART_NUM_0, CRSF_RX_BAUDRATE);
 
         #else
@@ -3494,11 +3950,12 @@ void app_main()
     }
 
     #ifdef LORA_TEST
-
     runLoraTest(); // No return from here
-
     #endif // LORA_TEST
 
+    #ifdef WIFI_TEST
+    runWifiTest(); // no return
+    #endif
 
     #ifdef DEBUG_PIN
 
@@ -3522,6 +3979,17 @@ void app_main()
 
     initLeds();
     ledRamp();
+
+    
+    // gpio_reset_pin(GPIO_NUM_2);
+    // gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+
+    // while (true) {
+    //     gpio_set_level(GPIO_NUM_2, 0);
+    //     delay(500);
+    //     gpio_set_level(GPIO_NUM_2, 1);
+    //     delay(500);
+    // }
 
     // while (true) {
     //     std::cout << "Hello\n";
@@ -3552,6 +4020,12 @@ void app_main()
     const bool usePreambleDetect = false; // this didn't work out, but maybe worth another look someday?
 
     // XXX retry if either radio doesn't initialise properly
+
+    // hold the 1280 in reset while we init the 1262, otherwise it interferes
+    gpio_reset_pin(RADIO2_RESET_PIN);
+    gpio_set_direction(RADIO2_RESET_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(RADIO2_RESET_PIN, 0);    // active low
+
 
     radio1->Begin(); // XXX need to add result value to sx1262 driver
 
@@ -3587,7 +4061,7 @@ void app_main()
     rfModeDivisor915 = airRateConfig915.interval / 1000;
 
     //create a queue to handle gpio event from isr
-    rx_evt_queue = xQueueCreate(10, sizeof(SpiTaskInfo));
+    rx_evt_queue = xQueueCreate(20, sizeof(SpiTaskInfo));
     // Since we don't have enough pins for dio2 on the sx1262 everything is currently routed to the rx915 task
     // tx_evt_queue = xQueueCreate(10, 0);
 
@@ -3658,13 +4132,13 @@ void app_main()
 
     if (TRANSMITTER)
     {
-        HwTimer::resume();
+        HwTimer::resume(); // XXX postpone this until CRSF data detected on uart?
     } else {
         radio1->RXnb();
         radio2->RXnb();
     }
 
-    #endif // DISABLE_RADIOS
+    #endif // ifndef DISABLE_RADIOS
 
     #ifdef DISABLE_RADIOS
     crsf.setSyncParams(2000);
@@ -3690,12 +4164,11 @@ void app_main()
 
     uint32_t lastRX1Events = 0, lastRX2Events = 0;
 
+    uint32_t lastRX1debug = 0, lastRX2debug = 0;
+
     // loop
     while(true) {
         // things that don't have to happen very quickly
-        //delay(100);   // idle watchdog has to be disabled if we comment this out
-
-        // taskYIELD(); // does this do anything useful? Need to check what the freertos idle task actually does
 
         vTaskDelay(50/portTICK_PERIOD_MS);
 
@@ -3756,7 +4229,7 @@ void app_main()
 
             if (TRANSMITTER)
             {
-                printf("lqTelem %2u ", lqTelem.getLQ());
+                printf("lqTelem %4d %2u ", (crsf.LinkStatistics.downlink_RSSI - 120), lqTelem.getLQ());
                 // Telemetry is only valid when isRXconnected is true
                 if (isRXconnected)
                 {
@@ -3768,19 +4241,23 @@ void app_main()
                     int8_t snr = telemData.snr2G4;
                     printf("Telem 915: %d %u, 2G4: %d, %u, SNR: %d\n", rssi915, lq915, rssi2G4, lq2G4, snr);
                 } else {
-                    std::cout << "No Telem\n";
+                    std::cout << "No RX connected\n";
                 }
-            } else {
+
+                if (timeout2Counter != 0) {
+                    printf("Timeouts: %d\n", timeout2Counter);
+                }
+
+                if (now - r2LastIRQms > 1000) {
+                    std::cout << "no irqs for 2G4\n";
+                }
+
+            } else {    // receiver
 
                 #if defined(PRINT_RX_SCOREBOARD)
                 // printf("\n");
                 std::cout << '\n';
                 #endif
-
-                // show some data from the handset
-                uint16_t c0 = crsf.elrsPackedDBDataOut.chan0;
-                std::cout << c0;
-                std::cout << ' ';
 
                 // check for hung callbacks
                 if (tickStartMs && ((now - tickStartMs) > 100))
@@ -3797,9 +4274,27 @@ void app_main()
                     std::cout << "R1 missing\n";
                 }
 
-                printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u, flrcCRC/s %2u ", 
-                        totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
-                        crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT, crcFLRCcounter*1000/elapsedT);
+                if (now - r2LastIRQms > 1000) {
+                    printf("no irqs for 2G4, now %d, last %d\n", now, r2LastIRQms);
+                }
+
+                printf("offset %d ", Offset);
+
+                // show some data from the handset
+                // uint16_t c0 = crsf.elrsPackedDBDataOut.chan0;
+                // std::cout << c0;
+                // std::cout << ' ';
+
+                // printf("rx1Events %u, rx2Events %u, LQ1 %3u, LQ2 %3u, LQC %3u, crc1Errors/s %2u, crc2Errors/s %2u, flrcCRC/s %2u ", 
+                //         totalRX1Events, totalRX2Events, lqRadio1.getLQ(), lqRadio2.getLQ(), lqEffective.getLQ(),
+                //         crc1Counter*1000/elapsedT, crc2Counter*1000/elapsedT, crcFLRCcounter*1000/elapsedT);
+
+                uint32_t delta1 = totalRX1Events - lastRX1debug;
+                uint32_t delta2 = totalRX2Events - lastRX2debug;
+                lastRX1debug = totalRX1Events;
+                lastRX2debug = totalRX2Events;
+                printf("pkts1 %d pkts2 %d (total %d) ", delta1, delta2, totalRX2Events);
+
 
                 int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
                 int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
@@ -3808,9 +4303,18 @@ void app_main()
                 float SNR0 = (float)LPF_UplinkSNR0.SmoothDataINT / 10;
                 float SNR1 = (float)LPF_UplinkSNR1.SmoothDataINT / 10;
                 printf("SNR1 %2.1f, SNR2 %2.1f ", SNR0, SNR1);
-                // printf("tN %u ", timerNonce);
-                // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
-                printf("Offset %4d DX %4d\n", Offset, OffsetDx);
+                // // printf("tN %u ", timerNonce);
+                // // printf("Offset %4d DX %4d freqOffset %d\n", Offset, OffsetDx, HwTimer::getFreqOffset());
+                // printf("Offset %4d DX %4d\n", Offset, OffsetDx);
+
+                // // debug for flrc double send mode
+                // uint32_t secondPacketOnly = flrcSecondPacketCounter - flrcBothPacketCounter;
+                // uint32_t secondPercent = secondPacketOnly * 100 / (flrcFirstPacketCounter + secondPacketOnly);
+
+                // printf("1: %4u, 2: %4u, both: %4u, only2: %4u, only2%%: %3u, LQ: %3u\n", flrcFirstPacketCounter, flrcSecondPacketCounter, 
+                //     flrcBothPacketCounter, secondPacketOnly, secondPercent, lqRadio2.getLQ());
+
+                printf("LQ1 %3u LQ2 %3u \n", lqRadio1.getLQ(), lqRadio2.getLQ());
 
                 // totalPackets = 0;
                 timeout1Counter = 0;
@@ -3818,6 +4322,10 @@ void app_main()
                 timeout2Counter = 0;
                 crc2Counter = 0;
                 crcFLRCcounter = 0;
+
+                flrcFirstPacketCounter = 0;
+                flrcSecondPacketCounter = 0;
+                flrcBothPacketCounter = 0;
 
                 if (connectionState == tentative)
                 {

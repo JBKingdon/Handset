@@ -14,17 +14,21 @@
 // #define LORA_TEST
 
 // Caution, there's another def for this in platformio.ini
-#define USE_FLRC
+// #define USE_FLRC
 
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
 #endif
 
+//-------------------------------------------------
+// Compile for TX or RX (Don't forget to select the right Hardware type as well!)
 #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
 #endif
+//-------------------------------------------------
+
 
 #ifdef IS_TRANSMITTER
 // For crsf tx module to openTX handset
@@ -36,13 +40,30 @@
 
 // Hardware revision:
 
-#define DUAL_BAND_BREADBOARD
+// #define DUAL_BAND_BREADBOARD
 
-// The first PCB: bare C3, modules for radios
-// #define DUAL_BAND_PROTOTYPE
+// The first DB PCB: bare C3, modules for radios
+#define DUAL_BAND_PROTOTYPE
+
+// DB pcb with no modules
+// #define DB_PCB_V1
 
 // This was for dual sx1280 with a c3 module on a PCB
 // #define C3_PCB_V0
+
+// ---------------------------
+
+// PCB_V1 uses an ordinary XO for the 1262, the others (with E22 modules) have TCXO
+#if !defined(DB_PCB_V1)
+
+#define USE_SX1262_TCXO
+
+#endif
+
+// PCB_V1 test inverted txen. Looks to work better non-inverted
+// #ifdef DB_PCB_V1
+// #define SX1262_TXEN_INVERTED
+// #endif
 
 
 // Features
@@ -259,7 +280,7 @@
 #define RADIO_BUSY_PIN  GPIO_NUM_7
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
-#define RADIO_TXEN      GPIO_NUM_19
+#define RADIO_TXEN_PIN    GPIO_NUM_19
 
 #elif defined(DUAL_BAND_PROTOTYPE)
 
@@ -276,8 +297,24 @@
 #define RADIO_BUSY_PIN  GPIO_NUM_7
 #define RADIO_DIO1_PIN  GPIO_NUM_10
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  XXX needs testing
-#define RADIO_TXEN      GPIO_NUM_13
+#define RADIO_TXEN_PIN  GPIO_NUM_13
 
+#elif defined(DB_PCB_V1)
+
+// common pins for spi
+
+#define RADIO_MOSI_PIN  GPIO_NUM_1
+#define RADIO_MISO_PIN  GPIO_NUM_0
+#define RADIO_SCK_PIN   GPIO_NUM_2
+
+// These are for the sx1262, the sx1280 pins are later under "USE_SECOND_RADIO"
+
+#define RADIO_RESET_PIN GPIO_NUM_6  // MTCK == 6
+#define RADIO_NSS_PIN   GPIO_NUM_7  // MTDO == 7
+#define RADIO_BUSY_PIN  GPIO_NUM_5  // MTDI == 5
+#define RADIO_DIO1_PIN  GPIO_NUM_4  // MTMS == 4
+// #define RADIO_DIO2_PIN  GPIO_NUM_3  XXX needs testing
+#define RADIO_TXEN_PIN      GPIO_NUM_9  // XXX need to check if this is active high or active low
 
 #else // these are for the dual 1280 breadboard prototype
 
@@ -325,6 +362,14 @@
 #define RADIO2_DIO1_PIN  GPIO_NUM_5
 #define RADIO2_DIO2_PIN  GPIO_NUM_3
 #define RADIO2_RESET_PIN GPIO_NUM_4
+
+#elif defined(DB_PCB_V1)
+
+#define RADIO2_NSS_PIN   GPIO_NUM_8
+#define RADIO2_BUSY_PIN  GPIO_NUM_18
+#define RADIO2_DIO1_PIN  GPIO_NUM_10
+#define RADIO2_DIO2_PIN  GPIO_NUM_19
+#define RADIO2_RESET_PIN GPIO_NUM_12
 
 #else // for dual 1280 breadboard prototype
 
@@ -409,6 +454,37 @@
 
 #ifdef IS_RECEIVER
 #define CRSF_TX_PIN   GPIO_NUM_21
+// #define CRSF_RX_PIN   GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
+
+#endif // IS_RECEIVER
+
+#define LED_STATUS_INDEX 0
+#define LED_RADIO1_INDEX 2
+#define LED_RADIO2_INDEX 1
+
+#elif defined(DB_PCB_V1)
+
+#define LED2812_PIN   GPIO_NUM_13
+
+#ifdef IS_RECEIVER
+#define CRSF_TX_PIN   GPIO_NUM_21
+// #define CRSF_RX_PIN   GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
+
+#endif // IS_RECEIVER
+
+#ifdef IS_TRANSMITTER
+// For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
+// #define CRSF_SPORT_PIN     GPIO_NUM_3
+// #define CRSF_SPORT_PIN     GPIO_NUM_9
+#define CRSF_SPORT_PIN  GPIO_NUM_21
+#define DEBUG_TX_PIN    GPIO_NUM_20
+// #define DEBUG_TX_PIN    GPIO_NUM_21
+#endif // IS_TRANSMITTER
+
+#ifdef IS_RECEIVER
+// #define CRSF_TX_PIN   GPIO_NUM_21
 // #define CRSF_RX_PIN   GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
 

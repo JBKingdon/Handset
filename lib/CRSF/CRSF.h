@@ -6,7 +6,7 @@
 #include "../../src/config.h"
 
 
-#ifdef DUAL_BAND_PROTOTYPE
+#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
 
 #ifdef IS_RECEIVER
 
@@ -26,7 +26,11 @@
 
 // The breadboard prototype can use uart1 with pin 9 for crossfire
 
-#define CRSF_PORT_NUM 0
+// XXX but for some reason this was still set to 0. I don't remember why. Setting to 1 to see if I can get
+// some debug out of a simple dev board to try out some wifi stuff
+
+// #define CRSF_PORT_NUM 0 
+#define CRSF_PORT_NUM 1
 
 #endif // DUAL_BAND_PROTOTYPE
 

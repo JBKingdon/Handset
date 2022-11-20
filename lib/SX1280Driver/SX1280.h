@@ -36,6 +36,8 @@ private:
     uint8_t timeoutHigh = 0, timeoutLow = 0;
     FlrcPacketStatus_s packetStatus;
 
+    bool explicitHeaders = false;   // if true, current mode of operation uses explicit headers
+
     void setupLora();
     void setupFLRC();
     void SetPacketParamsFLRC();
@@ -101,7 +103,7 @@ public:
     void End();
     void SetMode(SX1280_RadioOperatingModes_t OPmode);
     void Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, 
-                uint8_t PreambleLength, const bool invertIQ = false);
+                uint8_t PreambleLength, const bool invertIQ = false, const bool useExplicitHeaders = false);
     void ICACHE_RAM_ATTR ConfigFLRC(uint32_t freq);
 
     void ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr);
@@ -111,6 +113,7 @@ public:
     void ICACHE_RAM_ATTR SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr);
     void SetOutputPower(int8_t power);
     void setRxTimeout(uint32_t t);
+    void setRxContinuous();
 
     void startCWTest(int8_t power, uint32_t freq);
 

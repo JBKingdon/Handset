@@ -118,7 +118,7 @@ void SX1280Hal_C3::reset(void)
 
     gpio_set_level(resetPin, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    gpio_set_level(resetPin, 0);    
+    gpio_set_level(resetPin, 0);
     vTaskDelay(200 / portTICK_PERIOD_MS);
     gpio_set_level(resetPin, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);

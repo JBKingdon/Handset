@@ -399,49 +399,85 @@ void SX1262Driver::Begin()
 #ifdef RUN_RADIO_BUFFER_TEST
     printf("testing buffer...\n\r");
 
-    const uint8_t bytesToTest = 100;
+    bool bufferTestFailed = false;
+
+    const uint8_t bytesToTest = 100; // NB readBuffer can handle max 253 bytes
 
     // test that we can write to and read from the radio's buffer
     memset((void*)TXdataBuffer, 0, bytesToTest);
-    hal.WriteBuffer(0, TXdataBuffer, bytesToTest); // can't reach the last byte, good enough
+
+    delay(50);
+
+    hal.WriteBuffer(0, TXdataBuffer, bytesToTest);
 
     // GetStatus();
+    delay(50);
 
     // read it back
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != 0) {
             printf("!!! not 0 at %d:%d !!!\n\r", i, RXdataBuffer[i]);
+            bufferTestFailed = true;
             break;
         }
     }
 
+    delay(50);
+
     memset((void*)TXdataBuffer, 0xFF, bytesToTest);
     hal.WriteBuffer(0, TXdataBuffer, bytesToTest);
+
+    delay(50);
 
     // read it back
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != 0xFF) {
             printf("!!! not FF at %d:%d !!!\n\r", i, RXdataBuffer[i]);
+            bufferTestFailed = true;
             break;
         }
     }
 
+    delay(50);
+
     for(int i=0; i<bytesToTest; i++) TXdataBuffer[i] = i;
     hal.WriteBuffer(0, TXdataBuffer, bytesToTest);
+
+    delay(50);
 
     // read it back
     hal.ReadBuffer(0, RXdataBuffer, bytesToTest);
     for(int i=0; i<bytesToTest; i++) {
         if (RXdataBuffer[i] != i) {
+            bufferTestFailed = true;
             printf("!!! not i at %d:%d !!!\n\r", i, RXdataBuffer[i]);
             break;
         }
     }
 
     printf("buffer test complete\n\r");
+
+    if (bufferTestFailed)
+    {
+        // Try the detect again - does it still work after the buffer test fails?
+        // Validate that the sx1262 is working.
+        // Read the lora syncword register, should be 0x1424 at power on
+        const uint8_t syncWordMSB = hal.ReadRegister(0x0740);
+        const uint8_t syncWordLSB = hal.ReadRegister(0x0741);
+        const uint16_t loraSyncword = ((uint16_t)syncWordMSB << 8) | syncWordLSB;
+
+        if (loraSyncword == 0x1424) {
+            printf("SX126x detected\n\r");
+        } else {
+            printf("ERROR Failed to find SX1262!\n\r");
+        }
+    }
+
+
 #endif //RUN_RADIO_BUFFER_TEST
+
 
     setTxClampConfig();
 
@@ -451,8 +487,10 @@ void SX1262Driver::Begin()
 
     debugErrorStatus();
 
+    #ifdef USE_SX1262_TCXO
     printf("enabling tcxo\n\r");
     enableTCXO();
+    #endif
 
     // debugErrorStatus();
 

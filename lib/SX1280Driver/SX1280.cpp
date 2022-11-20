@@ -1,5 +1,4 @@
-// temp until ported to C3
-// #ifdef GD32
+#define RUN_RADIO_BUFFER_TEST
 
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
@@ -19,6 +18,7 @@ extern "C" {
 
 #include <stdio.h>
 #include <math.h>
+#include <string.h> // for memset
 
 #ifdef GD32
 
@@ -112,9 +112,11 @@ void SX1280Driver::setupFLRC()
 {
     this->SetMode(SX1280_MODE_STDBY_RC);
     hal->WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_FLRC);
-    // this->ConfigModParamsFLRC(FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2, BT_DIS);
     // this->ConfigModParamsFLRC(FLRC_BR_1_300_BW_1_2, FLRC_CR_1_2, BT_DIS);
-    this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_1_2, BT_DIS);
+    this->ConfigModParamsFLRC(FLRC_BR_1_040_BW_1_2, FLRC_CR_3_4, BT_DIS);
+    // this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_3_4, BT_DIS);
+    // this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_1_2, BT_DIS);
+    // this->ConfigModParamsFLRC(FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2, BT_DIS);
 
     //enable auto FS
     hal->WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);
@@ -202,6 +204,66 @@ int32_t SX1280Driver::Begin(const bool usePreamble)
         result = -1;
     }
 
+    #ifdef RUN_RADIO_BUFFER_TEST
+    printf("testing buffer...\n\r");
+
+    const uint8_t bytesToTest = 100;
+
+    // test that we can write to and read from the radio's buffer
+    memset((void*)TXdataBuffer, 0, bytesToTest);
+
+    // delay(50);
+
+    hal->WriteBuffer(0, TXdataBuffer, bytesToTest);
+
+    // GetStatus();
+    // delay(50);
+
+    // read it back
+    hal->ReadBuffer(0, RXdataBuffer, bytesToTest);
+    for(int i=0; i<bytesToTest; i++) {
+        if (RXdataBuffer[i] != 0) {
+            printf("!!! not 0 at %d:%d !!!\n\r", i, RXdataBuffer[i]);
+            break;
+        }
+    }
+
+    // delay(50);
+
+    memset((void*)TXdataBuffer, 0xFF, bytesToTest);
+    hal->WriteBuffer(0, TXdataBuffer, bytesToTest);
+
+    // delay(50);
+
+    // read it back
+    hal->ReadBuffer(0, RXdataBuffer, bytesToTest);
+    for(int i=0; i<bytesToTest; i++) {
+        if (RXdataBuffer[i] != 0xFF) {
+            printf("!!! not FF at %d:%d !!!\n\r", i, RXdataBuffer[i]);
+            break;
+        }
+    }
+
+    // delay(50);
+
+    for(int i=0; i<bytesToTest; i++) TXdataBuffer[i] = i;
+    hal->WriteBuffer(0, TXdataBuffer, bytesToTest);
+
+    // delay(50);
+
+    // read it back
+    hal->ReadBuffer(0, RXdataBuffer, bytesToTest);
+    for(int i=0; i<bytesToTest; i++) {
+        if (RXdataBuffer[i] != i) {
+            printf("!!! not i at %d:%d !!!\n\r", i, RXdataBuffer[i]);
+            break;
+        }
+    }
+
+    printf("buffer test complete\n\r");
+    #endif //RUN_RADIO_BUFFER_TEST
+
+
     #ifdef USE_FLRC
     setupFLRC();
     #else
@@ -233,9 +295,14 @@ void ICACHE_RAM_ATTR SX1280Driver::ConfigFLRC(uint32_t freq)
     SetFrequency(freq);
 }
 
-
+/**
+ * Used to reconfigure the modem for different packet rates
+ * 
+ *
+*/
 void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, 
-                                          SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, const uint8_t PreambleLength, const bool invertIQ)
+                                          SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, const uint8_t preambleLength, 
+                                          const bool invertIQ, const bool _explicitHeaders)
 {
     SX1280_RadioLoRaIQModes_t iqMode;
 
@@ -245,13 +312,19 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
         iqMode = SX1280_LORA_IQ_NORMAL;
     }
 
+    explicitHeaders = _explicitHeaders;
+
     // this->SetMode(SX1280_MODE_STDBY_XOSC); // Try using _FS for quicker changeover ?
-    this->SetMode(SX1280_MODE_FS); // Try using _FS for quicker changeover ?
+    this->SetMode(SX1280_MODE_FS); // using _FS for quicker changeover than STDBY_XOSC
     ConfigModParams(bw, sf, cr);
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, iqMode);
     #else
-    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH_2G4, SX1280_LORA_CRC_OFF, iqMode);
+    if (explicitHeaders) {
+        SetPacketParams(preambleLength, SX1280_LORA_PACKET_EXPLICIT, OTA_PACKET_LENGTH_2G4, SX1280_LORA_CRC_OFF, iqMode);
+    } else {
+        SetPacketParams(preambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH_2G4, SX1280_LORA_CRC_OFF, iqMode);
+    }
     #endif
 
     SetFrequency(freq);
@@ -329,6 +402,16 @@ void SX1280Driver::setRxTimeout(uint32_t t)
     timeoutLow = tScaled & 0xFF;
 }
 
+/** Set the rx timeout to the special value for continuous receives 
+ * 
+*/
+void SX1280Driver::setRxContinuous() 
+{
+    timeoutHigh = 0xFF;
+    timeoutLow = 0xFF;
+}
+
+
 
 void SX1280Driver::SetPacketParams(uint8_t PreambleLength, SX1280_RadioLoRaPacketLengthsModes_t HeaderType, uint8_t PayloadLength, 
                                     SX1280_RadioLoRaCrcModes_t crc, SX1280_RadioLoRaIQModes_t InvertIQ)
@@ -362,12 +445,13 @@ void SX1280Driver::SetPacketParamsFLRC()
 
     buf[0] = SX1280_RADIO_SET_PACKETPARAMS;
     buf[1] = 0x30;  // PREAMBLE_LENGTH_16_BITS                  0x30
+    // buf[1] = 0x70;  // PREAMBLE_LENGTH_32_BITS                  0x70
     buf[2] = 0x04;  // SyncWordLength  FLRC_SYNC_WORD_LEN_P32S  0x04
     buf[3] = 0x10;  // SyncWordMatch  RX_MATCH_SYNC_WORD_1      0x10
-    buf[4] = 0x00;  // PacketType PACKET_FIXED_LENGTH 0x00
-    buf[5] = OTA_PACKET_LENGTH_2G4;     // PayloadLength
-    buf[6] = 0x10;  // CrcLength CRC_2_BYTE 0x10
-    buf[7] = 0x08;  // 0x08 Whitening must be disabled for FLRC
+    buf[4] = 0x00;  // PacketType PACKET_FIXED_LENGTH           0x00
+    buf[5] = OTA_PACKET_LENGTH_2G4_FLRC;     // PayloadLength
+    buf[6] = SX1280_RADIO_CRC_2_BYTES;  // CrcLength CRC_2_BYTE                     
+    buf[7] = 0x08;  // Whitening must be disabled for FLRC      0x08
 
     hal->fastWriteCommand(buf, sizeof(buf));
 
@@ -514,30 +598,27 @@ void SX1280Driver::SetFrequency(uint32_t Reqfreq)
     currFreq = Reqfreq;
 }
 
-// FEI requires explicit header (reasons unknown)
+// NB FEI requires explicit header (reasons unknown)
 int32_t SX1280Driver::GetFrequencyError()
 {
-    // uint8_t efeRaw[3] = {0}; //TODO make word alignmed
-    // uint32_t efe = 0;
+    uint32_t efe;
+    uint8_t *efeRaw = ((uint8_t *) &efe) + 1;
     double efeHz = 0.0;
-    uint32_t a,b,c;
 
-    // TODO convert to multi-reg read
+    // read the three registers in one SPI transaction
+    hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB, efeRaw, 3);
 
-    // efeRaw[0] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
-    // efeRaw[1] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
-    // efeRaw[2] = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
-    a = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
-    b = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
-    c = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
-    // efe = (efeRaw[0] << 16) | (efeRaw[1] << 8) | efeRaw[2];
+    // only 4 bits of MSB are valid, so mask off the unused bits
+    int32_t efeSigned = ((efeRaw[0] & 0xF) << 16) | (efeRaw[1] << 8) | efeRaw[2];
 
-    // efe &= SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MASK;
+    // sign extend
+    if (efeRaw[0] & 0x8) efeSigned |= 0xFFF00000;
 
-    // printf("GetFrequencyError IMPL NEEDED\n");
-    printf("GFE: %u %u %u\n", a, b, c);
+    // XXX Need to get the current BW instead of the hardcoded 800.0
+    efeHz = 1.55 * (double)efeSigned / (1600.0 / 800.0);
 
-    //efeHz = 1.55 * (double)complement2(efe, 20) / (1600.0 / (double)GetLoRaBandwidth() * 1000.0);
+    // printf("FE Hz %f\n", efeHz);
+
     return efeHz;
 }
 
@@ -629,15 +710,15 @@ void SX1280Driver::TXnb(volatile uint8_t *data, uint8_t length)
 
 void SX1280Driver::readRXData()
 {
-    // uint8_t FIFOaddr = GetRxBufferAddr();
-    // hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH);
+    uint8_t FIFOaddr = GetRxBufferAddr();
+    hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH_2G4);
 
     // if (FIFOaddr != 0) {
-    //     printf("!!! offset %u\n", FIFOaddr);
+        // printf("offset %u ", FIFOaddr);
     // }
 
     // assume we always read from offset 0 (won't work with free running receives)
-    hal->ReadBuffer(0, RXdataBuffer, OTA_PACKET_LENGTH_2G4);
+    // hal->ReadBuffer(FIFOaddr, RXdataBuffer, OTA_PACKET_LENGTH_2G4);
 }
 
 void SX1280Driver::RXnb()
@@ -799,6 +880,3 @@ void SX1280Driver::startCWTest(int8_t power, uint32_t freq)
     buffer[0] = SX1280_RADIO_SET_TXCONTINUOUSWAVE;
     hal->fastWriteCommand(buffer, 1);
 }
-
-
-// #endif // GD32
