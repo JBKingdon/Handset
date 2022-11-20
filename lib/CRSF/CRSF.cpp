@@ -15,9 +15,12 @@
 // #include "../../lib/FIFO/FIFO.h"
 // #include "telemetry_protocol.h"
 
-// #define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART to the FC
+#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART to the FC
 
-#define TX_AUTOBAUD_ENABLED
+// For the tx module, enable to search for the correct baudrate being used by the controller
+// Useful to disable for testing, but then the compiled baudrate has to match the controller setting (set by the value of
+// baudrateIndex and the OPENTX_BAUDS array)
+// #define TX_AUTOBAUD_ENABLED
 
 #include "led_strip.h"
 
@@ -97,7 +100,7 @@ uint32_t CRSF::RequestedRCpacketInterval = 5000; // default to 200hz as per 'nor
 volatile uint32_t CRSF::RCdataLastRecv = 0;
 volatile int32_t CRSF::OpenTXsyncOffset = 0;
 
-static uint8_t baudrateIndex = 4;
+static uint8_t baudrateIndex = 3;
 
 #define MAX_BYTES_SENT_IN_UART_OUT 32
 uint8_t CRSF::CRSFoutBuffer[CRSF_MAX_PACKET_LEN] = {0};
