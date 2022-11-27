@@ -68,12 +68,14 @@ typedef struct DB915Telem_s {
     int rssi915 : 8;
     unsigned int lq915 : 8;
 
+    // TODO add snr915
+
     int rssi2G4 : 8;
     unsigned int lq2G4 : 8;     // 8 bits
 
-    int snr2G4 : 8;         // signed value in tenths, so  -12.8 to +12.7 
+    int snr2G4 : 8;             // signed value in tenths, so  -12.8 to +12.7 
 
-    uint8_t serialData[7];
+    uint8_t serialData[7];      // not currently implemented. We could remove and drop the packet length for now
 
     unsigned int serialDataLength : 4;
 
