@@ -81,9 +81,9 @@
 // #define TX_POWER_2G4 (-18)
 // #define TX_POWER_2G4 (-13)
 // #define TX_POWER_2G4 (-10)
-// #define TX_POWER_2G4 (0)
+#define TX_POWER_2G4 (0)
 // #define TX_POWER_2G4 (10)
-#define TX_POWER_2G4 (13)
+// #define TX_POWER_2G4 (13)
 
 // Channel to use for arming, 0 through 15
 // XXX only partially implemented. Manual changes needed if this is changed!
@@ -3289,7 +3289,9 @@ void ICACHE_RAM_ATTR tockRX2G4()
     // XXX unless the timeout was less than or equal to the interval this wouldn't have been sufficient
     // We should be receiving by here, so there needs to be a test of "if not yet started receive".
 
+    // Now that we're using continuous receive there shouldn't be any timeouts
     if (radio2Timedout) {
+        std::cout << "XXX Unexpected 2g4 timeout";
         // std::cout << "T2";
         SpiTaskInfo taskInfo;
         taskInfo.id = SpiTaskID::StartRx;
@@ -3301,16 +3303,31 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
     #ifdef USE_SECOND_RADIO
     unsigned long now = millis();
-    bool radio2Missing = (now - r2LastIRQms) > 100;
+    bool radio2Missing = (now - r2LastIRQms) > 250; // with a short interval this now gets triggered at low LQ because continous rx means no timeout irqs
     if (radio2Missing) {
+        uint16_t irqS = radio2->GetIrqStatus();
+        if (irqS != 0) {
+            printf("unhandled irqs %X\n", irqS);
+        }
         // recovery - what of this is actually needed?
-        radio2->GetStatus();    // print the status, returns FS, "Transceiver has successfully processed the command"
-        radio2->RXnb();
-        radio2->GetStatus();    // print the status, returns RX, "Transceiver has successfully processed the command"
+        uint8_t status = radio2->getStatus();    // print the status, returns FS, "Transceiver has successfully processed the command"
 
-        #ifndef DEBUG_SUPPRESS
-        std::cout << "R2M";
-        #endif
+        if ((status & SX1280_STATUS_MODE_MASK) != SX1280_STATUS_RX)
+        {
+            #ifndef DEBUG_SUPPRESS
+            radio2->printStatus(status);
+            #endif
+
+            radio2->RXnb();
+
+            #ifndef DEBUG_SUPPRESS
+            status = radio2->getStatus();    // print the status, returns RX, "Transceiver has successfully processed the command"
+            radio2->printStatus(status);
+            std::cout << "R2M";
+            #endif
+        } else {
+            std::cout << "skip ";
+        }
 
         r2LastIRQms = now; // prevent spamming
     }

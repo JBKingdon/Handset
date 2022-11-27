@@ -757,19 +757,26 @@ uint8_t ICACHE_RAM_ATTR SX1280Driver::GetRxBufferAddr()
     return status[1];
 }
 
-void ICACHE_RAM_ATTR SX1280Driver::GetStatus()
+uint8_t ICACHE_RAM_ATTR SX1280Driver::getStatus()
 {
     uint8_t status = 0;
 
+    hal->ReadCommand(SX1280_RADIO_GET_STATUS, (uint8_t *)&status, 1);
+
+    return status;
+}
+
+void ICACHE_RAM_ATTR SX1280Driver::printStatus(uint8_t status)
+{
     uint8_t stat1;
     uint8_t stat2;
-    bool busy;
+    // bool busy;
 
-    hal->ReadCommand(SX1280_RADIO_GET_STATUS, (uint8_t *)&status, 1);
     stat1 = (0b11100000 & status) >> 5;
     stat2 = (0b00011100 & status) >> 2;
-    busy = 0b00000001 & status;
-    printf("Status: %u, %u, %u (%X)\n", stat1, stat2, busy, status);
+    // busy = 0b00000001 & status;  // Not according to the datasheet
+    // printf("Status: %u, %u, %u (%X)\n", stat1, stat2, busy, status);
+    printf("Status: %u, %u (%X)\n", stat1, stat2, status);
 }
 
 bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()

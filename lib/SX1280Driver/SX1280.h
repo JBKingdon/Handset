@@ -132,7 +132,8 @@ public:
 
     void ICACHE_RAM_ATTR ClearIrqStatus(uint16_t irqMask);
 
-    void ICACHE_RAM_ATTR GetStatus();
+    uint8_t ICACHE_RAM_ATTR getStatus();
+    void ICACHE_RAM_ATTR printStatus(uint8_t status);
 
     void SetDioIrqParams(uint16_t irqMask, uint16_t dio1Mask, uint16_t dio2Mask, uint16_t dio3Mask);
 

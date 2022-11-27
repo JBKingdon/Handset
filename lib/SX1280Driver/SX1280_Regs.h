@@ -27,6 +27,28 @@
 #define FLRC_PKT_ERROR_MASK_PKT      (1 << 1)
 #define FLRC_PKT_ERROR_MASK_CTRLBUSY (1 << 0)
 
+// Status byte definitions
+// Section 11.3
+// 7:5             4:2             1           0
+// Circuit mode    Command status  Reserved    Reserved
+// 0x0: Reserved   0x0: Reserved
+// 0x1: Reserved   0x1: Transceiver has successfully processed the command
+// 0x2: STDBY_RC   0x2: Data are available to host
+// 0x3: STDBY_XOSC 0x3: Command time-out
+// 0x4: FS         0x4: Command processing error
+// 0x5: Rx         0x5: Failure to execute command
+// 0x6: Tx         0x6: Command Tx done
+
+// For efficiency, let's define the constants in their bit shifted positions, along with a mask to use
+#define SX1280_STATUS_MODE_MASK (0xE0)
+#define SX1280_STATUS_CS_MASK (0x1C)
+
+#define SX1280_STATUS_STDBY_RC   (2 << 5)
+#define SX1280_STATUS_STDBY_XOSC (3 << 5)
+#define SX1280_STATUS_FS         (4 << 5)
+#define SX1280_STATUS_RX         (5 << 5)
+#define SX1280_STATUS_TX         (6 << 5)
+
 
 typedef enum
 {
