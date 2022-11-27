@@ -3,6 +3,28 @@
  * 
  * TODO:
  * 
+ *   What's going on with rssi 915 on the transmitter?
+ * 
+ *   Use breadboard both ends
+ * 
+ *   Disable 2G4
+ * 
+ *   telem power    telem rssi      rc power    rc rssi
+ *   -9                -50          -9          -52
+ *   -9                -51          20          -30
+ *   20                -25          -9          -55
+ *   20                -25          20          -30
+ * 
+ *   LQ on 915 appears to improve when connecting rxen on the e22 module, but it's inconsistent in behaviour
+ * 
+ *   Interference between bands
+ *      On the PCB rx (but not the breadboards), transmitting 2G4 at 13 dBm reduces 915 rssi by 20dB
+ * 
+ *      What happens with tx 915 vs 2G4 rssi?
+ *          Try gathering separate rssi stats for during the telemetry period when the sx1262 will be transmitting from the receiver
+ *          rssi and lq looks the same during 915 tx as during rx, but both look worse than expected. Need another test where 2g4
+ *          can be tested independently of any 915 activity
+ * 
  *   Make the TX only transmit when it's getting data from the handset
  * 
  *   Fix SPI collisions
@@ -50,19 +72,25 @@
 
 // sx1262 runs from -9 to +22
 // #define TX_POWER_915 (-9)
-#define TX_POWER_915 (-6)
+// #define TX_POWER_915 (-6)
+#define TX_POWER_915 (0)
 // #define TX_POWER_915 (10)
+// #define TX_POWER_915 (20)
 
 // Bare sx1280 from -18 to +13 
-// #define TX_POWER_2G4 (13)
-#define TX_POWER_2G4 (10)
-// #define TX_POWER_2G4 (0)
-// #define TX_POWER_2G4 (-10)
+// #define TX_POWER_2G4 (-18)
 // #define TX_POWER_2G4 (-13)
+// #define TX_POWER_2G4 (-10)
+// #define TX_POWER_2G4 (0)
+// #define TX_POWER_2G4 (10)
+#define TX_POWER_2G4 (13)
 
 // Channel to use for arming, 0 through 15
 // XXX only partially implemented. Manual changes needed if this is changed!
 #define ARM_CHANNEL 8
+
+// enable separate 2g4 rssi measurements during telemetry sends
+// #define DEBUG_EXTRA_RSSI
 
 // recompile both rx & tx when changing this:
 // XXX doesn't work, needs updating after change to conventional telemetry
@@ -208,6 +236,9 @@ uint32_t timeout1Counter = 0;
 uint32_t timeout2Counter = 0;
 uint32_t mismatchCounter = 0;
 uint32_t totalPackets = 0;
+#ifdef DEBUG_EXTRA_RSSI
+uint32_t packetsDuringTelem = 0;
+#endif
 uint32_t totalRX1Events = 0;
 uint32_t totalRX2Events = 0;
 uint32_t totalMatches = 0;
@@ -301,6 +332,12 @@ static DB915Telem_t telemData;
 LPF LPF_UplinkRSSI0(5);  // track rssi per antenna
 LPF LPF_UplinkRSSI1(5);
 
+#ifdef DEBUG_EXTRA_RSSI
+// For testing crosstalk/interference
+LPF LPF_UplinkRSSI1_telem(5);
+LPF LPF_UplinkRSSI1_noTelem(5);
+#endif
+
 LPF LPF_UplinkSNR0(6);  // track SNR per antenna
 LPF LPF_UplinkSNR1(6);
 
@@ -331,6 +368,7 @@ led_strip_t *strip = nullptr;
 void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
 void liveUpdateRFLinkRate(uint8_t index);
 void SetRFLinkRate(uint8_t index);
+bool ICACHE_RAM_ATTR isTelemetryFrame();
 
 
 
@@ -374,9 +412,16 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
             t2 = radio2->GetLastPacketRSSI();
             LPF_UplinkSNR1.update(radio2->LastPacketSNR*10); // value was set as a side-effect of getLastPacketRSSI
             #endif
-            rssiDBM1 = LPF_UplinkRSSI1.update(t2);
+            rssiDBM1 = LPF_UplinkRSSI1.update(t2);  // TODO rename so that radios are consistently named. Currently we have 0,1 1,2 and 915,2g4
             // printf("update1 %d %d\n", t2, rssiDBM1);
+            #ifdef DEBUG_EXTRA_RSSI
+            if (isTelemetryFrame()) {
+                LPF_UplinkRSSI1_telem.update(t2);
+            } else {
+                LPF_UplinkRSSI1_noTelem.update(t2);
+            }
             #endif
+            #endif // DEBUG_EXTRA_RSSI
 
             break;
     }
@@ -709,6 +754,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     packet->ch3 = crsfTo10bit(crsf.ChannelDataIn[3]);
 
     // This will send the arm channel even though it's going to be ignored. Seems like a waste of bandwidth
+    // XXX caution, arm flag doesn't fit in flrc packets, so this will be the definitive and only copy
 
     bool firstGroup = (timerNonce >> 4) % 2; // alternate the two groups of channels
     if (firstGroup)
@@ -952,6 +998,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4()
  */
 void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 {
+    #ifdef USE_SECOND_RADIO
     DB2G4Packet_t * packet = (DB2G4Packet_t *) radio2->TXdataBuffer;
 
     crsf.JustSentRFpacket(); // for external module sync
@@ -1004,6 +1051,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
     //    printf("delta %lu avg %ld\n", delta, avgDelta);
     // }
     // tSentLast = tSent;
+    #endif // USE_SECOND_RADIO
 }
 
 /**
@@ -1911,7 +1959,12 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
             // gpio_set_level(DEBUG_PIN, 0);
             // #endif
 
-            uint16_t irqs = radio2->GetIrqStatus();
+            uint16_t irqs = 0;
+
+            #ifdef USE_SECOND_RADIO
+            irqs = radio2->GetIrqStatus();
+            #endif
+
             if (irqs == 0) {
                 continue;
             }
@@ -2194,10 +2247,13 @@ static void handleEvents915()
                 }
 
                 // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
-                crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;
+                // crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;   // XXX no filtering
+                crsf.LinkStatistics.downlink_RSSI = 120 + LPF_UplinkRSSI0.SmoothDataINT; // XXX what's with the +120?
                 crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
                 //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
+                #ifdef USE_SECOND_RADIO
                 crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
+                #endif
                 crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
 
                 // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
@@ -2296,6 +2352,7 @@ static void handleEvents915()
  */
 static void receive2G4()
 {
+    #ifdef USE_SECOND_RADIO
     r2LastIRQms = millis();
 
     uint8_t flrcErrors = 0;
@@ -2306,7 +2363,7 @@ static void receive2G4()
 
     // TODO need a test for if the current mode is flrc so that we can support a mixture of lora and flrc modes
 
-    #ifdef USE_FLRC
+    #if defined(USE_FLRC) && defined(USE_SECOND_RADIO)
     FlrcPacketStatus_s * status = radio2->GetLastPacketStatusFLRC();    // XXX danger, SPI access
     const uint8_t anyErrorMask = FLRC_PKT_ERROR_MASK_SYNC | FLRC_PKT_ERROR_MASK_LENGTH | FLRC_PKT_ERROR_MASK_CRC | FLRC_PKT_ERROR_MASK_ABORT;
     flrcErrors = status->errors & anyErrorMask;
@@ -2356,6 +2413,10 @@ static void receive2G4()
                 lqRadio2.add();
                 antenna = 1;
                 getRFlinkInfo();
+
+                #ifdef DEBUG_EXTRA_RSSI
+                if (isTelemetryFrame()) packetsDuringTelem++;
+                #endif
             }
 
             if (flrcFirstPacket) {
@@ -2407,6 +2468,7 @@ static void receive2G4()
     //     printf("fhhsMod %u delta %lu avg %ld, variance %ld\n", nonceRX915 % ExpressLRS_currAirRate_Modparams->FHSShopInterval, delta, avgDelta, variance);
     // }
     // tRcvLast = tRcv;
+    #endif // USE_SECOND_RADIO
 }
 
 #endif
@@ -2470,6 +2532,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             }
                             break;
                         case RadioSelection::second:
+                            #ifdef USE_SECOND_RADIO
                             // Send a control packet
                             { // local scope for *data
                                 uint8_t *data = (uint8_t *) radio2->TXdataBuffer;
@@ -2486,6 +2549,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                                 radio2->TXnb(data, OTA_PACKET_LENGTH_2G4);
                                 #endif
                             }
+                            #endif // USE_SECOND_RADIO
                             break;
                         default:
                             printf("unexpected radioID for StartTx %d\n", taskInfo.radioID);
@@ -2504,7 +2568,9 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             radio1->SetFrequency(taskInfo.frequency);
                             break;
                         case RadioSelection::second:
+                            #ifdef USE_SECOND_RADIO
                             radio2->SetFrequency(taskInfo.frequency);
+                            #endif
                             break;
                         default:
                             printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
@@ -2516,14 +2582,18 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                     {
                         case RadioSelection::both: // start rx on both radios
                             radio1->RXnb();
+                            #ifdef USE_SECOND_RADIO
                             radio2->RXnb();
+                            #endif
                             break;
                         case RadioSelection::first:
                             radio1->RXnb();
                             break;
                         case RadioSelection::second:
                             // std::cout << '-';
+                            #ifdef USE_SECOND_RADIO
                             radio2->RXnb();
+                            #endif
                             break;
                         default:
                             printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
@@ -2537,7 +2607,9 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             radio1->ClearIrqStatus(taskInfo.irqMask);
                             break;
                         case RadioSelection::second:
+                            #ifdef USE_SECOND_RADIO
                             radio2->ClearIrqStatus(taskInfo.irqMask);
+                            #endif
                             break;
                         default:
                             printf("unexpected radioID for ClearIRQs %d\n", taskInfo.radioID);
@@ -2678,7 +2750,9 @@ void liveUpdateRFLinkRate(uint8_t index)
     // if (index == 0)
     if (true)
     { // special case FLRC for testing
+        #ifdef USE_SECOND_RADIO
         radio2->ConfigFLRC(freq);
+        #endif 
     }
     else
     #endif
@@ -2736,7 +2810,9 @@ void SetRFLinkRate(uint8_t index)
     // if (index == 0) 
     if (true) 
     { // special case FLRC for testing
+        #ifdef USE_SECOND_RADIO
         radio2->ConfigFLRC(GetInitialFreq2G4());
+        #endif
     }
     else
 #endif
@@ -3223,6 +3299,7 @@ void ICACHE_RAM_ATTR tockRX2G4()
         radio2Timedout = false;
     }
 
+    #ifdef USE_SECOND_RADIO
     unsigned long now = millis();
     bool radio2Missing = (now - r2LastIRQms) > 100;
     if (radio2Missing) {
@@ -3237,6 +3314,7 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
         r2LastIRQms = now; // prevent spamming
     }
+    #endif // USE_SECOND_RADIO
 
     // Save the LQ value before the inc() reduces it by 1
     // XXX Extra LQ calcs disabled for testing
@@ -4032,7 +4110,9 @@ void app_main()
     #ifndef DISABLE_RADIOS
     radio1 = new SX1262Driver();
     // radio1 = new SX1280Driver();
+    #ifdef USE_SECOND_RADIO
     radio2 = new SX1280Driver(RADIO2_NSS_PIN);
+    #endif
 
     radio1->currFreq = GetInitialFreq915();
     // radio2->currFreq = GetInitialFreq2G4();
@@ -4051,7 +4131,9 @@ void app_main()
 
     #ifdef LED2812_PIN
     setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
+    #endif // LED2812_PIN
 
+    // TODO add return code to 1262 Begin()
     // if (radio1->Begin(usePreambleDetect) == 0) {
         // set led green
         // setLedColour(LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -4059,8 +4141,10 @@ void app_main()
         // set led red
         // setLedColour(LED_RADIO1_INDEX, LED_BRIGHTNESS, 0, 0);
     // }
-
-    if (radio2->Begin(usePreambleDetect) == 0) {
+    #ifdef USE_SECOND_RADIO
+    int res = radio2->Begin(usePreambleDetect);
+    #ifdef LED2812_PIN
+    if (res == 0) {
         // set led green
         setLedColour(LED_STATUS_INDEX, 0, LED_BRIGHTNESS, 0);
         setLedColour(LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -4069,12 +4153,14 @@ void app_main()
         setLedColour(LED_STATUS_INDEX, LED_BRIGHTNESS, 0, 0);
         setLedColour(LED_RADIO2_INDEX, LED_BRIGHTNESS, 0, 0);
     }
-    #else
-    radio2->Begin(usePreambleDetect);
     #endif // LED2812_PIN
+    #endif // USE_SECOND_RADIO
 
     radio1->SetOutputPower(TX_POWER_915);
+    
+    #ifdef USE_SECOND_RADIO
     radio2->SetOutputPower(TX_POWER_2G4);
+    #endif
 
     // radio1 settings are fixed, so we can do them once here
     radio1->Config(airRateConfig915.bw, airRateConfig915.sf, airRateConfig915.cr, GetInitialFreq915(), airRateConfig915.PreambleLen, false);
@@ -4105,27 +4191,33 @@ void app_main()
 
     // need to attach ISR handlers to DIO pins
 
+    gpio_set_intr_type(RADIO_DIO1_PIN, GPIO_INTR_POSEDGE);
+
+    #ifdef USE_SECOND_RADIO
     // Should the pins be set as inputs first? And pullups/downs? Didn't seem to help
     gpio_set_direction(RADIO2_DIO1_PIN, GPIO_MODE_INPUT);
     gpio_pulldown_en(RADIO2_DIO1_PIN);
     gpio_set_direction(RADIO2_DIO2_PIN, GPIO_MODE_INPUT);
     gpio_pulldown_en(RADIO2_DIO2_PIN);
 
-    gpio_set_intr_type(RADIO_DIO1_PIN, GPIO_INTR_POSEDGE);
     #ifdef RADIO_DIO2_PIN
     gpio_set_intr_type(RADIO_DIO2_PIN, GPIO_INTR_POSEDGE);
     #endif
 
     gpio_set_intr_type(RADIO2_DIO1_PIN, GPIO_INTR_POSEDGE);
     gpio_set_intr_type(RADIO2_DIO2_PIN, GPIO_INTR_POSEDGE);
+    #endif // USE_SECOND_RADIO
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
 
     //hook isr handler for specific gpio pin
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO1_PIN, dio1_isr_handler, NULL));
     // ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO_DIO2_PIN, dio2_isr_handler, NULL));
+
+    #ifdef USE_SECOND_RADIO
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO1_PIN, r2_dio1_isr_handler, NULL));
     ESP_ERROR_CHECK(gpio_isr_handler_add(RADIO2_DIO2_PIN, r2_dio2_isr_handler, NULL));
+    #endif
 
     uint8_t linkRateIndex = INITIAL_LINK_RATE_INDEX;
     SetRFLinkRate(linkRateIndex); // sets radio2
@@ -4146,7 +4238,10 @@ void app_main()
     // XXX What's a reasonable timeout?
     // timeout in us
     radio1->setRxTimeout(2000000);
+    
+    #ifdef USE_SECOND_RADIO
     radio2->setRxTimeout(2000000);
+    #endif
 
     FHSSrandomiseFHSSsequences();
 
@@ -4155,7 +4250,9 @@ void app_main()
         HwTimer::resume(); // XXX postpone this until CRSF data detected on uart?
     } else {
         radio1->RXnb();
+        #ifdef USE_SECOND_RADIO
         radio2->RXnb();
+        #endif
     }
 
     #endif // ifndef DISABLE_RADIOS
@@ -4268,9 +4365,11 @@ void app_main()
                     printf("Timeouts: %d\n", timeout2Counter);
                 }
 
+                #ifdef USE_SECOND_RADIO
                 if (now - r2LastIRQms > 1000) {
                     std::cout << "no irqs for 2G4\n";
                 }
+                #endif
 
             } else {    // receiver
 
@@ -4319,6 +4418,13 @@ void app_main()
                 int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
                 int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
                 printf("rss1 %4d, rssi2 %4d ", rssiDBM0, rssiDBM1);
+
+                #ifdef DEBUG_EXTRA_RSSI
+                int32_t rssiDBM_telem = LPF_UplinkRSSI1_telem.SmoothDataINT;
+                int32_t rssiDBM_noTelem = LPF_UplinkRSSI1_noTelem.SmoothDataINT;
+                printf("(telem %4d, no telem rssi2 %4d, pkts %4d) ", rssiDBM_telem, rssiDBM_noTelem, packetsDuringTelem);
+                packetsDuringTelem = 0;
+                #endif // DEBUG_EXTRA_RSSI
 
                 float SNR0 = (float)LPF_UplinkSNR0.SmoothDataINT / 10;
                 float SNR1 = (float)LPF_UplinkSNR1.SmoothDataINT / 10;

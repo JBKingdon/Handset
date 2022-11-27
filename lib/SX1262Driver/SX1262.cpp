@@ -613,15 +613,15 @@ uint16_t ICACHE_RAM_ATTR SX1262Driver::getPowerMw()
  */
 void ICACHE_RAM_ATTR SX1262Driver::SetOutputPower(int8_t power)
 {
-    #ifndef MAX_PRE_PA_POWER
-    #error "Must set MAX_PRE_PA_POWER for SX1262 modules"
+    #ifndef MAX_PRE_PA_POWER_915
+    #error "Must set MAX_PRE_PA_POWER_915 for SX1262 modules"
     #endif
 
     // printf("setPower %d\n\r", power);
 
-    if (power > MAX_PRE_PA_POWER) {
+    if (power > MAX_PRE_PA_POWER_915) {
         printf("power capped for E22\n");
-        power = MAX_PRE_PA_POWER;
+        power = MAX_PRE_PA_POWER_915;
     } else if (power < -9) {
         printf("power min limit\n");
         power = -9;

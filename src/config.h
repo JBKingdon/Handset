@@ -22,7 +22,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-// #define IS_RECEIVER
+#define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -105,14 +105,16 @@
 #elif defined(RADIO_E28_27)
 #define MAX_PRE_PA_POWER 0
 #define DISARM_POWER (-15)
-#elif defined(RADIO_E22)
-// #define MAX_PRE_PA_POWER 22  // sx1262 can be configured to scale the max power down from the commanded value
-#define MAX_PRE_PA_POWER 10     // while testing
-#define DISARM_POWER (-9)
 #else
 #error "Must define a radio module to use"
 #endif
 
+
+#if defined(RADIO_E22)
+#define MAX_PRE_PA_POWER_915 22  // sx1262 can be configured to scale the max power down from the commanded value
+// #define MAX_PRE_PA_POWER_915 10     // while testing
+#define DISARM_POWER_915 (-9)
+#endif
 
 // Not used by dual band
 // how many switches do we have?
@@ -282,6 +284,9 @@
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
 #define RADIO_TXEN_PIN    GPIO_NUM_19
 
+// LQ improves with RXEN properly setup
+#define RADIO_RXEN_PIN    GPIO_NUM_9
+
 #elif defined(DUAL_BAND_PROTOTYPE)
 
 // common pins for spi
@@ -381,8 +386,35 @@
 
 #endif // C3_PCB_V0
 
+#else // not using the second radio, but we still need the reset pin during init
+#ifdef C3_PCB_V0
+
+// XXX Where is the radio2 reset pin for this layout?
+
+#elif defined(DUAL_BAND_BREADBOARD)
+
+#define RADIO2_RESET_PIN GPIO_NUM_4
+
+#elif defined(DUAL_BAND_PROTOTYPE)
+
+#define RADIO2_RESET_PIN GPIO_NUM_4
+
+#elif defined(DB_PCB_V1)
+
+#define RADIO2_RESET_PIN GPIO_NUM_12
+
+#else // for dual 1280 breadboard prototype
+
+// need to check - did I move to shared reset for dual 1280?
+// #define RADIO2_RESET_PIN GPIO_NUM_8
+
+#endif // C3_PCB_V0
+
+
 
 #endif // USE_SECOND_RADIO
+
+
 
 #if defined(USE_PWM6)
 
@@ -412,7 +444,7 @@
 
 // #define DEBUG_PIN     GPIO_NUM_9
 
-#define LED2812_PIN   GPIO_NUM_9
+// #define LED2812_PIN   GPIO_NUM_9
 #define LED_STATUS_INDEX 0
 #define LED_RADIO1_INDEX 2
 #define LED_RADIO2_INDEX 1
@@ -467,23 +499,18 @@
 
 #define LED2812_PIN   GPIO_NUM_13
 
-#ifdef IS_RECEIVER
-#define CRSF_TX_PIN   GPIO_NUM_21
-// #define CRSF_RX_PIN   GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
-
-#endif // IS_RECEIVER
-
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
 // #define CRSF_SPORT_PIN     GPIO_NUM_3
 // #define CRSF_SPORT_PIN     GPIO_NUM_9
-#define CRSF_SPORT_PIN  GPIO_NUM_21
-#define DEBUG_TX_PIN    GPIO_NUM_20
-// #define DEBUG_TX_PIN    GPIO_NUM_21
+// #define CRSF_SPORT_PIN  GPIO_NUM_21
+// #define DEBUG_TX_PIN    GPIO_NUM_20
+#define CRSF_SPORT_PIN  GPIO_NUM_20
+#define DEBUG_TX_PIN    GPIO_NUM_21
 #endif // IS_TRANSMITTER
 
 #ifdef IS_RECEIVER
+// disabling CRSF for development
 // #define CRSF_TX_PIN   GPIO_NUM_21
 // #define CRSF_RX_PIN   GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
