@@ -68,7 +68,7 @@
 #define TRANSMITTER false
 #endif
 
-#define INITIAL_LINK_RATE_INDEX 0
+#define INITIAL_LINK_RATE_INDEX 3
 
 // sx1262 runs from -9 to +22
 // #define TX_POWER_915 (-9)
@@ -309,12 +309,16 @@ RXtimerState_e RXtimerState = tim_disconnected;
 uint32_t GotConnectionMillis = 0;
 const uint32_t ConsiderConnGoodMillis = 1000; // minimum time before we can consider a connection to be 'good'
 
-// XXX rename to *915
+// TODO rename to *915
 LPF LPF_Offset(2);
 LPF LPF_OffsetDx(4);
 
 LPF LPF_Offset2G4(2);
 LPF LPF_OffsetDx2G4(4);
+
+// Filter the FEI
+LPF LPF_fei(4);
+bool feiWaitingForFreqUpdate = false;
 
 // uint32_t cycleInterval; // in ms
 uint32_t RFmodeLastCycled = 0;
@@ -2374,17 +2378,14 @@ static void receive2G4()
         if (flrcErrors & FLRC_PKT_ERROR_MASK_CRC)
         {
             crcFLRCcounter++;
+        } else if (flrcErrors & 0x8) {
+            // These show up sometimes, datasheet says it is "reserved", so it's isn't telling us anything useful
+            // ignore it
         } else {
             printf("flrc other error %X\n", flrcErrors);
         }
 
     } else {
-
-        // temporary debug, decide how to do this properly
-        // if (rfModeDivisor2G4 == 8 && nonceRX2G4 % 128 == 0) {
-        //     int32_t fe = radio2->GetFrequencyError();
-        //     printf("FEI %d\n", fe);
-        // }
 
         // XXX Needs a new bidirectional SPI task
         radio2->readRXData(); // get the data from the radio chip
@@ -2417,6 +2418,29 @@ static void receive2G4()
                 #ifdef DEBUG_EXTRA_RSSI
                 if (isTelemetryFrame()) packetsDuringTelem++;
                 #endif
+
+                // Experiments with FEI based correction
+                if (rfModeDivisor2G4 == 8 && !feiWaitingForFreqUpdate && radio2->LastPacketSNR > 10) 
+                {
+                    const double AVG_FREQ = 2425000000.0;
+                    int32_t fe = radio2->GetFrequencyError();
+                    int32_t feFiltered = LPF_fei.update(fe);
+                    // printf("FEI %d\n", fe);
+                    if ((feFiltered > 1000 || feFiltered < -1000))
+                    {
+                        double freqAdjustment =  (AVG_FREQ + (double)(feFiltered)) / AVG_FREQ;
+                        radio2->adjustFreqCompensation(freqAdjustment);
+                        // reset the filter to prevent multiple adjustments before the filter reacts to the change
+                        // TODO XXX This needs a more sophisticated timeout/lockout - we shouldn't start considering
+                        // another change until after a call to setFrequency which will be when the changed
+                        // compensation value is used. Otherwise we're picking up data from the pre-adjusted freq and
+                        // risk double compensating.
+                        LPF_fei.init(0);
+                        // std::cout << 'A';
+                        printf("fe %d\n", fe);
+                        feiWaitingForFreqUpdate = true;
+                    }
+                }
             }
 
             if (flrcFirstPacket) {
@@ -2570,6 +2594,8 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                         case RadioSelection::second:
                             #ifdef USE_SECOND_RADIO
                             radio2->SetFrequency(taskInfo.frequency);
+                            // clear the fei flag to indicate that the radio now has a new frequency set
+                            feiWaitingForFreqUpdate = false;
                             #endif
                             break;
                         default:
@@ -3273,13 +3299,14 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
     // if we got the first dup, then we wouldn't have listened for the 2nd and so won't have had an opportunity to start
     // the rx early
-    if (flrcFirstPacketSuccess) 
-    {
-        SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};
-        BaseType_t qResult;
-        qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-        if (qResult != pdTRUE) std::cout << "qFull10\n";
-    }
+    // XXX Shouldn't be needed with continuous RX
+    // if (flrcFirstPacketSuccess) 
+    // {
+    //     SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};
+    //     BaseType_t qResult;
+    //     qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+    //     if (qResult != pdTRUE) std::cout << "qFull10\n";
+    // }
 
 
     flrcFirstPacket = true;
@@ -4415,6 +4442,10 @@ void app_main()
                 }
 
                 printf("offset %d ", Offset);
+
+                if (rfModeDivisor2G4 == 8) {
+                    printf("fei %d ", LPF_fei.SmoothDataINT);
+                }
 
                 // show some data from the handset
                 // uint16_t c0 = crsf.elrsPackedDBDataOut.chan0;

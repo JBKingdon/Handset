@@ -3,6 +3,8 @@
 // get access to gnu specific pow10 function
 #define _GNU_SOURCE
 
+#include <math.h>
+
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
 #include "SX1280.h"
@@ -17,7 +19,6 @@ extern "C" {
 #include "OTA.h"
 
 #include <stdio.h>
-#include <math.h>
 #include <string.h> // for memset
 
 #ifdef GD32
@@ -583,13 +584,44 @@ void SX1280Driver::ConfigModParamsFLRC(SX1280_RadioFLRCBandwidths_t bw, SX1280_R
     setHighSensitivity();
 }
 
+double SX1280Driver::getFreqCompensation()
+{
+    return freqCompensation;
+}
+
+/**
+ * Adjust the freqCompensation factor by a ratio expressed as a value
+ * close to 1
+ * 
+ * Multiplying the freqCompensation value by a ratio allows us to close
+ * in on a zero error without tracking the absolute correction in the caller.
+ * 
+ * Limits are applied to freqCompensation to ensure it isn't driven to
+ * an unreasonable extreme.
+*/
+void SX1280Driver::adjustFreqCompensation(double adjFactor)
+{
+    // Limits, 50ppm is a bit conservative for really bad hardware
+    const double MAX_FREQ_COMP = 1.000050;
+    const double MIN_FREQ_COMP = 0.999950;
+
+    freqCompensation *= adjFactor;
+    if (freqCompensation > MAX_FREQ_COMP) {
+        freqCompensation = MAX_FREQ_COMP;
+    } else if (freqCompensation < MIN_FREQ_COMP) {
+        freqCompensation = MIN_FREQ_COMP;
+    }
+
+    freqScalar = freqCompensation / (double)SX1280_FREQ_STEP;
+}
 
 void SX1280Driver::SetFrequency(uint32_t Reqfreq)
 {
     //Serial.println(Reqfreq);
     uint8_t buf[3]; //TODO make word alignmed
 
-    uint32_t freq = (uint32_t)((double)Reqfreq / (double)SX1280_FREQ_STEP);
+    // TODO C3 doesn't have hardware floats - rewrite for fixed point
+    uint32_t freq = (uint32_t)((double)Reqfreq * freqScalar);
     buf[0] = (uint8_t)((freq >> 16) & 0xFF);
     buf[1] = (uint8_t)((freq >> 8) & 0xFF);
     buf[2] = (uint8_t)(freq & 0xFF);

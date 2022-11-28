@@ -38,6 +38,9 @@ private:
 
     bool explicitHeaders = false;   // if true, current mode of operation uses explicit headers
 
+    double freqCompensation = 1.0;
+    double freqScalar = (double)1.0 / SX1280_FREQ_STEP;
+
     void setupLora();
     void setupFLRC();
     void SetPacketParamsFLRC();
@@ -121,6 +124,9 @@ public:
     uint16_t getPowerMw();
 
     int32_t ICACHE_RAM_ATTR GetFrequencyError();
+
+    double getFreqCompensation();
+    void adjustFreqCompensation(double adjFactor);
 
     void ICACHE_RAM_ATTR TXnb(volatile uint8_t *data, uint8_t length);
     // static void ICACHE_RAM_ATTR TXnbISR(); //ISR for non-blocking TX routine
