@@ -56,7 +56,7 @@
 // Test mode - don't try and use the radios
 // #define DISABLE_RADIOS
 
-// #define ENABLE_DYNAMIC_RATES
+#define ENABLE_DYNAMIC_RATES
 
 // #define USE_RX_TIMEOUTS
 
@@ -293,6 +293,9 @@ volatile uint32_t last2G4DataMs = 0;
 volatile uint32_t lastSyncPacket = 0;
 
 uint32_t linkStatstoFCLastSent = 0;
+
+unsigned long lastRateChangeMs = 0;     // used to prevent rapid dynamic rate changes
+
 
 uint32_t pfdDebugCounter = 0; // when greater than 0 updatePFD will print the offset
 
@@ -810,7 +813,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 
 }
 
-/** OG send data with seperate sync packets
+/** OG send data with seperate sync packets, not used for DB
  * 
  */
 void ICACHE_RAM_ATTR sendRCdataToRF915()
@@ -2104,33 +2107,39 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
  * 
  */
 #ifdef ENABLE_DYNAMIC_RATES
+/**
+ * Check if a change of packet rate is required
+ * 
+ * Currently uses only SNR which doesn't exist for FLRC. 
+ * TODO Should also factor in LQ and RSSI
+*/
 static void checkDynamicRate()
 {
-    #define MIN_RATE_CHANGE_INTERVAL_MS 1000
-    #define MIN_SNR 80
-    #define MAX_SNR 95
+    #define MIN_RATE_CHANGE_INTERVAL_MS 2000
 
-    static unsigned long lastRateChangeMs = 0;
 
     unsigned long now = millis();
 
+    // Don't allow consecutive changes within the interval
+    if ((lastRateChangeMs + MIN_RATE_CHANGE_INTERVAL_MS) > now) {
+        return;
+    }
+
     const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
 
-    // Don't allow consecutive changes within the interval
-    if ((lastRateChangeMs + MIN_RATE_CHANGE_INTERVAL_MS) > now)
-        return;
-
-    if ((crsf.LinkStatistics.uplink_SNR > (MAX_SNR - currentIndex)) && (currentIndex > 0)) 
+    if ((crsf.LinkStatistics.uplink_SNR > ExpressLRS_currAirRate_RFperfParams->maxSNR) && (currentIndex > 0)) 
     {
+        // printf("DR+ %d > %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->maxSNR);
         uint8_t newIndex = currentIndex - 1;
         SetRFLinkRate(newIndex);
         lastRateChangeMs = now;
-        // std::cout << "DR+";
-    } else if ((crsf.LinkStatistics.uplink_SNR < (MIN_SNR - currentIndex)) && (currentIndex < (RATE_MAX-1))) {
+        std::cout << "DR+";
+    } else if ((crsf.LinkStatistics.uplink_SNR < ExpressLRS_currAirRate_RFperfParams->minSNR) && (currentIndex < (RATE_MAX-1))) {
+        // printf("DR- %d < %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->minSNR);
         uint8_t newIndex = currentIndex + 1;
         SetRFLinkRate(newIndex);
         lastRateChangeMs = now;
-        // std::cout << "DR-";
+        std::cout << "DR-";
     }
 }
 #endif // ENABLE_DYNAMIC_RATES
@@ -2229,6 +2238,9 @@ static void handleEvents915()
                     #endif
                     isRXconnected = true;
 
+                    lastRateChangeMs = millis() + 3000; // allow a period for FEI correction to happen
+                    SetRFLinkRate(3); // set 125Hz mode to enable FEI measurement
+
                     #ifdef LED2812_PIN
                     strip->set_pixel(strip, LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
                     strip->set_pixel(strip, LED_RADIO2_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -2267,14 +2279,14 @@ static void handleEvents915()
                 // XXX reduce the SNR here
             }
 
-            #ifdef ENABLE_DYNAMIC_RATES
-            checkDynamicRate();
-            #endif
-
             // need to clear irqs, next transmit will be started from tock
             // radio1->ClearIrqStatus(SX1262_IRQ_RX_DONE);
             static const SpiTaskInfo taskInfo = {.id = SpiTaskID::ClearIRQs, .radioID = RadioSelection::first, .irqMask = SX1262_IRQ_RX_DONE};
             xQueueSend(rx_evt_queue, &taskInfo, 1);
+
+            #ifdef ENABLE_DYNAMIC_RATES
+            checkDynamicRate();
+            #endif
 
         } else {
             // Receiver gets normal RC packets on the 915 channel
@@ -2845,10 +2857,9 @@ void SetRFLinkRate(uint8_t index)
     {
         // radio1->Config(ModParams->bw, ModParams->sf, ModParams->cr, GetInitialFreq(), ModParams->PreambleLen, invertIQ);
         #ifdef USE_SECOND_RADIO
+        // XXX should this be current freq instead of initial?
         radio2->Config(ModParams->lora_settings.bw, ModParams->lora_settings.sf, ModParams->lora_settings.cr, GetInitialFreq2G4(),
                         ModParams->lora_settings.PreambleLen, invertIQ, useHeaders);
-
-        // XXX Set timeout?
         #endif
     }
 
@@ -3317,16 +3328,16 @@ void ICACHE_RAM_ATTR tockRX2G4()
     // We should be receiving by here, so there needs to be a test of "if not yet started receive".
 
     // Now that we're using continuous receive there shouldn't be any timeouts
-    if (radio2Timedout) {
-        std::cout << "XXX Unexpected 2g4 timeout";
-        // std::cout << "T2";
-        SpiTaskInfo taskInfo;
-        taskInfo.id = SpiTaskID::StartRx;
-        taskInfo.radioID = 2;
-        int res = xQueueSend(rx_evt_queue, &taskInfo, 0);
-        if (res != pdTRUE) std::cout << "QFULL";
-        radio2Timedout = false;
-    }
+    // if (radio2Timedout) {
+    //     std::cout << "XXX Unexpected 2g4 timeout";
+    //     // std::cout << "T2";
+    //     SpiTaskInfo taskInfo;
+    //     taskInfo.id = SpiTaskID::StartRx;
+    //     taskInfo.radioID = 2;
+    //     int res = xQueueSend(rx_evt_queue, &taskInfo, 0);
+    //     if (res != pdTRUE) std::cout << "QFULL";
+    //     radio2Timedout = false;
+    // }
 
     #ifdef USE_SECOND_RADIO
     unsigned long now = millis();
@@ -3535,7 +3546,7 @@ void lostConnection()
 }
 
 /**
- * doc?
+ * This is for the RX
  */
 void gotConnection()
 {
@@ -3549,7 +3560,7 @@ void gotConnection()
 #endif
 
     connectionStatePrev = connectionState;
-    connectionState = connected; //we got a packet, therefore no lost connection
+    connectionState = connected;
     // disableWebServer = true;
     RXtimerState = tim_tentative;
     GotConnectionMillis = millis();

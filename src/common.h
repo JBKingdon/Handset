@@ -109,6 +109,8 @@ typedef struct expresslrs_rf_pref_params_s
     uint32_t SyncPktIntervalDisconnected;
     uint32_t SyncPktIntervalConnected;
     uint32_t pfdOffset;
+    int8_t minSNR;                  // threshold for changing to a slower packet rate
+    int8_t maxSNR;                  // threshold for changing to a faster packet rate
 
 } expresslrs_rf_pref_params_s;
 

@@ -141,12 +141,12 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
 
 // TOA for 9 byte hires packets
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
-    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset
-    {0, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       1000,                160},
-    {1, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       1000,                317},
-    {2, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                630},
+    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset   minSNR  maxSNR
+    {0, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       1000,                160,        40,        0},
+    {1, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       1000,                317,        40,       90},
+    {2, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                630,        40,      100},
     // {3, RATE_125HZ, -112, 6187, 2000,               4000,                       100,                       1000,               1880}, // no header
-    {3, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                934}, // with header
+    {3, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                934,         0,      100}, // with header
 };
 
 #elif defined(USE_HIRES_DATA)
