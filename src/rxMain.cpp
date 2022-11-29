@@ -4012,22 +4012,21 @@ void runWifiTest()
 }
 #endif // WIFI_TEST
 
-
-void app_main()
+void setupSerial()
 {
     // Setup serial port
     if (TRANSMITTER)
     {
-        // If crsf is using the same port, don't bother messing with the settings here as the crsf code will overrride it all
+        // 
         if (CRSF_PORT_NUM != UART_NUM_0)
         {
             // delete the default uart0 driver and recreate
             uart_driver_delete(UART_NUM_0);
 
+            // not sure what this was for
             #ifdef CRSF_SPORT_PIN
             gpio_matrix_out(CRSF_SPORT_PIN, 0x100, false, false);
             #endif
-
 
             static uart_config_t uart_config;
             memset(&uart_config, 0, sizeof(uart_config));
@@ -4040,18 +4039,19 @@ void app_main()
             // uart_config.baud_rate = 115200;
 
             const int intr_alloc_flags = 0;
-            const uint32_t rxBufferSize = 512;  // not going to use rx, but we have to set a buffer size anyway
+            const uint32_t rxBufferSize = 512;
             const uint32_t txBufferSize = 1024;
             ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
             ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
-            ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, DEBUG_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+            ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, DEBUG_TX_PIN, DEBUG_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
             // The default uart setup doesn't enable input, so have to do it manually
             // const int uart_buffer_size = (1024 * 2);
             // ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 0, 0, 0));
             // uart_set_baudrate(UART_NUM_0, 2000000);
 
-            std::cout << "uart0 configured for output only\n";
+            // std::cout << "uart0 configured for output only\n";
+            std::cout << "uart0 configured for debug\n";
         } else {
             // s.port is going to use uart0, so we need to setup uart1 for debug output
             static uart_config_t uart_config;
@@ -4076,6 +4076,9 @@ void app_main()
             std::cout << "A miracle! stdout remapped to uart1\n";
         }
     } else {
+        // RECEIVER
+
+        // XXX testing
         #if false // defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
         uart_set_baudrate(UART_NUM_0, CRSF_RX_BAUDRATE);
 
@@ -4090,68 +4093,16 @@ void app_main()
 
         std::cout << "ESP32-C3 FreeRTOS Dual Band RX\n";
     }
+}
 
-    #ifdef LORA_TEST
-    runLoraTest(); // No return from here
-    #endif // LORA_TEST
+void setupRadios()
+{
+    #ifdef DISABLE_RADIOS
 
-    #ifdef WIFI_TEST
-    runWifiTest(); // no return
-    #endif
+    crsf.setSyncParams(2000);
 
-    #ifdef DEBUG_PIN
+    #else
 
-    // Set the pin as an output
-    gpio_reset_pin(DEBUG_PIN);
-    gpio_set_direction(DEBUG_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(DEBUG_PIN, 0);
-
-    #endif // DEBUG_PIN
-
-    #ifdef LATENCY_INPUT_PIN
-
-    // set the pin as an input
-    gpio_reset_pin(LATENCY_INPUT_PIN);
-    gpio_set_direction(LATENCY_INPUT_PIN, GPIO_MODE_INPUT);
-
-    #endif // LATENCY_INPUT_PIN
-
-    // printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
-    // printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
-
-    initLeds();
-    ledRamp();
-
-    
-    // gpio_reset_pin(GPIO_NUM_2);
-    // gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
-
-    // while (true) {
-    //     gpio_set_level(GPIO_NUM_2, 0);
-    //     delay(500);
-    //     gpio_set_level(GPIO_NUM_2, 1);
-    //     delay(500);
-    // }
-
-    // while (true) {
-    //     std::cout << "Hello\n";
-    //     delay(2000);
-    //     ledRamp();
-    // }
-
-    setupPWM(); // does nothing if pwm not being used
-
-    // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
-    HwTimer::init();
-    HwTimer::stop();
-    HwTimer::setInterval(1000); // timer always runs at 1kHz (actually 2kHz since it calls both tick and tock)
-
-    // HwTimer::setCallbackTick(tick);
-    // HwTimer::setCallbackTock(tock);
-    HwTimer::setCallbackTick(tickTock);
-    HwTimer::setCallbackTock(tickTock);
-
-    #ifndef DISABLE_RADIOS
     radio1 = new SX1262Driver();
     // radio1 = new SX1280Driver();
     #ifdef USE_SECOND_RADIO
@@ -4300,16 +4251,76 @@ void app_main()
     }
 
     #endif // ifndef DISABLE_RADIOS
+}
 
-    #ifdef DISABLE_RADIOS
-    crsf.setSyncParams(2000);
+void app_main()
+{
+    setupSerial();
+
+    #ifdef LORA_TEST
+    runLoraTest(); // No return from here
+    #endif // LORA_TEST
+
+    #ifdef WIFI_TEST
+    runWifiTest(); // no return
     #endif
+
+    #ifdef DEBUG_PIN
+    // Set the pin as an output
+    gpio_reset_pin(DEBUG_PIN);
+    gpio_set_direction(DEBUG_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(DEBUG_PIN, 0);
+    #endif // DEBUG_PIN
+
+    #ifdef LATENCY_INPUT_PIN
+    // set the pin as an input
+    gpio_reset_pin(LATENCY_INPUT_PIN);
+    gpio_set_direction(LATENCY_INPUT_PIN, GPIO_MODE_INPUT);
+    #endif // LATENCY_INPUT_PIN
+
+    // printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
+    // printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
+
+    initLeds();
+    ledRamp();
+
+    // gpio_reset_pin(GPIO_NUM_2);
+    // gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+    // while (true) {
+    //     gpio_set_level(GPIO_NUM_2, 0);
+    //     delay(500);
+    //     gpio_set_level(GPIO_NUM_2, 1);
+    //     delay(500);
+    // }
+
+    // while (true) {
+    //     std::cout << "Hello\n";
+    //     delay(2000);
+    //     ledRamp();
+    // }
+
+    setupPWM(); // does nothing if pwm not being used
+
+    // The HwTimer is using priority 15 - should it be higher or lower than the rx task?
+    HwTimer::init();
+    HwTimer::stop();
+    HwTimer::setInterval(1000); // timer always runs at 1kHz (actually 2kHz since it calls both tick and tock)
+
+    // HwTimer::setCallbackTick(tick);
+    // HwTimer::setCallbackTock(tock);
+    HwTimer::setCallbackTick(tickTock);
+    HwTimer::setCallbackTock(tickTock);
+
+    // Get the radios initialised and ready for use
+    setupRadios();
+
 
     #if defined(CRSF_SPORT_PIN) || defined(CRSF_TX_PIN)
     crsf.Begin();
     // std::cout << "crsf disabled\n";
     #endif
 
+    // Delay to give the user a chance to see the initial status on the leds
     delay(500);
 
     #ifdef LED2812_PIN
@@ -4571,11 +4582,12 @@ void app_main()
             // static uint32_t lastModeChange = 0; // STATIC for persistence
             // static uint32_t ledSlot = 0;
 
-            #ifndef CRSF_SPORT_PIN
+            #ifdef DEBUG_RX_PIN
             // // temporary link rate change via keyboard input
             uint8_t buf;
             int nread = uart_read_bytes(UART_NUM_0, &buf, 1, 0);
             if (nread != 0) {
+                std::cout << "keypress\n";
                 // std::cout << 'C';
                 // std::cout.flush();
                 // for(int i=0; i<3; i++) {

@@ -14,7 +14,7 @@
 // #define LORA_TEST
 
 // Caution, there's another def for this in platformio.ini
-#define USE_FLRC
+// #define USE_FLRC
 
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
@@ -22,7 +22,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-#define IS_RECEIVER
+// #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -453,10 +453,12 @@
 
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin:
-#define CRSF_SPORT_PIN     GPIO_NUM_9
+// #define CRSF_SPORT_PIN     GPIO_NUM_9    // This was most recent in use. Disable to allow keyboard input for testing
+
 // #define CRSF_SPORT_PIN     GPIO_NUM_19
 // #define CRSF_SPORT_PIN     GPIO_NUM_20  // 20 is normally the uart0 rx pin
 // #define CRSF_SPORT_PIN     GPIO_NUM_21  // 21 is normally the uart0 tx pin
+#define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 // #define DEBUG_TX_PIN    GPIO_NUM_19
 #endif
