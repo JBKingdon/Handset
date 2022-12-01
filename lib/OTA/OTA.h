@@ -57,7 +57,7 @@ typedef struct DB915Packet_s {
 
     unsigned int txPower : 8;    // 8 bits
 
-    unsigned int rateIndex : 2; // 2 bits
+    unsigned int rateIndex : 3; // 2 bits
     unsigned int armed : 1;     // 1 bit
 
 } PACKED DB915Packet_t;          // total 15 bytes

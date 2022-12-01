@@ -42,7 +42,7 @@ private:
     double freqScalar = (double)1.0 / SX1280_FREQ_STEP;
 
     void setupLora();
-    void setupFLRC();
+    void setupFLRC(flrc_modem_settings_t modemSettings);
     void SetPacketParamsFLRC();
     void setHighSensitivity();
 
@@ -107,7 +107,7 @@ public:
     void SetMode(SX1280_RadioOperatingModes_t OPmode);
     void Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, 
                 uint8_t PreambleLength, const bool invertIQ = false, const bool useExplicitHeaders = false);
-    void ICACHE_RAM_ATTR ConfigFLRC(uint32_t freq);
+    void ICACHE_RAM_ATTR ConfigFLRC(flrc_modem_settings_t modemSettings, uint32_t freq);
 
     void ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr);
     void ConfigModParamsFLRC(SX1280_RadioFLRCBandwidths_t bw, SX1280_RadioFLRCCodingRates_t cr, SX1280_RadioFLRCBTFilter_t bt);

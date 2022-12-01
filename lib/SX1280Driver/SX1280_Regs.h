@@ -326,3 +326,10 @@ typedef enum
     SX1280_RADIO_TICK_SIZE_1000_US = 0x02,
     SX1280_RADIO_TICK_SIZE_4000_US = 0x03,
 } SX1280_RadioTickSizes_t;
+
+typedef struct flrc_modem_settings_s
+{
+    SX1280_RadioFLRCBandwidths_t bw;
+    SX1280_RadioFLRCCodingRates_t cr;
+} flrc_modem_settings_t;
+

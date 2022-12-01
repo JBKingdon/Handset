@@ -4,11 +4,13 @@
 #include "config.h"
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
-#include "SX1262Driver.h"
+// #include "SX1262Driver.h"
+#include "SX1262_Regs.h"
 #endif
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
-#include "SX1280Driver.h"
+// #include "SX1280Driver.h"
+#include "SX1280_Regs.h"
 #endif
 
 // XXX what does this do?
@@ -151,7 +153,7 @@ typedef struct expresslrs_mod_settings_915_s
 #else // not compatibility mode
 
 #if defined(USE_HIRES_DATA) || 1
-#define RATE_MAX 4  // actually the number of rates, so the max value is RATE_MAX-1
+#define RATE_MAX 6  // actually the number of rates in the settings arrays, so the max value is RATE_MAX-1
 #define RATE_DEFAULT 1
 #else
 #define RATE_MAX 6  // actually the number of rates, so the max value is RATE_MAX-1
@@ -174,11 +176,6 @@ typedef struct lora_modem_settings_s
     uint8_t PreambleLen;
 } lora_modem_settings_t;
 
-typedef struct flrc_modem_settings_s
-{
-    // flrc stuff
-} flrc_modem_settings_t;
-
 typedef struct expresslrs_mod_settings_s
 {
     uint8_t index;                      // XXX get rid of?
@@ -188,6 +185,8 @@ typedef struct expresslrs_mod_settings_s
     uint32_t interval;                  // interval in microseconds between packets
 
     ModemType modemType;                // whether this mode uses lora or flrc
+
+    bool    useDoubleSend;              // whether to send multiple copies of each packet
 
     union {
         lora_modem_settings_t lora_settings;

@@ -9,7 +9,6 @@
 #include "SX1280_hal.h"
 #include "SX1280.h"
 
-
 extern "C" {
 #include "../../include/systick.h"
 }
@@ -28,7 +27,6 @@ extern "C" {
 }
 
 #include "SX1280_hal_GD32.h"
-
 
 #else // not GD32
 
@@ -109,15 +107,12 @@ void SX1280Driver::End()
 }
 
 // flrc specific setup
-void SX1280Driver::setupFLRC()
+void SX1280Driver::setupFLRC(flrc_modem_settings_t modemSettings)
 {
     this->SetMode(SX1280_MODE_STDBY_RC);
     hal->WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_FLRC);
-    // this->ConfigModParamsFLRC(FLRC_BR_1_300_BW_1_2, FLRC_CR_1_2, BT_DIS);
-    this->ConfigModParamsFLRC(FLRC_BR_1_040_BW_1_2, FLRC_CR_3_4, BT_DIS);
-    // this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_3_4, BT_DIS);
-    // this->ConfigModParamsFLRC(FLRC_BR_0_650_BW_0_6, FLRC_CR_1_2, BT_DIS);
-    // this->ConfigModParamsFLRC(FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2, BT_DIS);
+
+    this->ConfigModParamsFLRC(modemSettings.bw, modemSettings.cr, BT_DIS);
 
     //enable auto FS
     hal->WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);
@@ -290,9 +285,9 @@ int32_t SX1280Driver::Begin(const bool usePreamble)
 }
 
 
-void ICACHE_RAM_ATTR SX1280Driver::ConfigFLRC(uint32_t freq)
+void ICACHE_RAM_ATTR SX1280Driver::ConfigFLRC(flrc_modem_settings_t modemSettings, uint32_t freq)
 {
-    this->setupFLRC();
+    this->setupFLRC(modemSettings);
     SetFrequency(freq);
 }
 
@@ -317,6 +312,9 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
 
     // this->SetMode(SX1280_MODE_STDBY_XOSC); // Try using _FS for quicker changeover ?
     this->SetMode(SX1280_MODE_FS); // using _FS for quicker changeover than STDBY_XOSC
+
+    hal->WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_LORA);
+
     ConfigModParams(bw, sf, cr);
     #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, iqMode);

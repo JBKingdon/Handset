@@ -14,6 +14,7 @@
 // #define LORA_TEST
 
 // Caution, there's another def for this in platformio.ini
+// This is partly removed now, but what's left is the double send stuff
 // #define USE_FLRC
 
 #ifdef ESPC3
@@ -22,7 +23,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-// #define IS_RECEIVER
+#define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -465,8 +466,9 @@
 
 #ifdef IS_RECEIVER
 // #define CRSF_TX_PIN   GPIO_NUM_9
-// #define CRSF_TX_PIN   GPIO_NUM_21
 // #define CRSF_RX_PIN   GPIO_NUM_20
+// #define CRSF_TX_PIN   GPIO_NUM_21
+#define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 #endif
 
