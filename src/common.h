@@ -153,8 +153,8 @@ typedef struct expresslrs_mod_settings_915_s
 #else // not compatibility mode
 
 #if defined(USE_HIRES_DATA) || 1
-#define RATE_MAX 6  // actually the number of rates in the settings arrays, so the max value is RATE_MAX-1
-#define RATE_DEFAULT 1
+#define RATE_MAX 7  // actually the number of rates in the settings arrays, so the max value is RATE_MAX-1
+#define RATE_DEFAULT (RATE_MAX-1)
 #else
 #define RATE_MAX 6  // actually the number of rates, so the max value is RATE_MAX-1
 #define RATE_DEFAULT 2

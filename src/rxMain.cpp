@@ -56,6 +56,8 @@
 // Test mode - don't try and use the radios
 // #define DISABLE_RADIOS
 
+#define DEFER_MANUAL_RATE_CHANGES
+
 // #define ENABLE_DYNAMIC_RATES
 
 // #define USE_RX_TIMEOUTS
@@ -68,7 +70,7 @@
 #define TRANSMITTER false
 #endif
 
-#define INITIAL_LINK_RATE_INDEX 3
+#define INITIAL_LINK_RATE_INDEX (RATE_DEFAULT)
 
 // sx1262 runs from -9 to +22
 // #define TX_POWER_915 (-9)
@@ -232,6 +234,7 @@ GENERIC_CRC14 ota_crc(ELRS_CRC14_POLY);
 PFD pfdLoop;
 
 uint8_t ExpressLRS_nextAirRateIndex = 0;
+int8_t pendingAirRateIndex = -1;   // for deferred rate change. Could have used ExpressLRS_nextAirRateIndex but didn't want to muddy the code
 uint32_t timeout1Counter = 0;
 uint32_t timeout2Counter = 0;
 uint32_t mismatchCounter = 0;
@@ -356,6 +359,8 @@ LPF lpfLq(3);
 /// LQ Calculation //////////
 LQCALC<99> lqRadio1, lqRadio2, lqEffective, lqTelem;
 uint8_t uplinkLQ;
+
+LPF filteredLQ(3);  // for debug comparison of different 2g4 modes
 
 uint8_t scanIndex = RATE_DEFAULT; // used when cycling through RF modes
 
@@ -1689,6 +1694,15 @@ bool ICACHE_RAM_ATTR HandleFHSS2G4()
 {
     // privatize the hop interval so that it can't change between testing it for 0 and using it as a divisor
     const uint8_t hopInterval = ExpressLRS_currAirRate_Modparams->FHSShopInterval;
+
+    #ifdef DEFER_MANUAL_RATE_CHANGES
+    // is there a pending air rate change?
+    if (pendingAirRateIndex != -1)
+    {
+        SetRFLinkRate(pendingAirRateIndex);
+        pendingAirRateIndex = -1;
+    }
+    #endif // DEFER_MANUAL_RATE_CHANGES
 
     // Optimise for the case where we've already done the hop or will never hop - we want to get out as quickly as possible
     // These conditions will have short circuit evaluation, left to right.
@@ -4450,7 +4464,7 @@ void app_main()
                 printf("offset %3d ", Offset);
 
                 if (rfModeDivisor2G4 == 8) {
-                    printf("fei %d ", LPF_fei.SmoothDataINT);
+                    printf("fei %4d ", LPF_fei.SmoothDataINT);
                 }
 
                 // show some data from the handset
@@ -4507,8 +4521,10 @@ void app_main()
                 // printf("SNR1 %2.1f, SNR2 %2.1f ", SNR0, SNR1);
                 // printf("LQ1 %3u LQ2 %3u \n", lqRadio1.getLQ(), lqRadio2.getLQ());
 
+                int32_t fLQ = filteredLQ.update(lqRadio2.getLQ());
+
                 printf("915: pkts %3d rssi %4d snr %4.1f LQ %3u ", delta1, rssiDBM0, SNR0, lqRadio1.getLQ());
-                printf("2G4: pkts %3d (total %d) rssi %4d snr %4.1f LQ %3u\n", delta2, totalRX2Events, rssiDBM1, SNR1, lqRadio2.getLQ());
+                printf("2G4: pkts %4d (total %d) rssi %4d snr %4.1f LQ %3u (av %u)\n", delta2, totalRX2Events, rssiDBM1, SNR1, lqRadio2.getLQ(), fLQ);
 
                 // totalPackets = 0;
                 timeout1Counter = 0;
@@ -4598,11 +4614,16 @@ void app_main()
                 // strip->refresh(strip, 100);
                 // ledSlot = (ledSlot + 1) % 3;
                 if (buf == '+' && (ExpressLRS_currAirRate_Modparams->index > 0)) {
-                    uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index - 1;
-                    SetRFLinkRate(newIndex);
+                    pendingAirRateIndex = ExpressLRS_currAirRate_Modparams->index - 1;
+                    #ifndef DEFER_MANUAL_RATE_CHANGES
+                    SetRFLinkRate(pendingAirRateIndex); // XXX these are supposed to be deferred but all hell broke loose
+                    #endif
+
                 } else if (buf == '-' && (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1))) {
-                    uint8_t newIndex = ExpressLRS_currAirRate_Modparams->index + 1;
-                    SetRFLinkRate(newIndex);
+                    pendingAirRateIndex = ExpressLRS_currAirRate_Modparams->index + 1;
+                    #ifndef DEFER_MANUAL_RATE_CHANGES
+                    SetRFLinkRate(pendingAirRateIndex);
+                    #endif
                 }
             }
             #endif

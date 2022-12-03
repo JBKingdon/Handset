@@ -23,7 +23,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-#define IS_RECEIVER
+// #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
