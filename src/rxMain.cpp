@@ -73,9 +73,9 @@
 #define INITIAL_LINK_RATE_INDEX (RATE_DEFAULT)
 
 // sx1262 runs from -9 to +22
-// #define TX_POWER_915 (-9)
+#define TX_POWER_915 (-9)
 // #define TX_POWER_915 (-6)
-#define TX_POWER_915 (0)
+// #define TX_POWER_915 (0)
 // #define TX_POWER_915 (10)
 // #define TX_POWER_915 (20)
 
@@ -91,7 +91,7 @@
 // XXX only partially implemented. Manual changes needed if this is changed!
 #define ARM_CHANNEL 8
 
-// enable separate 2g4 rssi measurements during telemetry sends
+// enable separate 2g4 rssi measurements during telemetry sends to see if sending on 915 impacts 2g4 rssi
 // #define DEBUG_EXTRA_RSSI
 
 // recompile both rx & tx when changing this:
@@ -590,7 +590,7 @@ bool hasValidCRC(uint8_t *rxBuffer, const uint8_t packetLength)
 
 #endif // not USE_DB_PACKETS
 
-/** Do CRC check for DB 915 packets
+/** Do CRC check for DB 915 RC packets
  * 
  */
 bool hasValidCRC915DB(DB915Packet_t *packet)
@@ -607,6 +607,10 @@ bool hasValidCRC915DB(DB915Packet_t *packet)
 
     return (inCRC == calculatedCRC);
 }
+
+/**
+ * CRC check for DB 915 telemetry packets
+*/
 
 bool hasValidCRC915DB(DB915Telem_t *packet)
 {
@@ -1817,6 +1821,7 @@ bool ICACHE_RAM_ATTR sendTelemetryResponse()
     if (sizeof(DB915Telem_t) != OTA_PACKET_LENGTH_TELEM)
     {
         std::cout << "telem packet length wrong\n";
+        std::cout << sizeof(DB915Telem_t) << " vs " << OTA_PACKET_LENGTH_TELEM << "\n";
         while(true) {};
     }
     #endif
@@ -1829,6 +1834,8 @@ bool ICACHE_RAM_ATTR sendTelemetryResponse()
     telemP->lq915 = lqRadio1.getLQ();
     telemP->rssi2G4 = LPF_UplinkRSSI1.SmoothDataINT;
     telemP->lq2G4 = lqRadio2.getLQ();
+
+    telemP->feiCorrected = (LPF_fei.SmoothDataINT != 0);
 
 
     int32_t snr = LPF_UplinkSNR1.SmoothDataINT;
@@ -2258,8 +2265,12 @@ static void handleEvents915()
                     #endif
                     isRXconnected = true;
 
-                    lastRateChangeMs = millis() + 3000; // allow a period for FEI correction to happen
-                    SetRFLinkRate(RATE_MAX-1); // set 125Hz mode to enable FEI measurement (TODO rename RATE_MAX, worst name ever)
+                    // If the receiver hasn't established th FEI correction, switch to 125Hz to give it the opportunity
+                    if (!telemData.feiCorrected && (ExpressLRS_currAirRate_Modparams->index != (RATE_MAX-1)))
+                    {
+                        lastRateChangeMs = millis() + 3000; // allow a period for FEI correction to happen before dynamic rates kicks in
+                        SetRFLinkRate(RATE_MAX-1); // set 125Hz mode to enable FEI measurement (TODO rename RATE_MAX, worst name ever)
+                    }
 
                     #ifdef LED2812_PIN
                     strip->set_pixel(strip, LED_RADIO1_INDEX, 0, LED_BRIGHTNESS, 0);
@@ -4289,6 +4300,7 @@ void app_main()
 
     // printf("sizeof new 915 packet is %d\n", sizeof(DB915Packet_t));
     // printf("sizeof new 2G4 packet is %d\n", sizeof(DB2G4Packet_t));
+    printf("sizeof telem packet is %d\n", sizeof(DB915Telem_t));
 
     initLeds();
     ledRamp();
@@ -4420,7 +4432,8 @@ void app_main()
                     int8_t rssi2G4 = telemData.rssi2G4;
                     uint8_t lq2G4 = telemData.lq2G4;
                     int8_t snr = telemData.snr2G4;
-                    printf("Telem 915: %d %u, 2G4: %d, %u, SNR: %d\n", rssi915, lq915, rssi2G4, lq2G4, snr);
+                    bool feiCorrected = telemData.feiCorrected;
+                    printf("Telem 915: %d %u, 2G4: %d, %u, SNR: %d, fei %d\n", rssi915, lq915, rssi2G4, lq2G4, snr, feiCorrected);
                 } else {
                     std::cout << "No RX connected\n";
                 }
@@ -4430,7 +4443,7 @@ void app_main()
                 }
 
                 #ifdef USE_SECOND_RADIO
-                if (now - r2LastIRQms > 1000) {
+                if (isRXconnected && (now - r2LastIRQms > 1000)) {
                     std::cout << "no irqs for 2G4\n";
                 }
                 #endif

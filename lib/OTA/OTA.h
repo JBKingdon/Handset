@@ -63,7 +63,6 @@ typedef struct DB915Packet_s {
 } PACKED DB915Packet_t;          // total 15 bytes
 
 typedef struct DB915Telem_s {
-    unsigned int crc : 16;       // 16 bits (only 14 used, can be shrunk and moved to the end)
 
     int rssi915 : 8;
     unsigned int lq915 : 8;
@@ -75,13 +74,17 @@ typedef struct DB915Telem_s {
 
     int snr2G4 : 8;             // signed value in tenths, so  -12.8 to +12.7 
 
-    uint8_t serialData[7];      // not currently implemented. We could remove and drop the packet length for now
-
-    unsigned int serialDataLength : 4;
+    // not currently implemented. We could remove and drop the packet length for now
+    // uint8_t serialData[7];
+    // unsigned int serialDataLength : 4;
 
     unsigned int packetType : 2;
 
-} PACKED DB915Telem_t;  // total 15 bytes
+    unsigned int feiCorrected : 1;  // for some reason declaring this as a bool prevents it from packing with the ints
+
+    unsigned int crc : 14;
+
+} PACKED DB915Telem_t;  // total 8 bytes (was 15 with the unused serialData field)
 
 // NB FLRC only sends the first 6 bytes, so doesn't include 'armed'. It's sent on every 915 packet,
 // so can probably be removed from here - but make sure that failsafe works properly if the 915 goes down
@@ -120,7 +123,7 @@ typedef struct DB2G4Packet_s {
 #define OTA_PACKET_LENGTH_2G4_FLRC 6
 #define OTA_PACKET_LENGTH_915 15
 
-#define OTA_PACKET_LENGTH_TELEM 15
+#define OTA_PACKET_LENGTH_TELEM sizeof(DB915Telem_t)
 
 #else
 
