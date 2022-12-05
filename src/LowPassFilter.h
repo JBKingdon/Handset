@@ -54,6 +54,8 @@ public:
         NeedReset = true;
     }
 
+    /** Set the current value of the filter to the specified value
+     */
     void ICACHE_RAM_ATTR init(int32_t Indata)
     {
         NeedReset = false;

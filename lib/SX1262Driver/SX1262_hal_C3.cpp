@@ -1,4 +1,6 @@
-/* Provides code specific to the ESP32-C3 platform
+/** Provides code specific to the ESP32-C3 platform
+ * 
+ * XXX TODO Replace the defines for pins with instance variables
  *
 */
 
@@ -9,7 +11,6 @@
 #include "SX1262_hal.h"
 #include <stdio.h>
 #include "freertos/task.h"
-
 
 #include "../../src/utils.h"
 #include <string.h> // for memcpy

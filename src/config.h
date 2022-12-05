@@ -13,10 +13,6 @@
 // Simple test mode with slow lora signals to see if the chirps are measurable with hackrf
 // #define LORA_TEST
 
-// Caution, there's another def for this in platformio.ini
-// This is partly removed now, but what's left is the double send stuff
-// #define USE_FLRC
-
 #ifdef ESPC3
 #define ICACHE_RAM_ATTR IRAM_ATTR
 #endif
