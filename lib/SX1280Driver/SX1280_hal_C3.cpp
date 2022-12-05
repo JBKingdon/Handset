@@ -175,35 +175,69 @@ bool  SX1280Hal_C3::WaitOnBusy()
 
 void  SX1280Hal_C3::TXenable()
 {
-    #if defined(RADIO_RXEN_PIN)
-    gpio_set_level(RADIO_RXEN_PIN, 0);
-    #endif
+    if (isSecondRadio)
+    {
+        #if defined(RADIO2_RXEN_PIN)
+        gpio_set_level(RADIO2_RXEN_PIN, 0);
+        #endif
 
-    #if defined(RADIO_TXEN_PIN)
-    gpio_set_level(RADIO_TXEN_PIN, 1);
-    #endif
+        #if defined(RADIO2_TXEN_PIN)
+        gpio_set_level(RADIO2_TXEN_PIN, 1);
+        #endif
+
+    } else {
+        #if defined(RADIO_RXEN_PIN)
+        gpio_set_level(RADIO_RXEN_PIN, 0);
+        #endif
+
+        #if defined(RADIO_TXEN_PIN)
+        gpio_set_level(RADIO_TXEN_PIN, 1);
+        #endif
+    }
 }
 
 void  SX1280Hal_C3::RXenable()
 {
-    #if defined(RADIO_RXEN_PIN)
-    gpio_set_level(RADIO_RXEN_PIN, 1);
-    #endif
+    if (isSecondRadio)
+    {
+        #if defined(RADIO2_RXEN_PIN)
+        gpio_set_level(RADIO2_RXEN_PIN, 1);
+        #endif
 
-    #if defined(RADIO_TXEN_PIN)
-    gpio_set_level(RADIO_TXEN_PIN, 0);
-    #endif
+        #if defined(RADIO2_TXEN_PIN)
+        gpio_set_level(RADIO2_TXEN_PIN, 0);
+        #endif
+    } else {
+        #if defined(RADIO_RXEN_PIN)
+        gpio_set_level(RADIO_RXEN_PIN, 1);
+        #endif
+
+        #if defined(RADIO_TXEN_PIN)
+        gpio_set_level(RADIO_TXEN_PIN, 0);
+        #endif
+    }
 }
 
 void  SX1280Hal_C3::TXRXdisable()
 {
-    #if defined(RADIO_RXEN_PIN)
-    gpio_set_level(RADIO_RXEN_PIN, 0);
-    #endif
+    if (isSecondRadio)
+    {
+        #if defined(RADIO2_RXEN_PIN)
+        gpio_set_level(RADIO2_RXEN_PIN, 0);
+        #endif
 
-    #if defined(RADIO_TXEN_PIN)
-    gpio_set_level(RADIO_TXEN_PIN, 0);
-    #endif
+        #if defined(RADIO2_TXEN_PIN)
+        gpio_set_level(RADIO2_TXEN_PIN, 0);
+        #endif
+    } else {
+        #if defined(RADIO_RXEN_PIN)
+        gpio_set_level(RADIO_RXEN_PIN, 0);
+        #endif
+
+        #if defined(RADIO_TXEN_PIN)
+        gpio_set_level(RADIO_TXEN_PIN, 0);
+        #endif
+    }
 }
 
 #endif // ESPC3
