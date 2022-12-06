@@ -613,10 +613,13 @@ void SX1280Driver::adjustFreqCompensation(double adjFactor)
     freqScalar = freqCompensation / (double)SX1280_FREQ_STEP;
 }
 
-void SX1280Driver::SetFrequency(uint32_t Reqfreq)
+void SX1280Driver::SetFrequency(uint32_t Reqfreq, bool startReceive)
 {
     //Serial.println(Reqfreq);
     uint8_t buf[3]; //TODO make word alignmed
+
+    // SetMode(SX1280_MODE_STDBY_XOSC);
+    // SetMode(SX1280_MODE_FS);
 
     // TODO C3 doesn't have hardware floats - rewrite for fixed point
     uint32_t freq = (uint32_t)((double)Reqfreq * freqScalar);
@@ -626,6 +629,13 @@ void SX1280Driver::SetFrequency(uint32_t Reqfreq)
 
     hal->WriteCommand(SX1280_RADIO_SET_RFFREQUENCY, buf, 3);
     currFreq = Reqfreq;
+
+    // if (startReceive) {
+    //     SetMode(SX1280_MODE_RX);
+        // RXnb(); // also does rxen pin and clears irqs - what's the min we need?
+    // } else {
+    //     SetMode(SX1280_MODE_FS);
+    // }
 }
 
 // NB FEI requires explicit header (reasons unknown)
