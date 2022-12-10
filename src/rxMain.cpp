@@ -61,7 +61,7 @@
 #define DEFER_MANUAL_RATE_CHANGES
 
 // Try and receive both DS packets for testing - requires more SPI traffic
-#define DS_TRY_BOTH_PKTS
+// #define DS_TRY_BOTH_PKTS
 
 
 // do everything except actually sending the packet
@@ -89,12 +89,22 @@
 // Bare sx1280 from -18 to +13 
 
 #if (TRANSMITTER)
+
 #define TX_POWER_915 (0)
-#define TX_POWER_2G4 (10)
+
+#ifdef RADIO_E28_27
+#define TX_POWER_2G4 (-17)      // 10mW
+// #define TX_POWER_2G4 (-7)    // 100mW
 #else
+#define TX_POWER_2G4 (10)
+#endif // RADIO_E28_27
+
+#else // not transmitter
+
 #define TX_POWER_915 (0)
 // not used, but needs to be defined
 #define TX_POWER_2G4 (-18)
+
 #endif // TRANSITTER
 
 // Channel to use for arming, 0 through 15
@@ -2412,14 +2422,12 @@ static void receive2G4()
     gpio_set_level(DEBUG_PIN, 1);
     #endif
 
-    #if defined(USE_SECOND_RADIO)
     if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::FLRC)
     {
         FlrcPacketStatus_s * status = radio2->GetLastPacketStatusFLRC();    // XXX danger, SPI access
         const uint8_t anyErrorMask = FLRC_PKT_ERROR_MASK_SYNC | FLRC_PKT_ERROR_MASK_LENGTH | FLRC_PKT_ERROR_MASK_CRC | FLRC_PKT_ERROR_MASK_ABORT;
         flrcErrors = status->errors & anyErrorMask;
     }
-    #endif
 
     if (flrcErrors != 0) {
 
@@ -2432,6 +2440,8 @@ static void receive2G4()
         } else {
             printf("flrc other error %X\n", flrcErrors);
         }
+
+        // std::cout << "E";
 
     } else {
 
@@ -2454,6 +2464,12 @@ static void receive2G4()
                 // printf("2");
                 std::cout << '2';
                 #endif
+
+                // if (flrcFirstPacket) {
+                //     std::cout << '1';
+                // } else {
+                //     std::cout << '2';
+                // }
 
                 totalRX2Events++;
                 lqEffective.add();
@@ -2490,6 +2506,10 @@ static void receive2G4()
                         feiWaitingForFreqUpdate = true;
                     }
                 }
+            } else {    // we received the first packet, so we don't need this one
+                // std::cout << '.';
+                // Consistency check, it shouldn't be possible to have flrcFirstPacketSuccess true when flrcFirstPacket is also true
+                if (flrcFirstPacket && flrcFirstPacketSuccess) std::cout << "racecon 1\n";
             }
 
             if (flrcFirstPacket) {
@@ -2516,20 +2536,21 @@ static void receive2G4()
     {
         HandleFHSS2G4();
 
-        #ifdef USE_RX_TIMEOUTS
-        // if using timeouts we need to start a new receive, otherwise we're in continuous mode
-        // and already listening for the next packet
-        SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};        
-        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-        if (qResult != pdTRUE) std::cout << "qFull2\n";
-        #else
-        // Need to clear the IRQ or we won't get notified for the next packet
-        SpiTaskInfo taskInfo = {SpiTaskID::ClearIRQs, RadioSelection::second, SX1280_IRQ_RX_DONE};        
-        BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-        if (qResult != pdTRUE) std::cout << "qFull2\n";
-
-        #endif
     } 
+
+    #ifdef USE_RX_TIMEOUTS
+    // if using timeouts we need to start a new receive, otherwise we're in continuous mode
+    // and already listening for the next packet
+    SpiTaskInfo taskInfo = {SpiTaskID::StartRx, RadioSelection::second, 0};        
+    BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+    if (qResult != pdTRUE) std::cout << "qFull2\n";
+    #else
+    // Need to clear the IRQ or we won't get notified for the next packet
+    SpiTaskInfo taskInfo = {SpiTaskID::ClearIRQs, RadioSelection::second, SX1280_IRQ_RX_DONE};        
+    BaseType_t qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
+    if (qResult != pdTRUE) std::cout << "qFull2\n";
+
+    #endif
 
 
     // check for variaton in the intervals between sending packets
@@ -3170,6 +3191,7 @@ void ICACHE_RAM_ATTR tick915()
 /** Aligned with (approximately) the midpoint of the radio interval (not necessarily the midpoint of the radio signal since duty cycle < 1)
  * 
  *  Assume that the radio modem is busy doing either rx or tx during this call, so we can only do non-radio related housekeeping in here.
+ *  Except.., now with dual send this can be the start point of the second copy, so radio stuff does indeed get done in here.
  * 
  *  Runs in task context (not ISR)
  *
@@ -3210,17 +3232,8 @@ void ICACHE_RAM_ATTR tick2G4()
                 if (qResult != pdTRUE) std::cout << "qFull4\n";
                 #endif
 
-                // This is done automatically now (except I disabled it for testing)
+                // std::cout << 'U';
 
-                // why does this need something here but tockRX2G4 doesn't and neither does HandleFHSS2G4?
-                // need to start the receive after changing frequency (even when using continuous rx - why?) - maybe it's only clearing the irqs that is needed
-                // and if it's irqs, is it that the packets are too long for the window? Or maybe the window needs better pfd accuracy since pfd isn't enabled
-                // for flrc
-                // taskInfo.frequency = 0;
-                taskInfo.id = SpiTaskID::ClearIRQs;
-                taskInfo.irqMask = SX1280_IRQ_RX_DONE;
-                qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
-                if (qResult != pdTRUE) std::cout << "qFull6\n";
             }
 
             flrcFirstPacket = false;
@@ -3363,6 +3376,7 @@ void ICACHE_RAM_ATTR tockRX2G4()
     // gpio_set_level(DEBUG_PIN, 1);
     // #endif
 
+    // XXX we expect this call to fhss to be rarely needed, mostly it should fire from rxdone - in which case, don't we need to know if that call changed the freq?
     bool freqUpdated = HandleFHSS2G4();
 
     if (ExpressLRS_currAirRate_Modparams->useDoubleSend)
@@ -3382,6 +3396,9 @@ void ICACHE_RAM_ATTR tockRX2G4()
                 qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
                 if (qResult != pdTRUE) std::cout << "qFull5\n";
                 #endif
+
+                // std::cout << 'D';
+
             }
         }
 
@@ -3390,7 +3407,7 @@ void ICACHE_RAM_ATTR tockRX2G4()
     } // if doubleSend
 
 
-
+    // Check for hung radio and attempt recovery
     #ifdef USE_SECOND_RADIO
     unsigned long now = millis();
     bool radio2Missing = (now - r2LastIRQms) > 250; // with a short interval this now gets triggered at low LQ because continous rx means no timeout irqs
@@ -3956,7 +3973,13 @@ void wifi_init_sta(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+
+
     ESP_ERROR_CHECK(esp_wifi_start() );
+
+    // reduce power level to avoid shutting down due to high swr - need better antenna tune
+    std::cout << "setting low power for wifi tx\n";
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(20)); // 20 seems to be about the best for now (range 8 to 84)
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
 
@@ -4016,6 +4039,7 @@ void wifi_init_ap()
             .ssid_len = 7,
             .channel = 11,
             .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+            .ssid_hidden = 0,
             .max_connection = 4
         }
     };
@@ -4031,7 +4055,9 @@ void wifi_init_ap()
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(84));
+    // try lower power levels in case it's shutting down due to high swr
+    std::cout << "setting low power for wifi tx\n";
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(16)); // less than 20 is all the same as the min, 8
 
     ESP_LOGI(TAG, "wifi_init_softap finished.");
 
@@ -4056,6 +4082,8 @@ void runWifiTest()
     // wifi_init_sta();
 
     wifi_init_ap();
+
+    std::cout << "AP started, check for network TestNet";
 
 
     wifi_ap_record_t ap_info;

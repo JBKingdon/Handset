@@ -120,7 +120,7 @@ typedef struct expresslrs_rf_pref_params_s
 #ifdef USE_PWM6
 // XXX change this to N_RATES
 #define RATE_MAX 2
-#elif defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+#elif defined(DB_USE_915)
 // dual band uses a single rate on the 915 side, RATE_MAX is only used for 2G4
 #else
 #define RATE_MAX 4
@@ -214,13 +214,13 @@ extern bool ExpressLRS_AirRateNeedsUpdate;
 extern expresslrs_mod_settings_915_s airRateConfig_LoraTest;
 #endif
 
-// XXX needs a better define
-#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+
+#if defined(DB_USE_915)
 
 extern expresslrs_mod_settings_915_s airRateConfig915;
 extern expresslrs_rf_pref_params_s airRateRFPerf915;
 
-#endif // DUAL_BAND
+#endif // DB_USE_915
 
 
 //ELRS SPECIFIC OTA CRC 

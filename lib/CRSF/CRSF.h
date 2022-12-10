@@ -5,7 +5,7 @@
 
 #include "../../src/config.h"
 
-
+// XXX TODO what a mess, move this to config? And sort out a better debug vs production control so it's all in one place
 #if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
 
 #ifdef IS_RECEIVER
@@ -18,7 +18,8 @@
 
 // The transmitter can use uart1 and keep debug on uart0
 // XXX but isn't for now
-#define CRSF_PORT_NUM 0
+// #define CRSF_PORT_NUM 0
+#define CRSF_PORT_NUM 1
 
 #endif // IS_RECEIVER
 

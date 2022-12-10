@@ -18,7 +18,7 @@ expresslrs_mod_settings_915_s airRateConfig_LoraTest =
 
 #endif // LORA_TEST
 
-#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+#if defined(DB_USE_915)
 
 expresslrs_mod_settings_915_s airRateConfig915 = 
     // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
@@ -37,12 +37,15 @@ expresslrs_rf_pref_params_s airRateRFPerf915 =
     //       83                     NA                  NA                          NA                      NA
     {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                1185,       0,0};
 
+    // try different pfdOffset
+    // {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                 1250,       0,0};
+
     // for longer pre-amble, pfdOffset needs validating
     // {0, RATE_125HZ, -112,  6944,    3500,               4000,                       200,                   5000,                  800,       0,0}; // 673 theory
 
 
 
-#else
+#else   // not the DB specific 915 rate, so a range of (sx1262 based) rates
 
 expresslrs_mod_settings_915_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
@@ -92,7 +95,7 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     #endif // USE_PWM6
 };
 
-#endif // DUAL_BAND_BREADBOARD
+#endif // DB_USE_915
 
 #endif // sub gHz bands
 
@@ -173,6 +176,7 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     {5, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                630,        40,      100},
     // {3, RATE_125HZ, -112, 6187, 2000,               4000,                       100,                       1000,               1880}, // no header
     {6, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                934,         0,      100}, // with header
+    // {6, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                1000,        0,      100}, // experiment with different pfdOffset
 };
 
 #elif defined(USE_HIRES_DATA)
