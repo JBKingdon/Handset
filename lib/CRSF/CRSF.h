@@ -6,7 +6,7 @@
 #include "../../src/config.h"
 
 // XXX TODO what a mess, move this to config? And sort out a better debug vs production control so it's all in one place
-#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(DB_TX_V1)
 
 #ifdef IS_RECEIVER
 
@@ -17,21 +17,25 @@
 #else
 
 // The transmitter can use uart1 and keep debug on uart0
-// XXX but isn't for now
-// #define CRSF_PORT_NUM 0
-#define CRSF_PORT_NUM 1
+// XXX but isn't for now - needs to be 0 for use in the handset, and 1 for stand alone dev. Can't remember why
+#define CRSF_PORT_NUM 0
+// #define CRSF_PORT_NUM 1
 
 #endif // IS_RECEIVER
 
-#else
+#elif defined(DUAL_BAND_BREADBOARD)
 
 // The breadboard prototype can use uart1 with pin 9 for crossfire
 
 // XXX but for some reason this was still set to 0. I don't remember why. Setting to 1 to see if I can get
 // some debug out of a simple dev board to try out some wifi stuff
 
-// #define CRSF_PORT_NUM 0 
-#define CRSF_PORT_NUM 1
+#define CRSF_PORT_NUM 0 
+// #define CRSF_PORT_NUM 1
+
+#else
+
+#error("Must define boardtype")
 
 #endif // DUAL_BAND_PROTOTYPE
 
@@ -86,9 +90,17 @@ private:
     static volatile uint32_t OpenTXsyncLastSent;
     static uint32_t RequestedRCpacketInterval;
     static volatile uint32_t RCdataLastRecv;
+    static volatile uint32_t dataLastRecv;
     static volatile int32_t OpenTXsyncOffset;
+    static volatile int32_t OpenTXsyncWindow;
+    static volatile int32_t OpenTXsyncWindowSize;
     static uint32_t OpenTXsyncOffsetSafeMargin;
     static uint8_t CRSFoutBuffer[CRSF_MAX_PACKET_LEN];
+
+    static bool    newLinkstatsDataAvailable;
+    static uint8_t linkstatsBuffer[LinkStatisticsFrameLength+4];
+
+
     #ifdef FEATURE_OPENTX_SYNC_AUTOTUNE
     static uint32_t SyncWaitPeriodCounter;
     #endif
@@ -114,19 +126,12 @@ private:
     #endif // CRSF_TX_MODULE
 
     static void flush_port_input(void);
+    static void ICACHE_RAM_ATTR sendLinkstatsPacketToTX();
+
+    static bool ICACHE_RAM_ATTR syncPacketRequired();
+    static bool ICACHE_RAM_ATTR linkstatsPacketRequired();
 
 public:
-    #ifdef CRSF_RX_MODULE
-
-    // CRSF(Stream *dev) : _dev(dev)
-    // {
-    // }
-
-    // CRSF(Stream &dev) : _dev(&dev) {}
-
-    #endif // CRSF_RX_MODULE
-
-    // static HardwareSerial Port;
 
     static volatile uint16_t ChannelDataIn[16];
     static volatile uint16_t ChannelDataOut[16];
@@ -184,8 +189,10 @@ public:
     void sendLinkStatisticsToFC();
     void sendLinkStatsDBtoFC();
 
-    static void ICACHE_RAM_ATTR sendLinkStatisticsToTX();
-    void ICACHE_RAM_ATTR sendTelemetryToTX(uint8_t *data);
+    // Provide new linkstats data from basic telemetry for sending to the handset
+    static void ICACHE_RAM_ATTR updateLinkStatistics();
+
+    // void ICACHE_RAM_ATTR sendTelemetryToTX(uint8_t *data);
 
     // void sendLUAresponse(uint8_t val[], uint8_t len);
 
@@ -195,13 +202,13 @@ public:
     void ICACHE_RAM_ATTR setSentSwitch(uint8_t index, uint8_t value);
 
 ///// Variables for OpenTX Syncing //////////////////////////
-    // #define OpenTXsyncPacketInterval 200 // in ms
-    #define OpenTXsyncPacketInterval 100 // in ms
+    // #define OpenTXsyncPacketInterval 200 // in ms. Default is 200 for 5Hz, but if we send much more often we can keep the delta smaller
+    #define OpenTXsyncPacketInterval 10 // in ms
     static void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
     // void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
 
     static void ICACHE_RAM_ATTR JustSentRFpacket();
-    static void ICACHE_RAM_ATTR sendSyncPacketToTX(bool force);
+    static void ICACHE_RAM_ATTR sendSyncPacketToTX();
 
     /////////////////////////////////////////////////////////////
 
@@ -213,13 +220,14 @@ public:
 
     static void handleUARTin();
     bool RXhandleUARTout();
-#if defined(CRSF_TX_MODULE)
+
+    #if defined(CRSF_TX_MODULE)
     static uint8_t* GetMspMessage();
     static void UnlockMspMessage();
     static void AddMspMessage(const uint8_t length, volatile uint8_t* data);
     // static void AddMspMessage(mspPacket_t* packet);
     static void ResetMspQueue();
-#endif
+    #endif
 };
 
 

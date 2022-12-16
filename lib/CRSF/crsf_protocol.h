@@ -41,16 +41,24 @@
 #endif
 
 // extended baud rates for EdgeTx
-const uint32_t OPENTX_BAUDS[] = {
-    115200,
-    400000,
-    921600,
-    1870000,
-    3750000,
-    // 5250000  // Jumper T16 doesn't use this one, so no point wasting time cycling through it
-};
+// const uint32_t OPENTX_BAUDS[] = {
+//     115200,
+//     400000,
+//     921600,
+//     1870000,
+//     3750000,
+//     // 5250000 -- doesn't seem to work, and takes ages to cycle through
+// };
+// #define OPENTX_N_BAUDS 5;
 
-#define OPENTX_N_BAUDS 5;
+// Adjusted rates for Jumper T16
+const uint32_t OPENTX_BAUDS[] = {           // avg
+     913200,    // 9090 9174 9091 9174       9132
+    1910000,    // 1887 1923 1908 1923      1910
+    3817000,    // 3788 3846 3788 3846      3817
+    // 5236000     // 5208 5263 5208 5263      5236
+};
+#define OPENTX_N_BAUDS 3;
 
 #define CRSF_NUM_CHANNELS 16
 #define CRSF_CHANNEL_VALUE_MIN  172

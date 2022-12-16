@@ -19,21 +19,14 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-#define IS_RECEIVER
+// #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
 #endif
 //-------------------------------------------------
 
-
-#ifdef IS_TRANSMITTER
-// For crsf tx module to openTX handset
-#define UART_INVERTED
-#endif
-
-
-#define DB_USE_915
+// #define DEV_MODE
 
 // XXX where's the best place for these?
 
@@ -46,13 +39,14 @@
 // #define DUAL_BAND_PROTOTYPE
 
 // DB pcb with no modules
-#define DB_PCB_V1
+// #define DB_PCB_V1
+
+// DB specific TX module with e28-27
+#define DB_TX_V1
+
 
 // This was for dual sx1280 with a c3 module on a PCB
 // #define C3_PCB_V0
-
-// DB specific TX module with e28-27
-// #define DB_TX_V1
 
 // ---------------------------
 
@@ -68,6 +62,13 @@
 // #define SX1262_TXEN_INVERTED
 // #endif
 
+#ifdef IS_TRANSMITTER
+// For crsf tx module to openTX handset
+#define UART_INVERTED
+#endif
+
+// A define to indicate that we have 915 support for DB mode
+#define DB_USE_915
 
 // define the type of radio module being used 
 
@@ -299,7 +300,8 @@
 
 // These are for the sx1262
 
-#define RADIO_RESET_PIN GPIO_NUM_12
+// #define RADIO_RESET_PIN GPIO_NUM_12
+#define RADIO_RESET_PIN GPIO_NUM_9
 #define RADIO_NSS_PIN   GPIO_NUM_8
 #define RADIO_BUSY_PIN  GPIO_NUM_7
 #define RADIO_DIO1_PIN  GPIO_NUM_10
@@ -506,12 +508,17 @@
 
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin:
+
+// XXX pin 9 is a bad choice, it has a relatively strong pull-up for the boot button that overrides the weak pulldown on the gpio
+// Swap with something else? Swapped with sx1262 reset
 // #define CRSF_SPORT_PIN     GPIO_NUM_9    // This was most recent in use. Disable to allow keyboard input for testing
+
+#define CRSF_SPORT_PIN     GPIO_NUM_12  // swapped from RADIO_RESET_PIN
 
 // #define CRSF_SPORT_PIN     GPIO_NUM_19
 // #define CRSF_SPORT_PIN     GPIO_NUM_20  // 20 is normally the uart0 rx pin
 // #define CRSF_SPORT_PIN     GPIO_NUM_21  // 21 is normally the uart0 tx pin
-#define DEBUG_RX_PIN    GPIO_NUM_20
+// #define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 // #define DEBUG_TX_PIN    GPIO_NUM_19
 #endif
@@ -533,16 +540,15 @@
 
 #ifdef IS_TRANSMITTER
 // For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
-// #define CRSF_SPORT_PIN     GPIO_NUM_3
-// #define CRSF_SPORT_PIN     GPIO_NUM_9
 
 // for prod
-// #define CRSF_SPORT_PIN  GPIO_NUM_21
-// #define DEBUG_TX_PIN    GPIO_NUM_20
+#define CRSF_SPORT_PIN  GPIO_NUM_21
+#define DEBUG_TX_PIN    GPIO_NUM_20
 
 // for dev without handset
-#define DEBUG_RX_PIN    GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21
+// #define DEBUG_RX_PIN    GPIO_NUM_20
+// #define DEBUG_TX_PIN    GPIO_NUM_21
+
 #endif // IS_TRANSMITTER
 
 #ifdef IS_RECEIVER
@@ -564,14 +570,20 @@
 #define LED_RADIO1_INDEX 2
 #define LED_RADIO2_INDEX 1
 
-// for prod
-// #define CRSF_SPORT_PIN  GPIO_NUM_21
-// #define DEBUG_TX_PIN    GPIO_NUM_20
+
+#ifdef DEV_MODE
 
 // for dev without handset
 #define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 
+#else // not DEV_MODE
+
+// for prod
+#define CRSF_SPORT_PIN  GPIO_NUM_21
+#define DEBUG_TX_PIN    GPIO_NUM_20
+
+#endif // DEV_MODE
 
 #elif defined(DB_PCB_V1)
 
@@ -588,10 +600,11 @@
 #endif // IS_TRANSMITTER
 
 #ifdef IS_RECEIVER
-// disabling CRSF for development
-// #define CRSF_TX_PIN   GPIO_NUM_21
-// #define CRSF_RX_PIN   GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
+// Comment these out to disable CRSF for development
+#define CRSF_TX_PIN   GPIO_NUM_21
+#define CRSF_RX_PIN   GPIO_NUM_20
+
+// #define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
 
 #endif // IS_RECEIVER
 

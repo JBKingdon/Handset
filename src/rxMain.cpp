@@ -5,22 +5,8 @@
  * 
  *  Is telem actually using the short packet length OTA?
  * 
- *   What's going on with rssi 915 on the transmitter?
- * 
- *   Use breadboard both ends
- * 
- *   Disable 2G4
- * 
- *   telem power    telem rssi      rc power    rc rssi
- *   -9                -50          -9          -52
- *   -9                -51          20          -30
- *   20                -25          -9          -55
- *   20                -25          20          -30
- * 
- *   LQ on 915 appears to improve when connecting rxen on the e22 module, but it's inconsistent in behaviour
- * 
  *   Interference between bands
- *      On the PCB rx (but not the breadboards), transmitting 2G4 at 13 dBm reduces 915 rssi by 20dB
+ *      On the PCB rx (but not the breadboards), transmitting 2G4 at 13 dBm reduces 915 rssi by 20dB (fortunately we're not txing 2g4 on the receiver normally)
  * 
  *      What happens with tx 915 vs 2G4 rssi?
  *          Try gathering separate rssi stats for during the telemetry period when the sx1262 will be transmitting from the receiver
@@ -89,12 +75,16 @@
 // Bare sx1280 from -18 to +13 
 
 #if (TRANSMITTER)
-
-#define TX_POWER_915 (0)
+#ifdef DEV_MODE
+#define TX_POWER_915 (0)       // 1mW
+#else
+#define TX_POWER_915 (13)   // 20mW
+// #define TX_POWER_915 (17)   // 50mW
+#endif
 
 #ifdef RADIO_E28_27
-#define TX_POWER_2G4 (-17)      // 10mW
-// #define TX_POWER_2G4 (-7)    // 100mW
+// #define TX_POWER_2G4 (-17)      // 10mW
+#define TX_POWER_2G4 (-7)    // 100mW
 #else
 #define TX_POWER_2G4 (10)
 #endif // RADIO_E28_27
@@ -125,9 +115,10 @@
 // only need to recompile rx:
 // #define PFD_CALIBRATION
 
-// #define DEBUG_SUPPRESS
+#ifndef DEV_MODE
+#define DEBUG_SUPPRESS
 // #define PRINT_RX_SCOREBOARD 1
-
+#endif
 
 // Time in ms of no TLM response to consider that we have lost connection
 #define RX_CONNECTION_LOST_TIMEOUT 3000
@@ -245,6 +236,8 @@ typedef struct
 bool flrcFirstPacket = false;
 bool flrcFirstPacketSuccess = false;
 
+bool newDataIsAvailable = false;    // true when data has been received and can be sent to the FC
+
 static DynamicRateStates drState = DynamicRateStates::Normal;
 // static unsigned long tDrStart;
 // static uint8_t dynamicRateTargetIndex;
@@ -255,6 +248,7 @@ PFD pfdLoop;
 
 uint8_t ExpressLRS_nextAirRateIndex = 0;
 int8_t pendingAirRateIndex = -1;   // for deferred rate change. Could have used ExpressLRS_nextAirRateIndex but didn't want to muddy the code
+int8_t previousAirRateIndex = -1;  // If we auto change rate to establish FEI, this is the rate we need to change back to afterwards
 uint32_t timeout1Counter = 0;
 uint32_t timeout2Counter = 0;
 uint32_t mismatchCounter = 0;
@@ -387,6 +381,7 @@ uint8_t scanIndex = RATE_DEFAULT; // used when cycling through RF modes
 
 uint8_t antenna = 0;    // which antenna is currently in use
 
+// Transmitter variable to indicate that we know an rx is connected to the link (because we're getting telem from it)
 bool isRXconnected = false;
 
 #if defined(PRINT_RX_SCOREBOARD)
@@ -487,7 +482,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.elrsLinkStatsDB.snr1 = LPF_UplinkSNR1.SmoothDataINT;
     crsf.elrsLinkStatsDB.lq0 = lqRadio1.getLQ();
     crsf.elrsLinkStatsDB.lq1 = lqRadio2.getLQ();
-    crsf.elrsLinkStatsDB.rf_Mode = (uint8_t)RATE_LAST - (uint8_t)ExpressLRS_currAirRate_Modparams->enum_rate;
+    crsf.elrsLinkStatsDB.rf_Mode = (RATE_MAX-1) - ExpressLRS_currAirRate_Modparams->index;
     // crsf.elrsLinkStatsDB.txPower = 
 
     #else // standard crsf link stats packet
@@ -792,14 +787,13 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     packet->ch3 = crsfTo10bit(crsf.ChannelDataIn[3]);
 
     // This will send the arm channel even though it's going to be ignored. Seems like a waste of bandwidth
-    // XXX caution, arm flag doesn't fit in flrc packets, so this will be the definitive and only copy
 
     bool firstGroup = (timerNonce >> 4) % 2; // alternate the two groups of channels
     if (firstGroup)
     {
         packet->chA = crsfTo12bit(crsf.ChannelDataIn[4]);   // secondary channels are carried as 12 bit clean
         packet->chB = crsfTo12bit(crsf.ChannelDataIn[5]);
-        packet->swA = CRSF_to_N(crsf.ChannelDataIn[8],3);
+        packet->swA = CRSF_to_N(crsf.ChannelDataIn[8],3);   // wasted copy of the arm channel
         packet->swB = CRSF_to_N(crsf.ChannelDataIn[9],3);
         packet->swC = CRSF_to_N(crsf.ChannelDataIn[10],3);
         packet->swD = CRSF_to_N(crsf.ChannelDataIn[11],3);
@@ -810,6 +804,18 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
         packet->swB = CRSF_to_N(crsf.ChannelDataIn[13],3);
         packet->swC = CRSF_to_N(crsf.ChannelDataIn[14],3);
         packet->swD = CRSF_to_N(crsf.ChannelDataIn[15],3);
+    }
+
+    // Check Channel 7 as a way of changing packet rates
+    // buttons 1-6: 173, 500, 828, 1155, 1483, 1810
+    uint8_t ch8Index = (crsf.ChannelDataIn[7] - 173) / 327; // 0 through 5 from the 6 way switch
+    if (ch8Index >= RATE_MAX) ch8Index = RATE_MAX-1;
+    ch8Index = (RATE_MAX-1) - ch8Index;    // flip the order so that the default setting and power on matches 125Hz mode
+    uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+    if (ch8Index < RATE_MAX && ch8Index != currentIndex) {
+        printf("rate %u\n", ch8Index);
+        pendingAirRateIndex = ch8Index;
+        // printf("raw %u\n", crsf.ChannelDataIn[7]);
     }
 
     // printf("c[0]=%u\n", crsf.ChannelDataIn[0] >> 1);
@@ -1039,7 +1045,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
     #ifdef USE_SECOND_RADIO
     DB2G4Packet_t * packet = (DB2G4Packet_t *) radio2->TXdataBuffer;
 
-    crsf.JustSentRFpacket(); // for external module sync
+    // crsf.JustSentRFpacket(); // for external module sync - moved to tockTX2G4
 
     packet->ch0 = crsfTo12bit(crsf.ChannelDataIn[0]); // otx is 11 bit reduced range, main channels are 12 bit clean
     packet->ch1 = crsfTo12bit(crsf.ChannelDataIn[1]);
@@ -1378,18 +1384,25 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     crsf.elrsPackedDBDataOut.chan2 = packet->ch2;
     crsf.elrsPackedDBDataOut.chan3 = packet->ch3;
 
-
-    // XXX figure out the arm channel, it's supposed to be configurable but that's going to be ugly with the struct
-    crsf.elrsPackedDBDataOut.chan8 = packet->armed * 2;
-
-    // TODO defer sending to FC to tock()
-    // send to fc
-    if (connectionState != disconnected)
+    // Arm channel is only carried on Lora packets
+    if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::LORA)
     {
-        #ifdef CRSF_TX_PIN
-        crsf.sendDBRCFrameToFC();
-        #endif
+        // XXX figure out the arm channel, it's supposed to be configurable but that's going to be ugly with the struct
+        crsf.elrsPackedDBDataOut.chan8 = packet->armed * 2;
     }
+
+    // defer sending to FC to tock()
+    newDataIsAvailable = true;
+
+    // std::cout << '2';
+
+    // // send to fc
+    // if (connectionState != disconnected)
+    // {
+    //     #ifdef CRSF_TX_PIN
+    //     crsf.sendDBRCFrameToFC();
+    //     #endif
+    // }
 
     return 1;
 }
@@ -1455,13 +1468,21 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
         // When both channels are running 125Hz, age2G4us will usually be > the 915 TOA and we get unnecessary double FC packets,
         // so we need to increase the threshold a bit. 2x is easy, would something less still work? We could pre-compute a value
         // if necessary.
-        const bool primaryChannelIsOld = (age2G4us > (airRateRFPerf915.TOA * 2));
+        // const bool primaryChannelIsOld = (age2G4us > (airRateRFPerf915.TOA * 2));
+
+        // Sending to FC from tock should fix the above
+        const bool primaryChannelIsOld = (age2G4us > airRateRFPerf915.TOA);
 
         // Only merge the primary channels if the data is newer than the last 2G4 packet
 
         // the approximate age of this data is the 915 OTA time
         if (primaryChannelIsOld)
         {
+            // XXX TODO move this outside of the if so that we send new data
+            // for the secondary channels
+            newDataIsAvailable = true;
+            // std::cout << '1';
+
             // std::cout << "915 fallback data\n";
             // crsf.PackedHiResRCdataOut.chan0 = packet->ch0 << 2;
             // crsf.PackedHiResRCdataOut.chan1 = packet->ch1 << 2;
@@ -1547,15 +1568,17 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
 
         #endif // USE_DB_PACKETS
 
-        #ifdef CRSF_TX_PIN
-        // We can use the same age based condition to gate sending data to the FC
-        if (primaryChannelIsOld)
-        {
-            // crsf.sendHiResRCFrameToFC();
-            // crsf.sendRCFrameToFC();
-            crsf.sendDBRCFrameToFC();
-        }
-        #endif
+        // Deferred to tock()
+
+        // #ifdef CRSF_TX_PIN
+        // // We can use the same age based condition to gate sending data to the FC
+        // if (primaryChannelIsOld)
+        // {
+        //     // crsf.sendHiResRCFrameToFC();
+        //     // crsf.sendRCFrameToFC();
+        //     crsf.sendDBRCFrameToFC();
+        // }
+        // #endif
 
         // check for packet rate change
         if (ExpressLRS_currAirRate_Modparams->index != indexIn)
@@ -2279,9 +2302,10 @@ static void handleEvents915()
                     #endif
                     isRXconnected = true;
 
-                    // If the receiver hasn't established th FEI correction, switch to 125Hz to give it the opportunity
+                    // If the receiver hasn't established the FEI correction, switch to 125Hz to give it the opportunity
                     if (!telemData.feiCorrected && (ExpressLRS_currAirRate_Modparams->index != (RATE_MAX-1)))
                     {
+                        previousAirRateIndex = ExpressLRS_currAirRate_Modparams->index;
                         lastRateChangeMs = millis() + 3000; // allow a period for FEI correction to happen before dynamic rates kicks in
                         SetRFLinkRate(RATE_MAX-1); // set 125Hz mode to enable FEI measurement (TODO rename RATE_MAX, worst name ever)
                     }
@@ -2294,6 +2318,12 @@ static void handleEvents915()
                 }
 
                 lqTelem.add();
+
+                if (telemData.feiCorrected && previousAirRateIndex != -1) {
+                    // Switch back to the prior rate now that the FEI correction has been applied
+                    SetRFLinkRate(previousAirRateIndex);
+                    previousAirRateIndex = -1;
+                }
 
                 crsf.LinkStatistics.uplink_RSSI_1 = (uint8_t)telemData.rssi915;
                 crsf.LinkStatistics.uplink_RSSI_2 = (uint8_t)telemData.rssi2G4;
@@ -2319,7 +2349,8 @@ static void handleEvents915()
 
                 // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
 
-                crsf.sendLinkStatisticsToTX();
+                // crsf.sendLinkStatisticsToTX();
+                crsf.updateLinkStatistics();
             } else {
                 // XXX reduce the SNR here
             }
@@ -2457,7 +2488,6 @@ static void receive2G4()
         {
             if (!flrcFirstPacketSuccess) {
                 // only go to the trouble of processing and sending the packet to the FC if we haven't already sent it for this cycle
-                // TODO Send data to FC from tock() to reduce jitter
                 ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
 
                 #if defined(PRINT_RX_SCOREBOARD)
@@ -2501,8 +2531,10 @@ static void receive2G4()
                         // compensation value is used. Otherwise we're picking up data from the pre-adjusted freq and
                         // risk double compensating.
                         LPF_fei.init(0);
+                        #ifndef DEBUG_SUPPRESS
                         // std::cout << 'A';
                         printf("fe %d\n", fe);
+                        #endif
                         feiWaitingForFreqUpdate = true;
                     }
                 }
@@ -2824,6 +2856,11 @@ void liveUpdateRFLinkRate(uint8_t index)
 {
     bool invertIQ = false;
     bool useHeaders = false;
+
+    // Range check the input (can't be <0 since unsigned)
+    if (index >= RATE_MAX) {
+        return;
+    }
 
     // if the index is the same as the currently active index then there's no need to 
     // do anything
@@ -3434,7 +3471,9 @@ void ICACHE_RAM_ATTR tockRX2G4()
             std::cout << "R2M";
             #endif
         } else {
+            #ifndef DEBUG_SUPPRESS
             std::cout << "skip ";
+            #endif
         }
 
         r2LastIRQms = now; // prevent spamming
@@ -3449,6 +3488,13 @@ void ICACHE_RAM_ATTR tockRX2G4()
     // lqEffective.inc();
     lqRadio2.inc();
 
+    // If we got new data during the previous frame, send it to the FC
+    if (newDataIsAvailable)
+    {
+        newDataIsAvailable = false;
+        // std::cout << 's';
+        crsf.sendDBRCFrameToFC();
+    }
 
     #if defined(PRINT_RX_SCOREBOARD)
     if (!lqRadio2.currentIsSet() ) {
@@ -3490,12 +3536,15 @@ void ICACHE_RAM_ATTR tockTX2G4()
     // gpio_set_level(DEBUG_PIN, 0);
     // #endif
 
+    crsf.JustSentRFpacket(); // for external module sync
+
+
     // hopefully this will already have been done from txDone interrupt
     // XXX check the return value and debug if it wasn't done
     HandleFHSS2G4();
 
     #ifndef DISABLE_2G4
-    if (isRXconnected)
+    if (isRXconnected)  // XXX not sure if this is a good idea or not
     {
         flrcFirstPacket = true;
         sendRCdataToRF2G4DB();
@@ -3549,9 +3598,11 @@ void ICACHE_RAM_ATTR tickTock()
  */
 void lostConnection()
 {
-    // TODO pretty sure FreqCorrection isn't used
+    #ifndef DEBUG_SUPPRESS
+    // TODO pretty sure FreqCorrection isn't used - update this with the new FEI info?
     printf("lost conn fc=%d fo=%d\n", FreqCorrection, HwTimer::getFreqOffset());
     // printf(" fo="); Serial.println(HwTimer::getFreqOffset, DEC);
+    #endif
 
     RFmodeCycleMultiplier = 1;
     connectionStatePrev = connectionState;
@@ -4107,75 +4158,75 @@ void runWifiTest()
 void setupSerial()
 {
     // Setup serial port
-    if (TRANSMITTER)
+    #if (TRANSMITTER)
+
+    if (CRSF_PORT_NUM != UART_NUM_0)
     {
-        // 
-        if (CRSF_PORT_NUM != UART_NUM_0)
-        {
-            // delete the default uart0 driver and recreate
-            uart_driver_delete(UART_NUM_0);
+        // delete the default uart0 driver and recreate
+        uart_driver_delete(UART_NUM_0);
 
-            // not sure what this was for
-            #ifdef CRSF_SPORT_PIN
-            gpio_matrix_out(CRSF_SPORT_PIN, 0x100, false, false);
-            #endif
+        // not sure what this was for - 0x100 disconnects the pin from any peripheral output
+        #ifdef CRSF_SPORT_PIN
+        gpio_matrix_out(CRSF_SPORT_PIN, 0x100, false, false);
+        #endif
 
-            static uart_config_t uart_config;
-            memset(&uart_config, 0, sizeof(uart_config));
-            uart_config.data_bits = UART_DATA_8_BITS;
-            uart_config.parity    = UART_PARITY_DISABLE;
-            uart_config.stop_bits = UART_STOP_BITS_1;
-            uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-            uart_config.source_clk = UART_SCLK_APB;
-            uart_config.baud_rate = 2000000;
-            // uart_config.baud_rate = 115200;
+        static uart_config_t uart_config;
+        memset(&uart_config, 0, sizeof(uart_config));
+        uart_config.data_bits = UART_DATA_8_BITS;
+        uart_config.parity    = UART_PARITY_DISABLE;
+        uart_config.stop_bits = UART_STOP_BITS_1;
+        uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+        uart_config.source_clk = UART_SCLK_APB;
+        uart_config.baud_rate = 2000000;
+        // uart_config.baud_rate = 115200;
 
-            const int intr_alloc_flags = 0;
-            const uint32_t rxBufferSize = 512;
-            const uint32_t txBufferSize = 1024;
-            ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
-            ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
-            uint8_t rxPin = UART_PIN_NO_CHANGE;
-            #ifdef DEBUG_RX_PIN
-            rxPin = DEBUG_RX_PIN;
-            #endif
-            ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, DEBUG_TX_PIN, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+        const int intr_alloc_flags = 0;
+        const uint32_t rxBufferSize = 512;
+        const uint32_t txBufferSize = 1024;
+        ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
+        ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
+        int rxPin = UART_PIN_NO_CHANGE;
+        #ifdef DEBUG_RX_PIN
+        rxPin = DEBUG_RX_PIN;
+        #endif
+        ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, DEBUG_TX_PIN, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
-            // The default uart setup doesn't enable input, so have to do it manually
-            // const int uart_buffer_size = (1024 * 2);
-            // ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 0, 0, 0));
-            // uart_set_baudrate(UART_NUM_0, 2000000);
+        // The default uart setup doesn't enable input, so have to do it manually
+        // const int uart_buffer_size = (1024 * 2);
+        // ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 0, 0, 0));
+        // uart_set_baudrate(UART_NUM_0, 2000000);
 
-            // std::cout << "uart0 configured for output only\n";
-            std::cout << "uart0 configured for debug\n";
-        } else {
-            // s.port is going to use uart0, so we need to setup uart1 for debug output
-            static uart_config_t uart_config;
-            memset(&uart_config, 0, sizeof(uart_config));
-            uart_config.data_bits = UART_DATA_8_BITS;
-            uart_config.parity    = UART_PARITY_DISABLE;
-            uart_config.stop_bits = UART_STOP_BITS_1;
-            uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-            uart_config.source_clk = UART_SCLK_APB;
-            uart_config.baud_rate = 2000000;
-            // uart_config.baud_rate = 115200;
-
-            const int intr_alloc_flags = 0;
-            const uint32_t rxBufferSize = 512;  // not going to use rx, but we have to set a buffer size anyway
-            const uint32_t txBufferSize = 1024;
-            ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
-            ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-            ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, DEBUG_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-
-            freopen("/dev/uart/1", "w", stdout);
-
-            std::cout << "A miracle! stdout remapped to uart1\n";
-        }
+        // std::cout << "uart0 configured for output only\n";
+        std::cout << "uart0 configured for debug\n";
     } else {
+        // s.port is going to use uart0, so we need to setup uart1 for debug output
+        static uart_config_t uart_config;
+        memset(&uart_config, 0, sizeof(uart_config));
+        uart_config.data_bits = UART_DATA_8_BITS;
+        uart_config.parity    = UART_PARITY_DISABLE;
+        uart_config.stop_bits = UART_STOP_BITS_1;
+        uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+        uart_config.source_clk = UART_SCLK_APB;
+        uart_config.baud_rate = 2000000;
+        // uart_config.baud_rate = 115200;
+
+        const int intr_alloc_flags = 0;
+        const uint32_t rxBufferSize = 512;  // not going to use rx, but we have to set a buffer size anyway
+        const uint32_t txBufferSize = 1024;
+        ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
+        ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
+        ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, DEBUG_TX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+        freopen("/dev/uart/1", "w", stdout);
+
+        std::cout << "A miracle! stdout remapped to uart1\n";
+    }
+    #else
+
         // RECEIVER
 
-        // XXX testing
-        #if false // defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+        #if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
+
         uart_set_baudrate(UART_NUM_0, CRSF_RX_BAUDRATE);
 
         #else
@@ -4188,7 +4239,8 @@ void setupSerial()
         #endif
 
         std::cout << "ESP32-C3 FreeRTOS Dual Band RX\n";
-    }
+
+    #endif // TRANSMITTER or receiver
 }
 
 void setupRadios()
@@ -4449,9 +4501,13 @@ void app_main()
         vTaskDelay(50/portTICK_PERIOD_MS);
 
         unsigned long now = millis();
+
+        #ifndef DEBUG_SUPPRESS
         if (now - prevTime > 200) {
             printf("big gap %u to %u\n", prevTime, now);
         }
+        #endif
+
         prevTime = now;
 
         // Reflect status on the leds
@@ -4678,7 +4734,9 @@ void app_main()
         const uint32_t tLost = millis();
         if ((connectionState == connected) && (((int32_t)airRateRFPerf915.RFmodeCycleInterval * 2) < (int32_t)(tLost - localLastValidPacket)))
         {
+            #ifndef DEBUG_SUPPRESS
             printf("loop: connection lost, localLVP %lu, tLost %lu, LQ %u\n", localLastValidPacket, tLost, uplinkLQ);
+            #endif
             lostConnection();
         }
 

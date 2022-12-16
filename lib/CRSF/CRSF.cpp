@@ -11,16 +11,23 @@
 
 #include "freertos/FreeRTOS.h"
 
+// #define DEBUG_OPENTX_SYNC
+
+// Forces a sync packet to be sent after every packet from the handset
+// #define USE_CRSF_ACK
+
+
+#ifdef DEV_MODE
+#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART to the FC
+#endif
 
 // #include "../../lib/FIFO/FIFO.h"
 // #include "telemetry_protocol.h"
 
-#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART to the FC
-
 // For the tx module, enable to search for the correct baudrate being used by the controller
 // Useful to disable for testing, but then the compiled baudrate has to match the controller setting (set by the value of
 // baudrateIndex and the OPENTX_BAUDS array)
-// #define TX_AUTOBAUD_ENABLED
+#define TX_AUTOBAUD_ENABLED
 
 #include "led_strip.h"
 
@@ -50,6 +57,13 @@ GENERIC_CRC8 crsf_crc(CRSF_CRC_POLY);
 ///Out FIFO to buffer messages///
 FIFO SerialOutFIFO;
 // FIFO MspWriteFIFO;
+
+#if defined(CRSF_TX_MODULE)
+uint32_t syncLastSent = 0;
+
+bool    CRSF::newLinkstatsDataAvailable = false;
+uint8_t CRSF::linkstatsBuffer[LinkStatisticsFrameLength+4];
+#endif // CRSF_TX_MODULE
 
 volatile bool CRSF::CRSFframeActive = false; //since we get a copy of the serial data use this flag to know when to ignore it
 
@@ -97,10 +111,13 @@ volatile crsf_sensor_battery_s CRSF::TLMbattSensor;
 /// OpenTX mixer sync ///
 volatile uint32_t CRSF::OpenTXsyncLastSent = 0;
 uint32_t CRSF::RequestedRCpacketInterval = 5000; // default to 200hz as per 'normal'
-volatile uint32_t CRSF::RCdataLastRecv = 0;
-volatile int32_t CRSF::OpenTXsyncOffset = 0;
+volatile uint32_t CRSF::RCdataLastRecv   = 0;
+volatile int32_t  CRSF::OpenTXsyncOffset = 0;
+volatile int32_t  CRSF::OpenTXsyncWindow = 0;
+volatile int32_t  CRSF::OpenTXsyncWindowSize = 0;
+volatile uint32_t CRSF::dataLastRecv = 0;
 
-static uint8_t baudrateIndex = 3;
+static uint8_t baudrateIndex = 0;
 
 #define MAX_BYTES_SENT_IN_UART_OUT 32
 uint8_t CRSF::CRSFoutBuffer[CRSF_MAX_PACKET_LEN] = {0};
@@ -113,7 +130,8 @@ static LPF LPF_OPENTX_SYNC_OFFSET(3);
 uint32_t CRSF::SyncWaitPeriodCounter = 0;
 #else
 // uint32_t CRSF::OpenTXsyncOffsetSafeMargin = 4000; // 400us
-uint32_t CRSF::OpenTXsyncOffsetSafeMargin = 2000; // 200us
+// uint32_t CRSF::OpenTXsyncOffsetSafeMargin = 2000; // 200us
+uint32_t CRSF::OpenTXsyncOffsetSafeMargin = 1000; // 100us - as per elrs mainstream
 #endif
 
 /// UART Handling ///
@@ -137,7 +155,6 @@ void CRSF::Begin()
     printf("About to start CRSF task...\n");
 
     #if defined(CRSF_SPORT_PIN) || defined(CRSF_TX_PIN)
-    // std::cout << "crsf config disabled\n";
 
     if (CRSF_PORT_NUM == UART_NUM_0) {
         uart_driver_delete(UART_NUM_0);
@@ -155,9 +172,10 @@ void CRSF::Begin()
     uart_config.baud_rate = OPENTX_BAUDS[baudrateIndex];
     // uart_config.baud_rate = 400000;
     // uart_config.baud_rate = 115200;
-    #else
+
+    #else // not tx module
     uart_config.baud_rate = CRSF_RX_BAUDRATE;
-    #endif
+    #endif // CRSF_TX_MODULE
 
     int intr_alloc_flags = 0;
 
@@ -165,7 +183,7 @@ void CRSF::Begin()
     //     intr_alloc_flags = ESP_INTR_FLAG_IRAM;
     // #endif
 
-    // if this buffer fills up then we never receiver another byte. Bug in IDF, see https://github.com/espressif/esp-idf/issues/8445
+    // if this buffer fills up then we never receive another byte. Bug in IDF, see https://github.com/espressif/esp-idf/issues/8445
     const uint32_t rxBufferSize = 1024;
 
     #ifdef CRSF_SPORT_PIN
@@ -174,7 +192,6 @@ void CRSF::Begin()
     #else
     const uint32_t txBufferSize = 512;
     #endif
-
 
     ESP_ERROR_CHECK(uart_driver_install(CRSF_PORT_NUM, rxBufferSize, txBufferSize, 0, NULL, intr_alloc_flags));
     ESP_ERROR_CHECK(uart_param_config(CRSF_PORT_NUM, &uart_config));
@@ -187,6 +204,12 @@ void CRSF::Begin()
     // using s.port so rx and tx share the same pin
     gpio_reset_pin(CRSF_SPORT_PIN);
     // ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_SPORT_PIN, CRSF_SPORT_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    #ifdef UART_INVERTED
+    gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_PULLDOWN_ONLY);
+    #else // not inverted
+    gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_PULLUP_ONLY);
+    #endif // UART_INVERTED
 
     ESP_ERROR_CHECK(uart_set_pin(CRSF_PORT_NUM, CRSF_SPORT_PIN, CRSF_SPORT_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     // uart_set_line_inverse(CRSF_PORT_NUM, UART_SIGNAL_RXD_INV | UART_SIGNAL_TXD_INV);
@@ -339,36 +362,43 @@ void ICACHE_RAM_ATTR CRSF::setSentSwitch(uint8_t index, uint8_t value)
     sentSwitches[index] = value;
 }
 
-
-void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToTX()
+/**
+ * XXX TODO
+ * We can get rid of all the SerialOutFIFO and critical regions if we just buffer the latest
+ * link stats and do all the sending in a controlled fashion from handleUARTout()
+ * 
+*/
+void ICACHE_RAM_ATTR CRSF::updateLinkStatistics()
 {
-    if (!CRSF::CRSFisConnected)
-    {
-        return;
-    }
+    // if (!CRSF::CRSFisConnected)
+    // {
+    //     return;
+    // }
 
-    uint8_t outBuffer[LinkStatisticsFrameLength + 4] = {0};
+    // uint8_t outBuffer[LinkStatisticsFrameLength + 4] = {0};
 
-    outBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
-    outBuffer[1] = LinkStatisticsFrameLength + 2;
-    outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS;
+    linkstatsBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
+    linkstatsBuffer[1] = LinkStatisticsFrameLength + 2;
+    linkstatsBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS;
 
-    memcpy(outBuffer + 3, (uint8_t *)&LinkStatistics, LinkStatisticsFrameLength);
+    memcpy(&linkstatsBuffer[3], (uint8_t *)&LinkStatistics, LinkStatisticsFrameLength);
 
-    uint8_t crc = crsf_crc.calc(&outBuffer[2], LinkStatisticsFrameLength + 1);
+    uint8_t crc = crsf_crc.calc(&linkstatsBuffer[2], LinkStatisticsFrameLength + 1);
 
-    outBuffer[LinkStatisticsFrameLength + 3] = crc;
+    linkstatsBuffer[LinkStatisticsFrameLength + 3] = crc;
 
-    #if defined(PLATFORM_ESP32) || defined(ESPC3)
-    portENTER_CRITICAL(&FIFOmux);
-    #endif
+    newLinkstatsDataAvailable = true;
 
-    SerialOutFIFO.push(LinkStatisticsFrameLength + 4); // length
-    SerialOutFIFO.pushBytes(outBuffer, LinkStatisticsFrameLength + 4);
+    // #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    // portENTER_CRITICAL(&FIFOmux);
+    // #endif
 
-    #if defined(PLATFORM_ESP32) || defined(ESPC3)
-    portEXIT_CRITICAL(&FIFOmux);
-    #endif
+    // SerialOutFIFO.push(LinkStatisticsFrameLength + 4); // length
+    // SerialOutFIFO.pushBytes(outBuffer, LinkStatisticsFrameLength + 4);
+
+    // #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    // portEXIT_CRITICAL(&FIFOmux);
+    // #endif
 }
 
 // void CRSF::sendLUAresponse(uint8_t val[], uint8_t len)
@@ -407,37 +437,52 @@ void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToTX()
 // #endif
 // }
 
-void ICACHE_RAM_ATTR CRSF::sendTelemetryToTX(uint8_t *data)
-{
-    if (data[CRSF_TELEMETRY_LENGTH_INDEX] > CRSF_PAYLOAD_SIZE_MAX)
-    {
-        std::cout << "too large\n";
-        return;
-    }
 
-    if (CRSF::CRSFisConnected)
-    {
-        data[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
-#ifdef PLATFORM_ESP32
-        portENTER_CRITICAL(&FIFOmux);
-#endif
-        SerialOutFIFO.push(CRSF_FRAME_SIZE(data[CRSF_TELEMETRY_LENGTH_INDEX])); // length
-        SerialOutFIFO.pushBytes(data, CRSF_FRAME_SIZE(data[CRSF_TELEMETRY_LENGTH_INDEX]));
-#ifdef PLATFORM_ESP32
-        portEXIT_CRITICAL(&FIFOmux);
-#endif
-    }
-}
+// void ICACHE_RAM_ATTR CRSF::sendTelemetryToTX(uint8_t *data)
+// {
+//     if (data[CRSF_TELEMETRY_LENGTH_INDEX] > CRSF_PAYLOAD_SIZE_MAX)
+//     {
+//         std::cout << "too large\n";
+//         return;
+//     }
+
+//     if (CRSF::CRSFisConnected)
+//     {
+//         data[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
+// #ifdef PLATFORM_ESP32
+//         portENTER_CRITICAL(&FIFOmux);
+// #endif
+//         SerialOutFIFO.push(CRSF_FRAME_SIZE(data[CRSF_TELEMETRY_LENGTH_INDEX])); // length
+//         SerialOutFIFO.pushBytes(data, CRSF_FRAME_SIZE(data[CRSF_TELEMETRY_LENGTH_INDEX]));
+// #ifdef PLATFORM_ESP32
+//         portEXIT_CRITICAL(&FIFOmux);
+// #endif
+//     }
+// }
 
 void ICACHE_RAM_ATTR CRSF::setSyncParams(uint32_t PacketInterval)
 {
     CRSF::RequestedRCpacketInterval = PacketInterval;
-#ifdef FEATURE_OPENTX_SYNC_AUTOTUNE
+    CRSF::OpenTXsyncOffset = CRSF::OpenTXsyncOffsetSafeMargin;
+    CRSF::OpenTXsyncWindow = 0;
+    CRSF::OpenTXsyncWindowSize = std::max((int32_t)1, (int32_t)(20000/CRSF::RequestedRCpacketInterval));
+
+    if (CRSF::OpenTXsyncLastSent > OpenTXsyncPacketInterval) {
+        // Get the message to the handset as quickly as possible
+        // CRSF::OpenTXsyncLastSent -= OpenTXsyncPacketInterval; // XXX risk of overflow
+        syncLastSent = 0;
+    }
+
+    #ifdef DEBUG_OPENTX_SYNC
+    printf("setSync %u\n", PacketInterval);
+    #endif
+
+    #ifdef FEATURE_OPENTX_SYNC_AUTOTUNE
     CRSF::SyncWaitPeriodCounter = millis();
     CRSF::OpenTXsyncOffsetSafeMargin = 1000;
     LPF_OPENTX_SYNC_OFFSET.init(0);
     LPF_OPENTX_SYNC_MARGIN.init(0);
-#endif
+    #endif
 }
 
 uint32_t ICACHE_RAM_ATTR CRSF::GetRCdataLastRecv()
@@ -445,6 +490,58 @@ uint32_t ICACHE_RAM_ATTR CRSF::GetRCdataLastRecv()
     return CRSF::RCdataLastRecv;
 }
 
+
+void ICACHE_RAM_ATTR CRSF::JustSentRFpacket()
+{
+    // read them in this order to prevent a potential race condition
+    uint32_t last = CRSF::dataLastRecv;
+    uint32_t m = micros();
+    int32_t delta = (int32_t)m - last;
+
+    // printf("delta %d ", delta);
+
+    if (delta >= (int32_t)CRSF::RequestedRCpacketInterval)
+    {
+        // missing/late packet
+
+        // CRSF::OpenTXsyncOffset = -(delta % CRSF::RequestedRCpacketInterval) * 10;
+        // CRSF::OpenTXsyncOffset = CRSF::OpenTXsyncOffsetSafeMargin;
+        CRSF::OpenTXsyncWindow = OpenTXsyncWindowSize/2;    // allow a little more control on future corrections, but don't go nuts
+        // CRSF::OpenTXsyncLastSent -= OpenTXsyncPacketInterval;
+        #ifdef DEBUG_OPENTX_SYNC
+        // This code can spam if we're not getting anything from the controller
+        static uint32_t lastDebugTime = 0;
+        uint32_t now = millis();
+        if (now > (lastDebugTime + 1000))
+        {
+            printf("Missed packet, forced resync (%d)!", delta);
+            lastDebugTime = now;
+        }
+        #endif
+
+        // Don't process this delta as it might reflect an error condition or a change of packet rate
+    }
+    else
+    {
+        // recenter the delta around 0 so that the instability is at the midpoint of the interval - farthest away from what we care about
+        if (delta > CRSF::RequestedRCpacketInterval/2) {
+            delta = delta - CRSF::RequestedRCpacketInterval;
+            // printf(">%d ", delta);
+        }
+
+        // The number of packets in the sync window is how many will fit in 20ms.
+        // This gives quite coarse changes for 50Hz, but more fine grained changes at 1000Hz.
+        // JBK: The sync window is being dynamically managed, starting small for coarse changes and increasing up
+        // to OpenTXsyncWindowSize which is effectively the max for the packet rate and gives the smallest changes to the offset
+
+        CRSF::OpenTXsyncWindow = std::min(CRSF::OpenTXsyncWindow + 1, (int32_t)CRSF::OpenTXsyncWindowSize);
+        CRSF::OpenTXsyncOffset = ((CRSF::OpenTXsyncOffset * (CRSF::OpenTXsyncWindow-1)) + delta * 10) / CRSF::OpenTXsyncWindow;
+        // printf("so %d\n", CRSF::OpenTXsyncOffset);
+    }
+}
+
+
+#if 0   // Old code
 void ICACHE_RAM_ATTR CRSF::JustSentRFpacket()
 {
     CRSF::OpenTXsyncOffset = micros() - CRSF::RCdataLastRecv;
@@ -454,8 +551,6 @@ void ICACHE_RAM_ATTR CRSF::JustSentRFpacket()
         // offset is out of range. Ignore it
         CRSF::OpenTXsyncOffset = 0;
     }
-
-
 
 //     if (CRSF::OpenTXsyncOffset > (int32_t)CRSF::RequestedRCpacketInterval) // detect overrun case when the packet arrives too late and caculate negative offsets.
 //     {
@@ -483,75 +578,165 @@ void ICACHE_RAM_ATTR CRSF::JustSentRFpacket()
     // Serial.print(",");
     // Serial.println(CRSF::OpenTXsyncOffsetSafeMargin / 10);
 }
+#endif // 0
 
 
-void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(bool force=false)
+/**
+ * Check if we're due to send a sync packet
+ * 
+*/
+bool ICACHE_RAM_ATTR CRSF::syncPacketRequired()
 {
+    const int ERROR_LIMIT = 200;
+    bool result = false;
     uint32_t now = millis();
-    if (force || (CRSF::CRSFisConnected && now >= (OpenTXsyncLastSent + OpenTXsyncPacketInterval)))
-    // if (true) // XXX TESTING
+
+    if (CRSF::CRSFisConnected && (now >= (syncLastSent + OpenTXsyncPacketInterval)))
     {
-        uint32_t packetIntervalTenthsUs;
-        if (CRSF::UARTcurrentBaud == 115200 && CRSF::RequestedRCpacketInterval <= 2000)
-        {
-            packetIntervalTenthsUs = 40000; //constrain to 250hz max (interval expressed in 10ths of a us)
-        }
-        else
-        {
-            packetIntervalTenthsUs = CRSF::RequestedRCpacketInterval * 10; //convert to tenths of a us
-        }
+        int32_t offsetError = CRSF::OpenTXsyncOffset - CRSF::OpenTXsyncOffsetSafeMargin;
 
-        // edgeTX maxes at 500Hz, so make sure we don't ask for more than that
-        if (packetIntervalTenthsUs < 20000) packetIntervalTenthsUs = 20000;
-
-        int32_t offset = CRSF::OpenTXsyncOffset * 10 - CRSF::OpenTXsyncOffsetSafeMargin; // + 400us offset so that opentx always has some headroom
-        // int32_t offset = CRSF::OpenTXsyncOffset * 10 - 8000;    // This line from the older code uses a larger offset than the current code
-                                                                // Still doesn't work
-        // int32_t offset = CRSF::OpenTXsyncOffset * 10;       // also doesn't work
-
-
-        uint8_t outBuffer[OpenTXsyncFrameLength + 4] = {0};
-
-        outBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER; //0xEA
-        outBuffer[1] = OpenTXsyncFrameLength + 2;      // equals 13
-        outBuffer[2] = CRSF_FRAMETYPE_RADIO_ID;        // 0x3A
-
-        outBuffer[3] = CRSF_ADDRESS_RADIO_TRANSMITTER; //0XEA
-        outBuffer[4] = 0x00;                           //??? not sure doesn't seem to matter
-        outBuffer[5] = CRSF_FRAMETYPE_OPENTX_SYNC;     //0X10
-
-
-        outBuffer[6] = (packetIntervalTenthsUs & 0xFF000000) >> 24; // XXX check the endianness and see if we can just use 32 bit write
-        outBuffer[7] = (packetIntervalTenthsUs & 0x00FF0000) >> 16;
-        outBuffer[8] = (packetIntervalTenthsUs & 0x0000FF00) >> 8;
-        outBuffer[9] = (packetIntervalTenthsUs & 0x000000FF) >> 0;
-
-        outBuffer[10] = (offset & 0xFF000000) >> 24;
-        outBuffer[11] = (offset & 0x00FF0000) >> 16;
-        outBuffer[12] = (offset & 0x0000FF00) >> 8;
-        outBuffer[13] = (offset & 0x000000FF) >> 0;
-
-        uint8_t crc = crsf_crc.calc(&outBuffer[2], OpenTXsyncFrameLength + 1);
-
-        outBuffer[OpenTXsyncFrameLength + 3] = crc;
-
-#if defined(PLATFORM_ESP32) || defined(ESPC3)
-        portENTER_CRITICAL(&FIFOmux);
-#endif
-        SerialOutFIFO.push(OpenTXsyncFrameLength + 4); // length
-        SerialOutFIFO.pushBytes(outBuffer, OpenTXsyncFrameLength + 4);
-#if defined(PLATFORM_ESP32) || defined(ESPC3)
-        portEXIT_CRITICAL(&FIFOmux);
-#endif
-        OpenTXsyncLastSent = now;
+        if (offsetError > ERROR_LIMIT || offsetError < -ERROR_LIMIT) result = true;
     }
+
+    return result;
 }
 
+/**
+ * Builds the sync packet and writes to the serial port
+ * 
+*/
+void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX()
+{
+    uint32_t packetIntervalTenthsUs;
+    if (CRSF::UARTcurrentBaud == 115200 && CRSF::RequestedRCpacketInterval <= 2000)
+    {
+        packetIntervalTenthsUs = 40000; //constrain to 250hz max (interval expressed in 10ths of a us)
+    } else {
+        packetIntervalTenthsUs = CRSF::RequestedRCpacketInterval * 10; //convert to tenths of a us
+    }
+
+    // int32_t offset = CRSF::OpenTXsyncOffset * 10 - CRSF::OpenTXsyncOffsetSafeMargin; // + 400us offset so that opentx always has some headroom
+    // int32_t offset = CRSF::OpenTXsyncOffset * 10 - 8000;    // This line from the older code uses a larger offset than the current code
+                                                            // Still doesn't work
+    // int32_t offset = CRSF::OpenTXsyncOffset * 10;       // also doesn't work
+
+    // from elrs mainstream
+    int32_t offset;
+    
+    #ifdef USE_CRSF_ACK
+    if (syncPacketRequired())
+    #endif
+    {
+        offset = CRSF::OpenTXsyncOffset - CRSF::OpenTXsyncOffsetSafeMargin; // offset so that opentx always has some headroom
+
+        // cap the delta to prevent wild swings. Note that offset is in tenths of a microsecond (edgeTX units), where as interval is in us
+        const int32_t MAX_OFFSET_PERCENT = 1;
+        const int32_t MAX_OFFSET = (MAX_OFFSET_PERCENT * (int32_t)CRSF::RequestedRCpacketInterval) / 10; // factor of 10 implied by units
+        const int32_t MIN_OFFSET = -MAX_OFFSET;
+        if (offset > MAX_OFFSET) {
+            // printf("+cap %d %d ", offset, CRSF::RequestedRCpacketInterval);
+            offset = MAX_OFFSET;
+        } else if (offset < MIN_OFFSET) {
+            // printf("-cap %d %d ", offset, CRSF::RequestedRCpacketInterval);
+            offset = MIN_OFFSET;
+        }
+    }
+    #ifdef USE_CRSF_ACK
+    else 
+    {
+        offset = 0;
+    }
+    #endif
+
+    #ifdef DEBUG_OPENTX_SYNC
+    printf("Offset %d ", offset); // in 10ths of us (OpenTX sync unit)
+    #endif
+
+    uint8_t outBuffer[OpenTXsyncFrameLength + 4] = {0};
+
+    outBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER; //0xEA
+    outBuffer[1] = OpenTXsyncFrameLength + 2;      // equals 13
+    outBuffer[2] = CRSF_FRAMETYPE_RADIO_ID;        // 0x3A
+
+    outBuffer[3] = CRSF_ADDRESS_RADIO_TRANSMITTER; //0XEA
+    outBuffer[4] = 0x00;                           //??? not sure doesn't seem to matter
+    outBuffer[5] = CRSF_FRAMETYPE_OPENTX_SYNC;     //0X10
+
+    outBuffer[6] = (packetIntervalTenthsUs & 0xFF000000) >> 24; // XXX check the endianness and see if we can just use 32 bit write
+    outBuffer[7] = (packetIntervalTenthsUs & 0x00FF0000) >> 16;
+    outBuffer[8] = (packetIntervalTenthsUs & 0x0000FF00) >> 8;
+    outBuffer[9] = (packetIntervalTenthsUs & 0x000000FF) >> 0;
+
+    outBuffer[10] = (offset & 0xFF000000) >> 24;
+    outBuffer[11] = (offset & 0x00FF0000) >> 16;
+    outBuffer[12] = (offset & 0x0000FF00) >> 8;
+    outBuffer[13] = (offset & 0x000000FF) >> 0;
+
+    // printf("offset %d, %2X %2X %2X %2X\n", offset, outBuffer[10], outBuffer[11], outBuffer[12], outBuffer[13]);
+    // printf("offset %d\n", offset);
+
+    uint8_t crc = crsf_crc.calc(&outBuffer[2], OpenTXsyncFrameLength + 1);
+
+    outBuffer[OpenTXsyncFrameLength + 3] = crc;
+
+    // #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    // portENTER_CRITICAL(&FIFOmux);
+    // #endif
+    // SerialOutFIFO.push(OpenTXsyncFrameLength + 4); // length
+    // SerialOutFIFO.pushBytes(outBuffer, OpenTXsyncFrameLength + 4);
+    // #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    // portEXIT_CRITICAL(&FIFOmux);
+    // #endif
+
+    uart_write_bytes(CRSF_PORT_NUM, outBuffer, OpenTXsyncFrameLength+4);
+
+    syncLastSent = millis();
+
+    // Assume that edgeTX will fully correct the offset as requested, so we want to reset the filter
+    // so that we don't overshoot the target. Setting the offset to the safety margin is equivalent to setting the expected offset to 0
+    CRSF::OpenTXsyncOffset = CRSF::OpenTXsyncOffsetSafeMargin;
+
+    // std::cout << 's';
+}
+
+
+uint32_t lastLinkStatsTime = 0;
+
+/**
+ * Check if we're due to send a linkstats packet and do so if necessary
+ * 
+ * 
+*/
+bool ICACHE_RAM_ATTR CRSF::linkstatsPacketRequired()
+{
+    const uint32_t linkStatsInterval = 250; // cap the rate to the handset
+
+    uint32_t now = millis();
+    return (CRSF::CRSFisConnected && newLinkstatsDataAvailable && (now >= (lastLinkStatsTime + linkStatsInterval)));
+}
+
+/**
+ * Send a linkstats packet
+ * 
+ * 
+*/
+void ICACHE_RAM_ATTR CRSF::sendLinkstatsPacketToTX()
+{
+    uart_write_bytes(CRSF_PORT_NUM, linkstatsBuffer, LinkStatisticsFrameLength+4);
+
+    newLinkstatsDataAvailable = false;
+
+    lastLinkStatsTime = millis();
+
+    // std::cout << 't';
+}
 
 static bool uartDetected = false;
 
 bool ICACHE_RAM_ATTR CRSF::ProcessPacket()
 {
+    CRSF::dataLastRecv = micros();
+
     if (CRSFisConnected == false)
     {
         CRSFisConnected = true;
@@ -825,85 +1010,128 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
 void ICACHE_RAM_ATTR CRSF::handleUARTout()
 {
     // both static to split up larger packages
-    static uint8_t packageLength = 0;
-    static uint8_t sendingOffset = 0;
-    uint8_t writeLength = 0;
-    uint32_t bytesSent = 0;
+    // static uint8_t packageLength = 0;
+    // static uint8_t sendingOffset = 0;
+    // uint8_t writeLength = 0;
+    // uint32_t bytesSent = 0;
 
-    // calculate mixer sync packet if needed
-    sendSyncPacketToTX();
+    // check for anything to do before switching mode unnecesarily
 
-    // check if we have data in the output FIFO that needs to be written or a large package was split up and we need to send the second part
-    if (sendingOffset > 0 || SerialOutFIFO.peek() > 0) 
+    #ifdef USE_CRSF_ACK
+    bool sendSync = true;
+    #else
+    bool sendSync = syncPacketRequired();
+    #endif
+    bool sendLinkstats = linkstatsPacketRequired();
+
+    if (sendSync || sendLinkstats)
     {
         duplex_set_TX();
 
-        // keep trying until the fifo is empty
-        // XXX add a time budget to this
-        while(sendingOffset > 0 || SerialOutFIFO.peek() > 0)
+        // if both packet types are ready to send, pick one and do the other on the next pass
+        // linkstats have lower frequency so can take priority
+        if (sendLinkstats)
         {
-            #if defined(PLATFORM_ESP32) || defined(ESPC3)
-            portENTER_CRITICAL(&FIFOmux); // stops other tasks from writing to the FIFO when we want to read it
-            #endif
-            // no package is in transit so get new data from the fifo
-            if (sendingOffset == 0) {
-                packageLength = SerialOutFIFO.pop();
-                SerialOutFIFO.popBytes(CRSFoutBuffer, packageLength);
-            }
+            sendLinkstatsPacketToTX();
+        } else {
+            sendSyncPacketToTX();
+        }
 
-            // if the package is long we need to split it up so it fits in the sending interval
-            if (packageLength > MAX_BYTES_SENT_IN_UART_OUT) {
-                writeLength = MAX_BYTES_SENT_IN_UART_OUT;
-            } else {
-                writeLength = packageLength;
-            }
-
-            #if defined(PLATFORM_ESP32) || defined(ESPC3)
-            portEXIT_CRITICAL(&FIFOmux); // stops other tasks from writing to the FIFO when we want to read it
-            #endif
-
-            // write the packet out, if it's a large package the offset holds the starting position
-            // Needs to be a blocking write - see Begin() for setup of port
-
-            uart_write_bytes(CRSF_PORT_NUM, CRSFoutBuffer + sendingOffset, writeLength);
-
-            bytesSent += writeLength;
-
-            sendingOffset += writeLength;
-            packageLength -= writeLength;
-
-            // after everything was writen reset the offset so a new package can be fetched from the fifo
-            if (packageLength == 0) {
-                sendingOffset = 0;
-            }
-
-        } // while (still data to send)
+        // On the scope it looks like we only send 1 byte when the failure mode happens
+        // How can we confirm that this is working, or how can we implement it more reliably?
 
         // Need to make sure that all the bytes have been sent before changing the s.port back to receive
         // NB don't use ticks_to_wait of 1 here as rounding errors can cause the call to timeout too early and
         // truncate the packet
-        uart_wait_tx_done(CRSF_PORT_NUM, 2);
+        // uart_wait_tx_done(CRSF_PORT_NUM, 2);
+
+        // Looks more reliable than uart_wait_tx_done
+        uart_wait_tx_idle_polling(CRSF_PORT_NUM);
+
+        // esp_rom_delay_us(100);
 
         duplex_set_RX();
 
         // make sure there is no garbage on the UART left over
         // Keep this or not? Is it needed/beneficial?
-        flush_port_input();
+        // flush_port_input();
+    }
 
-    } // if (something to send)
+    // check if we have data in the output FIFO that needs to be written or a large package was split up and we need to send the second part
+    // if (sendingOffset > 0 || SerialOutFIFO.peek() > 0) 
+    // {
+    //     duplex_set_TX();
+
+    //     // keep trying until the fifo is empty
+    //     // XXX add a time budget to this
+    //     while(sendingOffset > 0 || SerialOutFIFO.peek() > 0)
+    //     {
+    //         #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    //         portENTER_CRITICAL(&FIFOmux); // stops other tasks from writing to the FIFO when we want to read it
+    //         #endif
+    //         // no package is in transit so get new data from the fifo
+    //         if (sendingOffset == 0) {
+    //             packageLength = SerialOutFIFO.pop();
+    //             SerialOutFIFO.popBytes(CRSFoutBuffer, packageLength);
+    //         }
+
+    //         // if the package is long we need to split it up so it fits in the sending interval
+    //         if (packageLength > MAX_BYTES_SENT_IN_UART_OUT) {
+    //             writeLength = MAX_BYTES_SENT_IN_UART_OUT;
+    //         } else {
+    //             writeLength = packageLength;
+    //         }
+
+    //         #if defined(PLATFORM_ESP32) || defined(ESPC3)
+    //         portEXIT_CRITICAL(&FIFOmux); // stops other tasks from writing to the FIFO when we want to read it
+    //         #endif
+
+    //         // write the packet out, if it's a large package the offset holds the starting position
+    //         // Needs to be a blocking write - see Begin() for setup of port
+
+    //         uart_write_bytes(CRSF_PORT_NUM, CRSFoutBuffer + sendingOffset, writeLength);
+
+    //         bytesSent += writeLength;
+
+    //         sendingOffset += writeLength;
+    //         packageLength -= writeLength;
+
+    //         // after everything was writen reset the offset so a new package can be fetched from the fifo
+    //         if (packageLength == 0) {
+    //             sendingOffset = 0;
+    //         }
+
+    //     } // while (still data to send)
+
+    //     // Need to make sure that all the bytes have been sent before changing the s.port back to receive
+    //     // NB don't use ticks_to_wait of 1 here as rounding errors can cause the call to timeout too early and
+    //     // truncate the packet
+    //     uart_wait_tx_done(CRSF_PORT_NUM, 2);
+
+    //     duplex_set_RX();
+
+    //     // make sure there is no garbage on the UART left over
+    //     // Keep this or not? Is it needed/beneficial?
+    //     flush_port_input();
+
+    // } // if (something to send)
 }
 
 // new
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
 {
-#if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_SPORT_PIN)
+    #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_SPORT_PIN)
 
-    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_INPUT));
     #ifdef UART_INVERTED
+    // detach the tx out pin?
+    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, 0x100, true, false); // 0x100 special value for cancel output
+
     gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U0RXD_IN_IDX, true);
-    gpio_pulldown_en((gpio_num_t)CRSF_SPORT_PIN);
-    gpio_pullup_dis((gpio_num_t)CRSF_SPORT_PIN);
+
+    // XXX should be possible to just leave this in pulldown all the time?
+    // Tried, something seems to reset it - find the something
+    gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_PULLDOWN_ONLY);
 
     #else
     gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U1RXD_IN_IDX, false);
@@ -911,17 +1139,20 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
     gpio_pulldown_dis((gpio_num_t)CRSF_SPORT_PIN);
     #endif // inverted or not
 
-#endif // platform and sport pin
+    // Seems to work best with this done last
+    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_INPUT));
+
+    #endif // platform and sport pin
 }
 
 void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
 {
     #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_SPORT_PIN)
 
-    ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_FLOATING));
+    // ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_FLOATING));
 
     #ifdef UART_INVERTED
-    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0));
+    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0)); // prevent any spikes on switch over
     ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_OUTPUT));
     constexpr uint8_t MATRIX_DETACH_IN_LOW = 0x30; // routes 0 to matrix slot
     gpio_matrix_in(MATRIX_DETACH_IN_LOW, U0RXD_IN_IDX, false); // Disconnect RX from all pads
@@ -948,7 +1179,7 @@ bool CRSF::UARTwdt()
     if (now >= (UARTwdtLastChecked + UARTwdtInterval))
     {
         #ifdef TX_AUTOBAUD_ENABLED
-        if (BadPktsCount >= GoodPktsCount)
+        if (BadPktsCount >= GoodPktsCount || GoodPktsCount < 100)   // slowest rate I use is 125Hz
         {
             std::cout << "Too many bad UART RX packets!\n";
 
@@ -1015,12 +1246,7 @@ bool CRSF::UARTwdt()
         #endif // TX_AUTOBAUD_ENABLED
 
         if (uartDetected) {
-            printf("UART STATS Bad:Good = %u:%u\n", BadPktsCount, GoodPktsCount);
-            // std::cout << "UART STATS Bad:Good = ";
-            // std::cout << BadPktsCount;
-            // std::cout << ':';
-            // std::cout << GoodPktsCount;
-            // std::cout << '\n';
+            printf("UART STATS Bad:Good = %u:%u, offset %d\n", BadPktsCount, GoodPktsCount, CRSF::OpenTXsyncOffset);
         }
 
         UARTwdtLastChecked = now;
