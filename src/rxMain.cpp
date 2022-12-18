@@ -75,13 +75,16 @@
 // Bare sx1280 from -18 to +13 
 
 #if (TRANSMITTER)
+
+// 915
 #ifdef DEV_MODE
 #define TX_POWER_915 (0)       // 1mW
 #else
-#define TX_POWER_915 (13)   // 20mW
-// #define TX_POWER_915 (17)   // 50mW
+// #define TX_POWER_915 (13)   // 20mW
+#define TX_POWER_915 (17)   // 50mW
 #endif
 
+// 2G4
 #ifdef RADIO_E28_27
 // #define TX_POWER_2G4 (-17)      // 10mW
 #define TX_POWER_2G4 (-7)    // 100mW
@@ -89,9 +92,14 @@
 #define TX_POWER_2G4 (10)
 #endif // RADIO_E28_27
 
-#else // not transmitter
+#else 
+// receiver
 
+#ifdef DEV_MODE
 #define TX_POWER_915 (0)
+#else
+#define TX_POWER_915 (13)
+#endif
 // not used, but needs to be defined
 #define TX_POWER_2G4 (-18)
 
@@ -237,6 +245,9 @@ bool flrcFirstPacket = false;
 bool flrcFirstPacketSuccess = false;
 
 bool newDataIsAvailable = false;    // true when data has been received and can be sent to the FC
+
+bool linkStatsPacketNeeded = false; // used to force a send of linkstats after a change of packet rate
+
 
 static DynamicRateStates drState = DynamicRateStates::Normal;
 // static unsigned long tDrStart;
@@ -437,6 +448,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
             {
                 // FLRC will have already read the packet status to check for crc errors, but doesn't have SNR
                 t2 = radio2->LastPacketRSSI;
+                LPF_UplinkSNR1.init(0); // don't want old data from Lora hanging around
             } else {
                 t2 = radio2->GetLastPacketRSSI();
                 LPF_UplinkSNR1.update(radio2->LastPacketSNR*10); // value was set as a side-effect of getLastPacketRSSI
@@ -478,8 +490,9 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     // BetaFlight/iNav expect positive values for -dBm (e.g. -80dBm -> sent as 80)
     crsf.elrsLinkStatsDB.rssi0 = -rssiDBM0;
     crsf.elrsLinkStatsDB.rssi1 = -rssiDBM1;
-    crsf.elrsLinkStatsDB.snr0 = LPF_UplinkSNR0.SmoothDataINT;
-    crsf.elrsLinkStatsDB.snr1 = LPF_UplinkSNR1.SmoothDataINT;
+    // Constrain the max value of snr to prevent wrapping to negative
+    crsf.elrsLinkStatsDB.snr0 = (LPF_UplinkSNR0.SmoothDataINT > 127) ? 127 : LPF_UplinkSNR0.SmoothDataINT;
+    crsf.elrsLinkStatsDB.snr1 = (LPF_UplinkSNR1.SmoothDataINT > 127) ? 127 : LPF_UplinkSNR1.SmoothDataINT;
     crsf.elrsLinkStatsDB.lq0 = lqRadio1.getLQ();
     crsf.elrsLinkStatsDB.lq1 = lqRadio2.getLQ();
     crsf.elrsLinkStatsDB.rf_Mode = (RATE_MAX-1) - ExpressLRS_currAirRate_Modparams->index;
@@ -1587,6 +1600,9 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
             ExpressLRS_nextAirRateIndex = indexIn;
             liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
 
+            // set the flag to send a linkstats packet as soon as possible to that the FC can update the RC filters
+            linkStatsPacketNeeded = true;
+
             #ifndef DEBUG_SUPPRESS
             printf("\nrate change: ");
             if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::LORA)
@@ -2339,13 +2355,14 @@ static void handleEvents915()
 
                 // crsf.LinkStatistics.downlink_SNR = int(Radio.LastPacketSNR * 10);
                 // crsf.LinkStatistics.downlink_RSSI = 120 + radio1->LastPacketRSSI;   // XXX no filtering
-                crsf.LinkStatistics.downlink_RSSI = 120 + LPF_UplinkRSSI0.SmoothDataINT; // XXX what's with the +120?
+                // crsf.LinkStatistics.downlink_RSSI = 120 + LPF_UplinkRSSI0.SmoothDataINT; // XXX what's with the +120?
+                crsf.LinkStatistics.downlink_RSSI = (uint8_t)LPF_UplinkRSSI0.SmoothDataINT;
                 crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
                 //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
                 #ifdef USE_SECOND_RADIO
                 crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
                 #endif
-                crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
+                crsf.LinkStatistics.rf_Mode = (RATE_MAX-1) - ExpressLRS_currAirRate_Modparams->index;
 
                 // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
 
@@ -2402,17 +2419,6 @@ static void handleEvents915()
                 // and start a receive for next RC packet
                 static const SpiTaskInfo taskInfo = {.id = SpiTaskID::StartRx, .radioID = RadioSelection::first, .unused = 0};
                 xQueueSend(rx_evt_queue, &taskInfo, 1);
-            }
-
-            // XXX How are we going to make sure that sending linkstats is thread safe?
-
-            static unsigned long linkStatsLastSent = 0; // static for persistence between calls
-            if (connectionState != disconnected && 
-                ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL) )
-            {
-                // crsf.sendLinkStatisticsToFC();
-                crsf.sendLinkStatsDBtoFC();
-                linkStatsLastSent = millis();
             }
 
             // check for variation in the intervals between sending packets
@@ -3495,6 +3501,20 @@ void ICACHE_RAM_ATTR tockRX2G4()
         // std::cout << 's';
         crsf.sendDBRCFrameToFC();
     }
+
+    // Do this here as well, then it can't possibly collide with the RC data
+
+    static unsigned long linkStatsLastSent = 0; // static for persistence between calls
+    if (connectionState != disconnected && 
+        (linkStatsPacketNeeded || ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)) )
+    {
+        linkStatsPacketNeeded = false;
+        // crsf.sendLinkStatisticsToFC();
+        crsf.sendLinkStatsDBtoFC();
+        linkStatsLastSent = millis();
+
+    }
+
 
     #if defined(PRINT_RX_SCOREBOARD)
     if (!lqRadio2.currentIsSet() ) {
