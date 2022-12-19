@@ -78,7 +78,8 @@
 
 // 915
 #ifdef DEV_MODE
-#define TX_POWER_915 (0)       // 1mW
+// #define TX_POWER_915 (0)       // 1mW
+#define TX_POWER_915 (10)       // 10mW
 #else
 // #define TX_POWER_915 (13)   // 20mW
 #define TX_POWER_915 (17)   // 50mW
@@ -89,7 +90,7 @@
 // #define TX_POWER_2G4 (-17)      // 10mW
 #define TX_POWER_2G4 (-7)    // 100mW
 #else
-#define TX_POWER_2G4 (10)
+#define TX_POWER_2G4 (13)
 #endif // RADIO_E28_27
 
 #else 
@@ -819,8 +820,10 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
         packet->swD = CRSF_to_N(crsf.ChannelDataIn[15],3);
     }
 
+    #ifndef DEV_MODE
     // Check Channel 7 as a way of changing packet rates
     // buttons 1-6: 173, 500, 828, 1155, 1483, 1810
+    // XXX moved to slider, didn't change the code, seems to be working, but maybe should double check the conversion
     uint8_t ch8Index = (crsf.ChannelDataIn[7] - 173) / 327; // 0 through 5 from the 6 way switch
     if (ch8Index >= RATE_MAX) ch8Index = RATE_MAX-1;
     ch8Index = (RATE_MAX-1) - ch8Index;    // flip the order so that the default setting and power on matches 125Hz mode
@@ -830,8 +833,13 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
         pendingAirRateIndex = ch8Index;
         // printf("raw %u\n", crsf.ChannelDataIn[7]);
     }
+    #endif // not DEV_MODE
 
     // printf("c[0]=%u\n", crsf.ChannelDataIn[0] >> 1);
+
+    // uint32_t x = packet->ch0;
+    // printf("ch0 915 in %u out %u\n", crsf.ChannelDataIn[0], x);
+
 
     // Calculate the CRC
 
@@ -1058,8 +1066,6 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
     #ifdef USE_SECOND_RADIO
     DB2G4Packet_t * packet = (DB2G4Packet_t *) radio2->TXdataBuffer;
 
-    // crsf.JustSentRFpacket(); // for external module sync - moved to tockTX2G4
-
     packet->ch0 = crsfTo12bit(crsf.ChannelDataIn[0]); // otx is 11 bit reduced range, main channels are 12 bit clean
     packet->ch1 = crsfTo12bit(crsf.ChannelDataIn[1]);
 
@@ -1084,9 +1090,6 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
 
     // gpio_bit_reset(LED_GPIO_PORT, LED_PIN);  // clear the rx debug pin as we're definitely not listening now
 
-    // std::cout << "sendRC TXnb\n";
-    // radio2->TXnb(radio2->TXdataBuffer, OTA_PACKET_LENGTH_2G4);
-
     SpiTaskInfo taskInfo = {.id = SpiTaskID::StartTx, .radioID = RadioSelection::second, .unused = 0};
     BaseType_t qResult;
 
@@ -1094,6 +1097,9 @@ void ICACHE_RAM_ATTR sendRCdataToRF2G4DB()
     qResult = xQueueSend(rx_evt_queue, &taskInfo, 0); // don't wait
     if (qResult != pdTRUE) std::cout << "qFull2\n";
     #endif
+
+    // uint32_t x = packet->ch0;
+    // printf("ch0 2g4 in %u out %u\n", crsf.ChannelDataIn[0], x);
 
     // // check for variation in the intervals between sending packets
     // static LPF LPF_sentInterval(4);
@@ -1600,7 +1606,9 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
             ExpressLRS_nextAirRateIndex = indexIn;
             liveUpdateRFLinkRate(ExpressLRS_nextAirRateIndex);
 
-            // set the flag to send a linkstats packet as soon as possible to that the FC can update the RC filters
+            // Update the mode in the linkstats buffer and set the flag to send a linkstats packet
+            // as soon as possible to that the FC can update the RC filters
+            crsf.elrsLinkStatsDB.rf_Mode = (RATE_MAX-1) - indexIn;
             linkStatsPacketNeeded = true;
 
             #ifndef DEBUG_SUPPRESS
@@ -3502,20 +3510,6 @@ void ICACHE_RAM_ATTR tockRX2G4()
         crsf.sendDBRCFrameToFC();
     }
 
-    // Do this here as well, then it can't possibly collide with the RC data
-
-    static unsigned long linkStatsLastSent = 0; // static for persistence between calls
-    if (connectionState != disconnected && 
-        (linkStatsPacketNeeded || ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)) )
-    {
-        linkStatsPacketNeeded = false;
-        // crsf.sendLinkStatisticsToFC();
-        crsf.sendLinkStatsDBtoFC();
-        linkStatsLastSent = millis();
-
-    }
-
-
     #if defined(PRINT_RX_SCOREBOARD)
     if (!lqRadio2.currentIsSet() ) {
         std::cout << (lastPacketCrcError2G4 ? 'X' : '_');
@@ -3610,6 +3604,19 @@ void ICACHE_RAM_ATTR tickTock()
     } else if ((timerNonce + rfModeDivisor915) % (2 * rfModeDivisor915) == 0) {
         tick915();
     }
+
+    // Check if we need to send linkstats to the FC - can't collide with rc data sent from tockRX2G4 and will run more often
+    #if (!TRANSMITTER)
+    static unsigned long linkStatsLastSent = 0; // static for persistence between calls
+    if (connectionState != disconnected && 
+        (linkStatsPacketNeeded || ((millis() - linkStatsLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL)) )
+    {
+        // if (linkStatsPacketNeeded) std::cout << 'L';
+        linkStatsPacketNeeded = false;
+        crsf.sendLinkStatsDBtoFC();
+        linkStatsLastSent = millis();
+    }
+    #endif // !TRANSMITTER
 
 }
 
@@ -4804,7 +4811,7 @@ void app_main()
                 if (buf == '+' && (ExpressLRS_currAirRate_Modparams->index > 0)) {
                     pendingAirRateIndex = ExpressLRS_currAirRate_Modparams->index - 1;
                     #ifndef DEFER_MANUAL_RATE_CHANGES
-                    SetRFLinkRate(pendingAirRateIndex); // XXX these are supposed to be deferred but all hell broke loose
+                    SetRFLinkRate(pendingAirRateIndex);
                     #endif
 
                 } else if (buf == '-' && (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1))) {
