@@ -25,13 +25,15 @@
 
 #elif defined(DUAL_BAND_BREADBOARD)
 
-// The breadboard prototype can use uart1 with pin 9 for crossfire
+// The breadboard prototype can use uart1 with pin 12 for crossfire s.port
 
-// XXX but for some reason this was still set to 0. I don't remember why. Setting to 1 to see if I can get
-// some debug out of a simple dev board to try out some wifi stuff
+// As currently setup, use port 0 for normal operation and port 1 for dev with keyboard input to change modes
 
+#ifdef DEV_MODE
+#define CRSF_PORT_NUM 1
+#else
 #define CRSF_PORT_NUM 0 
-// #define CRSF_PORT_NUM 1
+#endif
 
 #else
 
@@ -176,6 +178,8 @@ public:
 
     static void Begin(); //setup timers etc
     static void End(); //stop timers etc
+
+    CRSF();
 
     void ICACHE_RAM_ATTR sendRCFrameToFC();
 

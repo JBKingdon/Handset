@@ -81,7 +81,7 @@ uint32_t CRSF::BadPktsCountResult = 0;
 volatile uint8_t CRSF::SerialInPacketLen = 0; // length of the CRSF packet as measured
 volatile uint8_t CRSF::SerialInPacketPtr = 0; // index where we are reading/writing
 
-volatile uint16_t CRSF::ChannelDataIn[16] = {0};
+volatile uint16_t CRSF::ChannelDataIn[16];
 
 volatile inBuffer_U CRSF::inBuffer;
 
@@ -148,6 +148,11 @@ bool CRSF::CRSFisConnected = false;
 uint8_t CRSF::MspDataLength = 0;
 #endif // CRSF_TX_MODULE
 
+CRSF::CRSF()
+{
+    // init the input data to sane values to make testing easier
+    for(int i=0; i<16; i++) ChannelDataIn[i] = CRSF_CHANNEL_VALUE_MID;
+}
 
 void CRSF::Begin()
 {
@@ -1344,7 +1349,7 @@ void ICACHE_RAM_ATTR CRSF::sendLinkStatisticsToFC()
     #endif
 }
 
-
+// XXX this needs some sync to prevent colliding with RC data?
 void ICACHE_RAM_ATTR CRSF::sendLinkStatsDBtoFC()
 {
     uint8_t outBuffer[ELRS_LINKSTATS_DB_FRAMELENGTH + 4] = {0};
