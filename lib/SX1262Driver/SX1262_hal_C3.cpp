@@ -29,12 +29,17 @@ SX1262Hal_C3::SX1262Hal_C3()
 {
 }
 
-
+/**
+ * Set the gpios needed for the radio and init the spi instance to talk to it
+*/
 void SX1262Hal_C3::init()
 {
     // Need to setup pins for reset, busy, dios, tx and rx enable
+
     gpio_reset_pin(RADIO_RESET_PIN);
     gpio_set_direction(RADIO_RESET_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(RADIO_RESET_PIN, 0); // active low, hold in reset until the reset call
+
 
     gpio_reset_pin(RADIO_BUSY_PIN);
     gpio_set_direction(RADIO_BUSY_PIN, GPIO_MODE_INPUT);
@@ -50,6 +55,8 @@ void SX1262Hal_C3::init()
     #ifdef RADIO_TXEN_PIN
     gpio_reset_pin(RADIO_TXEN_PIN);
     gpio_set_direction(RADIO_TXEN_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(RADIO_TXEN_PIN, 0);  // active high, init to low
+
     #endif
 
     #ifdef RADIO_RXEN_PIN
