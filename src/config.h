@@ -26,14 +26,17 @@
 #endif
 //-------------------------------------------------
 
-// #define DEV_MODE
+#define DEV_MODE
 
 // XXX where's the best place for these?
 
 
 // Hardware revision:
 
-// #define DUAL_BAND_BREADBOARD
+#define DUAL_BAND_BREADBOARD
+
+// for testing llcc68 - need to know because it doesn't have tcxo
+// #define E220
 
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
@@ -42,7 +45,7 @@
 // #define DB_PCB_V1
 
 // DB specific TX module with e28-27
-#define DB_TX_V1
+// #define DB_TX_V1
 
 
 // This was for dual sx1280 with a c3 module on a PCB
@@ -51,7 +54,8 @@
 // ---------------------------
 
 // PCB_V1 uses an ordinary XO for the 1262, the others (with E22 modules) have TCXO
-#if !defined(DB_PCB_V1)
+// E220 also doesn't have a tcxo
+#if !(defined(DB_PCB_V1) || defined(E220))
 
 #define USE_SX1262_TCXO
 
@@ -511,14 +515,14 @@
 
 // XXX pin 9 is a bad choice, it has a relatively strong pull-up for the boot button that overrides the weak pulldown on the gpio
 // Swap with something else? Swapped with sx1262 reset
-// #define CRSF_SPORT_PIN     GPIO_NUM_9    // This was most recent in use. Disable to allow keyboard input for testing
+// #define CRSF_SPORT_PIN     GPIO_NUM_9    // Don't use this
 
-#define CRSF_SPORT_PIN     GPIO_NUM_12  // swapped from RADIO_RESET_PIN
+// #define CRSF_SPORT_PIN     GPIO_NUM_12  // swapped from RADIO_RESET_PIN, use this
 
 // #define CRSF_SPORT_PIN     GPIO_NUM_19
 // #define CRSF_SPORT_PIN     GPIO_NUM_20  // 20 is normally the uart0 rx pin
 // #define CRSF_SPORT_PIN     GPIO_NUM_21  // 21 is normally the uart0 tx pin
-// #define DEBUG_RX_PIN    GPIO_NUM_20
+#define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 // #define DEBUG_TX_PIN    GPIO_NUM_19
 #endif
