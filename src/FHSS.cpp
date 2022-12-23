@@ -78,10 +78,12 @@ uint32_t ICACHE_RAM_ATTR FHSSgetCurrDupSendFreq2G4()
     return FHSSfreqs2G4[dupIndex];
 }
 
-
+/**
+ * WARNING SIDE EFFECT - This increments the fhss pointer before returning the new freq
+*/
 uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4()
 {
-    FHSSptr2G4++;  // as long as FHSSptr is uint8 it will wrap without extra code
+    FHSSptr2G4++;  // as long as FHSSptr is uint8 and there are 256 entries in the hop table it will wrap without extra code
     return FHSSgetCurrFreq2G4();
 }
 

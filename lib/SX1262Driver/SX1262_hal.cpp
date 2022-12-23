@@ -172,7 +172,9 @@ uint8_t SX1262Hal::fastReadSingleRegister(uint8_t *buffer)
 
 /** Set bits of a register
  * Performs a read/modify/write operation on a register, where
- * the modification is to bitwise-or the existing value with the mask parameter.
+ * the modification is:
+ *   bitwise-or the existing value with the mask parameter if set == true
+ *   bitwise-and of the inverted mask if set == false (clear bits specified by mask)
  */
 void SX1262Hal::readModifyWriteRegister(const uint16_t address, const uint8_t mask, const bool set)
 {
