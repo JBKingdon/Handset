@@ -390,6 +390,23 @@ void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
     return;
 }
 
+/**
+ * return the current power level in dBm, adjusted for any PA
+*/
+int8_t SX1280Driver::getPowerDBM()
+{
+    int8_t result = currPWR;
+
+    #ifdef RADIO_E28_20
+    result += 22; 
+    #elif defined(RADIO_E28_27)
+    result += 27;
+    #endif
+
+    return result;
+}
+
+
 /** Set the timeout in us
  * 
  */

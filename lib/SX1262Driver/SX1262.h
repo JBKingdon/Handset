@@ -106,6 +106,8 @@ public:
 
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();
+    int8_t getPowerDBM();
+
 
     void setRxTimeout(uint32_t newTimeout);
 

@@ -63,6 +63,9 @@ uint32_t syncLastSent = 0;
 
 bool    CRSF::newLinkstatsDataAvailable = false;
 uint8_t CRSF::linkstatsBuffer[LinkStatisticsFrameLength+4];
+
+bool luaResponseReady = false;
+uint8_t luaResponseBuffer[32];  // XXX lua messages are variable length, so declare a MAX and do this properly
 #endif // CRSF_TX_MODULE
 
 volatile bool CRSF::CRSFframeActive = false; //since we get a copy of the serial data use this flag to know when to ignore it
@@ -406,31 +409,36 @@ void ICACHE_RAM_ATTR CRSF::updateLinkStatistics()
     // #endif
 }
 
-// void CRSF::sendLUAresponse(uint8_t val[], uint8_t len)
-// {
-//     if (!CRSF::CRSFisConnected)
-//     {
-//         return;
-//     }
+/**
+ * Schedules a lua response message to be sent when next possible
+*/
+void CRSF::sendLUAresponse(uint8_t val[], uint8_t payloadLen)
+{
+    if (!CRSF::CRSFisConnected)
+    {
+        return;
+    }
 
-//     uint8_t LUArespLength = len + 2;
-//     uint8_t outBuffer[LUArespLength + 5] = {0};
+    uint8_t LUArespLength = payloadLen + 2;
+    // uint8_t outBuffer[LUArespLength + 5] = {0};
 
-//     outBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
-//     outBuffer[1] = LUArespLength + 2;
-//     outBuffer[2] = CRSF_FRAMETYPE_PARAMETER_WRITE;
+    luaResponseBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER;
+    luaResponseBuffer[1] = LUArespLength + 2;
+    luaResponseBuffer[2] = CRSF_FRAMETYPE_PARAMETER_WRITE;
 
-//     outBuffer[3] = CRSF_ADDRESS_RADIO_TRANSMITTER;
-//     outBuffer[4] = CRSF_ADDRESS_CRSF_TRANSMITTER;
+    luaResponseBuffer[3] = CRSF_ADDRESS_RADIO_TRANSMITTER;
+    luaResponseBuffer[4] = CRSF_ADDRESS_CRSF_TRANSMITTER;
 
-//     for (uint8_t i = 0; i < len; ++i)
-//     {
-//         outBuffer[5 + i] = val[i];
-//     }
+    for (uint8_t i = 0; i < payloadLen; ++i)
+    {
+        luaResponseBuffer[5 + i] = val[i];
+    }
 
-//     uint8_t crc = crsf_crc.calc(&outBuffer[2], LUArespLength + 1);
+    uint8_t crc = crsf_crc.calc(&luaResponseBuffer[2], LUArespLength + 1);
 
-//     outBuffer[LUArespLength + 3] = crc;
+    luaResponseBuffer[LUArespLength + 3] = crc;
+
+    luaResponseReady = true;
 
 // #ifdef PLATFORM_ESP32
 //     portENTER_CRITICAL(&FIFOmux);
@@ -440,7 +448,20 @@ void ICACHE_RAM_ATTR CRSF::updateLinkStatistics()
 // #ifdef PLATFORM_ESP32
 //     portEXIT_CRITICAL(&FIFOmux);
 // #endif
-// }
+}
+
+/**
+ * Does the actual sending of a luaMessage over the uart
+*/
+void sendLuaToTX()
+{
+    if (luaResponseReady)
+    {
+        uint8_t len = luaResponseBuffer[1] + 2;
+        uart_write_bytes(CRSF_PORT_NUM, luaResponseBuffer, len);
+        luaResponseReady = false;
+    }
+}
 
 
 // void ICACHE_RAM_ATTR CRSF::sendTelemetryToTX(uint8_t *data)
@@ -1029,7 +1050,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
     #endif
     bool sendLinkstats = linkstatsPacketRequired();
 
-    if (sendSync || sendLinkstats)
+    if (sendSync || sendLinkstats || luaResponseReady)
     {
         duplex_set_TX();
 
@@ -1038,8 +1059,10 @@ void ICACHE_RAM_ATTR CRSF::handleUARTout()
         if (sendLinkstats)
         {
             sendLinkstatsPacketToTX();
-        } else {
+        } else if (sendSync) {
             sendSyncPacketToTX();
+        } else {
+            sendLuaToTX();
         }
 
         // On the scope it looks like we only send 1 byte when the failure mode happens

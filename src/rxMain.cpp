@@ -72,7 +72,7 @@
 
 #define INITIAL_LINK_RATE_INDEX (RATE_DEFAULT)
 
-// sx1262 runs from -9 to +22
+// sx1262 runs from -9 to +22, but note that it is configured for max of 20dBm, so expect lower output
 // Bare sx1280 from -18 to +13 
 
 #if (TRANSMITTER)
@@ -82,8 +82,11 @@
 // #define TX_POWER_915 (0)       // 1mW
 #define TX_POWER_915 (10)       // 10mW
 #else
-// #define TX_POWER_915 (13)   // 20mW
-#define TX_POWER_915 (17)   // 50mW
+// #warning "CAUTION low power configured CAUTION"
+// #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
+
+#define TX_POWER_915 (13)   // 20mW
+// #define TX_POWER_915 (17)   // 50mW
 #endif
 
 // 2G4
@@ -91,6 +94,7 @@
 // #define TX_POWER_2G4 (-17)      // 10mW
 #define TX_POWER_2G4 (-7)    // 100mW
 #else
+// #define TX_POWER_2G4 (0)    // XXX CAUTION low power
 #define TX_POWER_2G4 (13)
 #endif // RADIO_E28_27
 
@@ -105,7 +109,7 @@
 // not used, but needs to be defined
 #define TX_POWER_2G4 (-18)
 
-#endif // TRANSITTER
+#endif // TRANSMITTER
 
 // Channel to use for arming, 0 through 15
 // XXX only partially implemented. Manual changes needed if this is changed!
@@ -249,6 +253,9 @@ bool flrcFirstPacketSuccess = false;
 bool newDataIsAvailable = false;    // true when data has been received and can be sent to the FC
 
 bool linkStatsPacketNeeded = false; // used to force a send of linkstats after a change of packet rate
+
+// flag to indicate that we got something from the lua script
+bool luaMessage = false;
 
 
 static DynamicRateStates drState = DynamicRateStates::Normal;
@@ -829,7 +836,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     if (ch8Index >= RATE_MAX) ch8Index = RATE_MAX-1;
     ch8Index = (RATE_MAX-1) - ch8Index;    // flip the order so that the default setting and power on matches 125Hz mode
     uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
-    if (ch8Index < RATE_MAX && ch8Index != currentIndex) {
+    if ((ch8Index < RATE_MAX) && (ch8Index != currentIndex) && (pendingAirRateIndex != ch8Index)) {
         printf("rate %u\n", ch8Index);
         pendingAirRateIndex = ch8Index;
         // printf("raw %u\n", crsf.ChannelDataIn[7]);
@@ -4252,6 +4259,70 @@ void runWifiTest()
 }
 #endif // WIFI_TEST
 
+void ICACHE_RAM_ATTR paramUpdateReq()
+{
+    luaMessage = true;
+
+
+//   if (crsf.ParameterUpdateData[0] == 1)
+//   {
+//     UpdateRFparamReq = true;
+//   }
+}
+
+// void HandleUpdateParameter()
+void handleLua()
+{
+    if (!luaMessage)
+    {
+        return;
+    }
+
+    // printf("p0 %u\n", crsf.ParameterUpdateData[0]);
+
+    int32_t pwr ;
+    switch (crsf.ParameterUpdateData[0])
+    {
+    case 0: // get current settings
+        break;
+    case 1: // 915 power
+        pwr = radio1->currPWR;
+        if (crsf.ParameterUpdateData[1] == 0)
+        {
+            // reduce power
+            radio1->SetOutputPower(pwr - 1);
+        }
+        else
+        {
+            // increase power
+            radio1->SetOutputPower(pwr + 1);
+        }
+        // printf("915pwr %d\n", radio1->currPWR);
+        break;
+    case 2: // 2G4 power
+        pwr = radio2->currPWR;
+        if (crsf.ParameterUpdateData[1] == 0)
+        {
+            // reduce power
+            radio2->SetOutputPower(pwr - 1);
+        }
+        else
+        {
+            // increase power
+            radio2->SetOutputPower(pwr + 1);
+        }
+        // printf("2G4pwr %d\n", radio2->currPWR);
+        break;
+    }
+
+    luaMessage = false;
+
+    // TODO need to implement a getPowerDBM function that adjusts for PA
+    uint8_t luaPayload[] = {(uint8_t)radio1->getPowerDBM(), (uint8_t)radio2->getPowerDBM()};
+
+    crsf.sendLUAresponse(luaPayload, 2);
+}
+
 void setupSerial()
 {
     // Setup serial port
@@ -4565,10 +4636,9 @@ void app_main()
     // Get the radios initialised and ready for use
     setupRadios();
 
-
     #if defined(CRSF_SPORT_PIN) || defined(CRSF_TX_PIN)
+    crsf.RecvParameterUpdate = paramUpdateReq;
     crsf.Begin();
-    // std::cout << "crsf disabled\n";
     #endif
 
     // Delay to give the user a chance to see the initial status on the leds
@@ -4606,6 +4676,8 @@ void app_main()
         #endif
 
         prevTime = now;
+
+        if (TRANSMITTER && luaMessage) handleLua();
 
         // Reflect status on the leds
         if (!TRANSMITTER && ((lastLEDUpdate + 100) < now))

@@ -122,6 +122,7 @@ public:
 
     uint16_t convertPowerToMw(int power);
     uint16_t getPowerMw();
+    int8_t getPowerDBM();
 
     int32_t ICACHE_RAM_ATTR GetFrequencyError();
 

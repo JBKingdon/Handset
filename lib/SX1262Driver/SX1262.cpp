@@ -605,7 +605,7 @@ uint16_t ICACHE_RAM_ATTR SX1262Driver::getPowerMw()
 
 /** Set the SX1262 power output
  *  @param power The output level of the SX1262 chip in dBm,
- * range -9 to +22.
+ * range -9 to +22. The value will be constrained if the input is out of range
 
     13.4.4 SetTxParams
         Opcode = 0x8E   power   RampTime
@@ -638,6 +638,17 @@ void ICACHE_RAM_ATTR SX1262Driver::SetOutputPower(int8_t power)
 
     return;
 }
+
+/**
+ * return the current power level in dBm
+*/
+int8_t SX1262Driver::getPowerDBM()
+{
+    int8_t result = currPWR;
+
+    return result;
+}
+
 
 /** 13.4.6 SetPacketParams - 7 byte transfer
  * Table 13-66: LoRa® PacketParam1 & PacketParam2 - PreambleLength
