@@ -295,14 +295,6 @@ local function run_func(event)
                 -- 2G4 power
                 crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x02, 0x00})
 		        pushed = true
-            -- elseif selection.selected == 3 then
-            --     -- MaxPower
-            --     crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x03, 0x00})
-		    --     pushed = true
-            -- elseif selection.selected == 4 then
-            --     -- RFFreq
-            --     crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x04, 0x00})
-		    --     pushed = true
             end
 	    end -- selection.state
 
@@ -321,14 +313,6 @@ local function run_func(event)
                 -- 2G4 power
                 crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x02, 0x01})
                 pushed = true
-            -- elseif selection.selected == 3 then
-            --     -- MaxPower
-            --     crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x03, 0x01})
-            --     pushed = true
-            -- elseif selection.selected == 4 then
-            --     -- RFFreq
-            --     crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x04, 0x01})
-		    --     pushed = true
             end -- selection.selected
 	    end -- selection.state
 
@@ -336,14 +320,12 @@ local function run_func(event)
         selection.state = not selection.state
 
     elseif event == EVT_EXIT_BREAK and selection.state then
-        -- I was hoping to find the T16 RTN button as an alternate way of deselecting
-	    -- a field, but no luck so far
-        selection.state = false
-    end
-
-    if not pushed then
-        -- ensure we get up to date values from the module for next time
-        --crossfireTelemetryPush(0x2D, {0xEE, 0xEA, 0x00, 0x00})
+        if (selection.state) then
+            selection.state = false
+        else
+            -- rtn with nothing selected, exit the script by returning non-zero
+            return 1
+        end
     end
 
     refreshLCD()
