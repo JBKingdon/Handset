@@ -24,7 +24,7 @@ expresslrs_mod_settings_915_s airRateConfig915 =
     // enum_rate,       bw,                 sf,                 cr,         interval, TLMinterval, FHSShopInterval, PreambleLen
 
     // 125Hz
-    {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_8,       4,             12}; // 4896 us @ 8 bytes, 6432 @ 15b, 7200 @ 18b
+    // {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_8,       4,             12}; // 4896 us @ 8 bytes, 6432 @ 15b, 7200 @ 18b
                                                                                                                 // pdfOffset at 125Hz 2750               1198
     // measured: 4920 @ 7 bytes, 6520 @ 15 bytes with CR_4_6, preamble 12
     // measured: 4680 @ 7 bytes, 6000 @ 15 bytes with CR_4_5, preamble 10 (turn-around 440us)
@@ -32,10 +32,16 @@ expresslrs_mod_settings_915_s airRateConfig915 =
     // Testing with longer pre-amble
     // {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_6,  8000, TLM_RATIO_1_8,       4,             16}; //  6944 @ 15b
 
+    // How high can we push the CR?
+    {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_8,  8000, TLM_RATIO_1_8,       4,             10}; //  7456 @ 15b (with 12, recheck for 8 preamble)
+
+    // or maybe only 4_7
+    // {0, RATE_125HZ, SX1262_LORA_BW_500, SX1262_LORA_SF6, SX1262_LORA_CR_4_7,  8000, TLM_RATIO_1_8,       4,             12}; //  6944 @ 15b
+
 expresslrs_rf_pref_params_s airRateRFPerf915 =
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset   minSNR, maxSNR
     //       83                     NA                  NA                          NA                      NA
-    {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                1185,       0,0};
+    // {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                1185,       0,0}; // gives a measured offset of 32us to 44us depending on 2g4 mode (why?)
 
     // try different pfdOffset
     // {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                 1250,       0,0};
@@ -43,6 +49,11 @@ expresslrs_rf_pref_params_s airRateRFPerf915 =
     // for longer pre-amble, pfdOffset needs validating
     // {0, RATE_125HZ, -112,  6944,    3500,               4000,                       200,                   5000,                  800,       0,0}; // 673 theory
 
+    // measured pfdOffset for 4_8
+    {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                   375,       0,0}; // measured at 0us on breadboard with preamble 10
+
+    // measured offset for 4_7, but can't drive it to zero without nonce slips - needed to adjust the nonce offset
+    // {0, RATE_125HZ, -112,  6432,    3500,               4000,                       200,                   5000,                 682,       0,0}; // 671 off by 33us. 682 = 44us
 
 
 #else   // not the DB specific 915 rate, so a range of (sx1262 based) rates
@@ -171,13 +182,13 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected pfdOffset   minSNR  maxSNR
     // {0, RATE_1KHZ,  -100,  145, 1000,               1000,                       100,                       1000,                260,        40,        0}, // what are min/max for flrc modes?
-    {0, RATE_1KHZ,  -106,  605, 1000,               1000,                       100,                       1000,                260,        40,        0},
+    {0, RATE_1KHZ,  -106,  605, 1000,               1000,                       100,                       1000,                157,        40,        0},
     // {2, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       1000,                160,        40,        0},
-    {1, RATE_500HZ, -106,  640, 1000,               1000,                       100,                       1000,                317,        40,       90},  // XXX flrc, needs different thresholds
-    {2, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       1000,                317,        40,       90},
-    {3, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                630,        40,      100},
+    {1, RATE_500HZ, -106,  640, 1000,               1000,                       100,                       1000,               150,        40,       90},  // XXX flrc, needs different thresholds
+    {2, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       1000,                300,        40,       90},
+    {3, RATE_250HZ, -108, 3330, 1000,               2000,                       100,                       1000,                610,        40,      100},
     // {3, RATE_125HZ, -112, 6187, 2000,               4000,                       100,                       1000,               1880}, // no header
-    {4, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                934,         0,      100}, // with header
+    {4, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                911,         0,      100}, // with header (was 934)
     // {6, RATE_125HZ, -112, 7133, 2000,               4000,                       100,                       1000,                1000,        0,      100}, // experiment with different pfdOffset
 };
 
