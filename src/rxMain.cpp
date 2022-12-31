@@ -25,18 +25,16 @@
  *   Split rxMain into rx and tx specific parts and split out the common code
  * 
  *   Try disabling the rx timeouts to reduce the amount of spi traffic. Don't forget to check the address of the rx data
+ *      Done for 2G4 - do 915 as well?
  * 
  *   FLRC
  *      second packet has lower LQ than first packet - why? (and now the first is lower than the second)
  *          Seems to be timing related, you can change the lq by adding a delay in the sender.
- *      Convert the hopping to only happen between first & second packets
  *      Check the SPI bus speed
  *      Check the LQ calc - seems lower than it should be
- *      Don't bother with receiving the second packet if the first was ok
-
+ * 
  *      Can we optimise the timing to get a 2k raw rate?
  *          Yes, but using highest flrc speed which is probably not a good idea.
- *          Try removing the software CRC bits and testing slower flrc speed (also check required preamble bits)
  */
 #include "user_config.h"
 #include "config.h"
@@ -77,37 +75,38 @@
 
 #if (TRANSMITTER)
 
-// 915
-#ifdef DEV_MODE
-// #define TX_POWER_915 (0)       // 1mW
-#define TX_POWER_915 (10)       // 10mW
-#else
-// #warning "CAUTION low power configured CAUTION"
-// #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
+    // 915
+    #ifdef DEV_MODE
+    // #define TX_POWER_915 (0)       // 1mW
+    #define TX_POWER_915 (10)       // 10mW
+    #else
+    // #warning "CAUTION low power configured CAUTION"
+    // #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
 
-#define TX_POWER_915 (13)   // 20mW
-// #define TX_POWER_915 (17)   // 50mW
-#endif
+    #define TX_POWER_915 (13)   // 20mW
+    // #define TX_POWER_915 (17)   // 50mW
+    #endif  // DEV_MODE
 
-// 2G4
-#ifdef RADIO_E28_27
-// #define TX_POWER_2G4 (-17)      // 10mW
-#define TX_POWER_2G4 (-7)    // 100mW
-#else
-// #define TX_POWER_2G4 (0)    // XXX CAUTION low power
-#define TX_POWER_2G4 (13)
-#endif // RADIO_E28_27
+    // 2G4
+    #ifdef RADIO_E28_27
+    // #define TX_POWER_2G4 (-17)      // 10mW
+    #define TX_POWER_2G4 (-7)    // 100mW
+    #else
+    // #define TX_POWER_2G4 (0)    // XXX CAUTION low power
+    #define TX_POWER_2G4 (13)
+    #endif // RADIO_E28_27
 
 #else 
-// receiver
+    // receiver
 
-#ifdef DEV_MODE
-#define TX_POWER_915 (0)
-#else
-#define TX_POWER_915 (13)
-#endif
-// not used, but needs to be defined
-#define TX_POWER_2G4 (-18)
+    #ifdef DEV_MODE
+    // #define TX_POWER_915 (-9)
+    #define TX_POWER_915 (0)
+    #else
+    #define TX_POWER_915 (15)   // Added a couple since the 1262 is configured in the lower power mode
+    #endif
+    // not used, but needs to be defined
+    #define TX_POWER_2G4 (-18)
 
 #endif // TRANSMITTER
 
@@ -125,7 +124,7 @@
 // only need to recompile tx:
 // #define DISABLE_2G4
 
-// XXX double check this, the use doesn't seem to make much sense?
+// For calibrating the 2g4 offsets, only prints the offset and doesn't apply it to the timer
 // only need to recompile rx:
 // #define PFD_CALIBRATION
 
@@ -1390,9 +1389,10 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket2G4DB(uint8_t *rxBuffer, uint32_t tPacket
     // TODO since the crc checking was moved out of this function does it make sense to move the pfd extEvent() call
     // out as well?
 
-    // Can't use FLRC packets to adjust pfd yet as the pfdOffset isn't set correctly, and we need to
-    // deal with 1st vs 2nd packets for dual send.
-    if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::LORA)
+    // when using doubleSend have to choose between using first or second packet since we only have
+    // a single pfdOffset in the data structure.
+    // XXX Revisit this as it feels like it would be better to use firstPacket, but I couldn't get it working
+    if ((ExpressLRS_currAirRate_Modparams->useDoubleSend && !flrcFirstPacket) || !ExpressLRS_currAirRate_Modparams->useDoubleSend)
     {
         uint32_t pfdOffset = ExpressLRS_currAirRate_RFperfParams->pfdOffset;
         pfdLoop.extEvent2G4(tPacketReceived + pfdOffset);
@@ -1460,7 +1460,15 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
     uint8_t indexIn = packet->rateIndex;
 
     // roughly OTA/<hwtimer interval (500us)>
-    const uint32_t TimerNonceOffset195 = (indexIn == 0) ? 14 : 13; // XXX why does it make any difference what the 2G4 packet rate is?
+
+    // This has been working ok with CR 4_6
+    // const uint32_t TimerNonceOffset195 = (indexIn == 0) ? 14 : 13; // XXX why does it make any difference what the 2G4 packet rate is?
+
+    // New for CR 4_7
+    // const uint32_t TimerNonceOffset195 = (indexIn == 0) ? 15 : 14;
+
+    // New for CR 4_8, doesn't seem to need the special case for index 0
+    const uint32_t TimerNonceOffset195 = 16;
 
     // If we're not currently connected then get the sync info and try and establish the link
     if (connectionState == disconnected)
@@ -1644,7 +1652,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
         if (deltaNonce > 1) // single step slips seem to happen at rate change (why?) but fix themselves. XXX figure out what's going on
         {
             #ifndef DEBUG_SUPPRESS
-            printf("nonce slip: current %u, expected %u\n", currentNonce, expectedNonce);
+            printf("nonce slip: current %u, expected %u (offset %u)\n", currentNonce, expectedNonce, (timerNonce - newTimerNonce));
             #endif
 
             // std::cout << "slip correction disabled\n";
@@ -2302,17 +2310,17 @@ static void handleEvents915()
 {
     r1LastIRQms = millis();
 
-    #ifdef DEBUG_PIN
-    gpio_set_level(DEBUG_PIN, 0);
-    #endif
+    // #ifdef DEBUG_PIN
+    // gpio_set_level(DEBUG_PIN, 0);
+    // #endif
 
     uint16_t irqS = radio1->GetIrqStatus();
 
     if (irqS & SX1262_IRQ_RX_TX_TIMEOUT)    // TODO move this to the tx task so that our mainline rx path is shorter
     {
-        #ifdef DEBUG_PIN
-        gpio_set_level(DEBUG_PIN, 1);
-        #endif
+        // #ifdef DEBUG_PIN
+        // gpio_set_level(DEBUG_PIN, 1);
+        // #endif
 
         timeout1Counter++;
         if (TRANSMITTER) {
@@ -2521,9 +2529,9 @@ static void receive2G4()
 
     uint8_t flrcErrors = 0;
 
-    #ifdef DEBUG_PIN
-    gpio_set_level(DEBUG_PIN, 1);
-    #endif
+    // #ifdef DEBUG_PIN
+    // gpio_set_level(DEBUG_PIN, 1);
+    // #endif
 
     if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::FLRC)
     {
@@ -2551,9 +2559,9 @@ static void receive2G4()
         // XXX Needs a new bidirectional SPI task
         radio2->readRXData(); // get the data from the radio chip
 
-        #ifdef DEBUG_PIN
-        gpio_set_level(DEBUG_PIN, 0);
-        #endif
+        // #ifdef DEBUG_PIN
+        // gpio_set_level(DEBUG_PIN, 0);
+        // #endif
 
         // flrc uses hardware CRC not software CRC so we can skip the check
         if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::FLRC || hasValidCRC2G4DB((DB2G4Packet_t *)radio2->RXdataBuffer))
@@ -2997,6 +3005,7 @@ void liveUpdateRFLinkRate(uint8_t index)
     #endif
 
     // Reset the offset so that we don't apply stale data
+    // XXX is this necessary/helpful?
     LPF_Offset2G4.init(0);
 
     // Start the receiver running again
@@ -3188,8 +3197,8 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
 
         #ifdef PFD_CALIBRATION
 
-        // debug
-        printf("2G4 offset %d\n", Offset2G4);
+        // debug (there's equivalent debug in the regular 1s output that's easier to read)
+        // printf("2G4 offset %d\n", Offset2G4);
 
         #else // NOT PFD_CALIBRATION
 
@@ -3258,9 +3267,9 @@ void ICACHE_RAM_ATTR tick915()
     // }
     // last = now;
 
-    // #ifdef DEBUG_PIN
-    // gpio_set_level(DEBUG_PIN, 1);
-    // #endif
+    #ifdef DEBUG_PIN
+    gpio_set_level(DEBUG_PIN, 1);
+    #endif
 
     if (!TRANSMITTER)
     {
@@ -3351,6 +3360,7 @@ void ICACHE_RAM_ATTR tick2G4()
 
         // Receiver
         updatePhaseLock2G4();
+
         if (ExpressLRS_currAirRate_Modparams->useDoubleSend)
         {
             // Change frequency
@@ -3410,9 +3420,9 @@ void ICACHE_RAM_ATTR tockRX915()
 
     pfdLoop.intEvent915(esp_timer_get_time());
 
-    // #ifdef DEBUG_PIN
-    // gpio_set_level(DEBUG_PIN, 1);
-    // #endif
+    #ifdef DEBUG_PIN
+    gpio_set_level(DEBUG_PIN, 0);
+    #endif
 
     tockWhere = (char *)"FHSS";
     HandleFHSS915();
@@ -3488,7 +3498,6 @@ void ICACHE_RAM_ATTR tockRX915()
  */
 void ICACHE_RAM_ATTR tockRX2G4()
 {
-
     pfdLoop.intEvent2G4(esp_timer_get_time());
 
     // std::cout << ".";
@@ -3601,9 +3610,9 @@ void ICACHE_RAM_ATTR tockTX915()
 {
     // std::cout << "tockTX\n";
 
-    // #ifdef DEBUG_PIN
-    // gpio_set_level(DEBUG_PIN, 1);
-    // #endif
+    #ifdef DEBUG_PIN
+    gpio_set_level(DEBUG_PIN, 0);
+    #endif
 
     // hopefully this will already have been done from txDone interrupt
     HandleFHSS915();
@@ -4211,8 +4220,12 @@ void wifi_init_ap()
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // try lower power levels in case it's shutting down due to high swr
-    std::cout << "setting low power for wifi tx\n";
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(16)); // less than 20 is all the same as the min, 8
+    // std::cout << "setting low power for wifi tx\n";
+    // ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(16)); // range 8 to 80. less than 20 is all the same as the min, 8
+
+    const int8_t txPower = 20;
+    printf("setting wifi tx power %u\n", txPower);
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(txPower)); // range 8 to 80. less than 20 is all the same as the min, 8
 
     ESP_LOGI(TAG, "wifi_init_softap finished.");
 
