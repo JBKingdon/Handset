@@ -210,6 +210,8 @@ void setPaConfig()
     buf[3] = 0;
     buf[4] = 1;
 
+    // Settings for 22dBm would be 0x04, 0x07, 0, 1
+
     hal.fastWriteCommand(buf, sizeof(buf));
 }
 
@@ -371,6 +373,16 @@ void SX1262Driver::setPacketLength(uint8_t packetLen)
     SetPacketParams(12, SX1262_LORA_PACKET_FIXED_LENGTH, packetLen, SX1262_LORA_CRC_OFF, SX1262_LORA_IQ_NORMAL);
 }
 
+void setDIO2TXEN()
+{
+    uint8_t command[2];
+
+    command[0] = SX1262_RADIO_SET_DIO2_AS_RFSWITCH_CTR;
+    command[1] = 0x01;
+
+    hal.fastWriteCommand(command, sizeof(command));
+}
+
 void SX1262Driver::Begin()
 {
     // The E22 uses a tcxo so the power-on calibration will fail and has to be done manually after
@@ -490,6 +502,11 @@ void SX1262Driver::Begin()
     #ifdef USE_SX1262_TCXO
     printf("enabling tcxo\n\r");
     enableTCXO();
+    #endif
+
+    #ifdef SX1262_DIO2_IS_TXEN
+    printf("using dio2 for txen");
+    setDIO2TXEN();
     #endif
 
     // debugErrorStatus();
