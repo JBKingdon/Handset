@@ -19,30 +19,27 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-// #define IS_RECEIVER
+#define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
 #endif
 //-------------------------------------------------
 
-#define DEV_MODE
+// #define DEV_MODE
 
 // XXX where's the best place for these?
 
 
 // Hardware revision:
 
-#define DUAL_BAND_BREADBOARD
-
-// for testing llcc68 - need to know because it doesn't have tcxo
-// #define E220
+// #define DUAL_BAND_BREADBOARD
 
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
 
-// DB pcb with no modules
-// #define DB_PCB_V1
+// DB pcb with no modules (NB may be hacked for V1.2)
+#define DB_PCB_V1
 
 // DB specific TX module with e28-27
 // #define DB_TX_V1
@@ -52,6 +49,25 @@
 // #define C3_PCB_V0
 
 // ---------------------------
+
+#ifdef DUAL_BAND_BREADBOARD
+
+// for testing llcc68 - need to know because it doesn't have tcxo
+// currently being used on the transmitter board
+#if defined(IS_TRANSMITTER)
+#define E220
+#endif
+
+#include "targets/DB_BREADBOARD.h"
+
+#elif defined(DB_PCB_V1)
+
+// #include "targets/DB_RX_V1.0.h"
+
+// XXX temp hack
+#include "targets/DB_RX_V1.2.h"
+
+#endif
 
 // PCB_V1 uses an ordinary XO for the 1262, the others (with E22 modules) have TCXO
 // E220 also doesn't have a tcxo
@@ -77,10 +93,11 @@
 // define the type of radio module being used 
 
 // everything can use the same E22 definition as they're all unamplified
+// E220 behaves as an E22 except it doesn't have a TCXO
 #define RADIO_E22
 
 // Set the right E28 version depending on type
-#if defined(DUAL_BAND_BREADBOARD) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(C3_PCB_V0)
+#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(C3_PCB_V0)
 
 #define RADIO_E28_12    // CAREFUL - this will break _20 and _27 if you use it by accident
 
@@ -88,6 +105,10 @@
 
 // #define RADIO_E28_20
 #define RADIO_E28_27    // Slightly careful - this goes 2 steps higher than E28_20. Probably won't break anything, but not ideal
+
+#elif defined(DUAL_BAND_BREADBOARD)
+
+// nothing, temporary until all targets are converted to individual include files
 
 #else
 #error("Problem with mapping board type to 1280 power amp")
@@ -138,7 +159,7 @@
 
 
 #if defined(RADIO_E22)
-#define MAX_PRE_PA_POWER_915 22  // sx1262 can be configured to scale the max power down from the commanded value
+#define MAX_PRE_PA_POWER_915 22  // sx1262 can be configured to scale the max power down from the commanded value, so this may result in either 20 or 22dBm
 // #define MAX_PRE_PA_POWER_915 10     // while testing
 #define DISARM_POWER_915 (-9)
 #endif
@@ -294,27 +315,6 @@
 #define RADIO_DIO1_PIN  GPIO_NUM_5
 #define RADIO_DIO2_PIN  GPIO_NUM_19
 
-#elif defined(DUAL_BAND_BREADBOARD)
-
-// common pins for spi
-
-#define RADIO_MOSI_PIN  GPIO_NUM_1
-#define RADIO_MISO_PIN  GPIO_NUM_2
-#define RADIO_SCK_PIN   GPIO_NUM_0
-
-// These are for the sx1262
-
-// #define RADIO_RESET_PIN GPIO_NUM_12
-#define RADIO_RESET_PIN GPIO_NUM_9
-#define RADIO_NSS_PIN   GPIO_NUM_8
-#define RADIO_BUSY_PIN  GPIO_NUM_7
-#define RADIO_DIO1_PIN  GPIO_NUM_10
-// #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
-#define RADIO_TXEN_PIN    GPIO_NUM_19
-
-// LQ improves with RXEN properly setup - or does it?
-// #define RADIO_RXEN_PIN    GPIO_NUM_9
-
 #elif defined(DUAL_BAND_PROTOTYPE)
 
 // common pins for spi
@@ -351,20 +351,8 @@
 
 #elif defined(DB_PCB_V1)
 
-// common pins for spi
+// temporary until refactoring complete
 
-#define RADIO_MOSI_PIN  GPIO_NUM_1
-#define RADIO_MISO_PIN  GPIO_NUM_0
-#define RADIO_SCK_PIN   GPIO_NUM_2
-
-// These are for the sx1262, the sx1280 pins are later under "USE_SECOND_RADIO"
-
-#define RADIO_RESET_PIN GPIO_NUM_6  // MTCK == 6
-#define RADIO_NSS_PIN   GPIO_NUM_7  // MTDO == 7
-#define RADIO_BUSY_PIN  GPIO_NUM_5  // MTDI == 5
-#define RADIO_DIO1_PIN  GPIO_NUM_4  // MTMS == 4
-// #define RADIO_DIO2_PIN  GPIO_NUM_3  XXX needs testing
-#define RADIO_TXEN_PIN      GPIO_NUM_9  // XXX need to check if this is active high or active low
 
 #elif defined(C3_PCB_V0) // these are for the dual 1280 breadboard prototype
 
@@ -397,14 +385,6 @@
 #define RADIO2_DIO1_PIN  GPIO_NUM_10
 #define RADIO2_DIO2_PIN  GPIO_NUM_3
 
-#elif defined(DUAL_BAND_BREADBOARD)
-
-#define RADIO2_NSS_PIN   GPIO_NUM_6
-#define RADIO2_BUSY_PIN  GPIO_NUM_18
-#define RADIO2_DIO1_PIN  GPIO_NUM_5
-#define RADIO2_DIO2_PIN  GPIO_NUM_3
-#define RADIO2_RESET_PIN GPIO_NUM_4
-
 #elif defined(DUAL_BAND_PROTOTYPE)
 
 #define RADIO2_NSS_PIN   GPIO_NUM_6
@@ -425,11 +405,7 @@
 
 #elif defined(DB_PCB_V1)
 
-#define RADIO2_NSS_PIN   GPIO_NUM_8
-#define RADIO2_BUSY_PIN  GPIO_NUM_18
-#define RADIO2_DIO1_PIN  GPIO_NUM_10
-#define RADIO2_DIO2_PIN  GPIO_NUM_19
-#define RADIO2_RESET_PIN GPIO_NUM_12
+// temporary until refactoring complete
 
 #elif defined(C3_PCB_V0) // these are for the dual 1280 breadboard prototype
 
@@ -446,9 +422,9 @@
 
 // XXX Where is the radio2 reset pin for this layout?
 
-#elif defined(DUAL_BAND_BREADBOARD)
+// #elif defined(DUAL_BAND_BREADBOARD)
 
-#define RADIO2_RESET_PIN GPIO_NUM_4
+// #define RADIO2_RESET_PIN GPIO_NUM_4
 
 #elif defined(DUAL_BAND_PROTOTYPE)
 
@@ -489,8 +465,8 @@
 #else // not using pwm
 
 
-// For PCB proto
 #ifdef C3_PCB_V0
+// For dual sx1280 rx using modules
 
 #define LED2812_PIN     GPIO_NUM_9
 #define CRSF_TX_PIN     GPIO_NUM_21
@@ -499,44 +475,9 @@
 #define LED_RADIO1_INDEX 1
 #define LED_RADIO2_INDEX 2
 
-#elif defined(DUAL_BAND_BREADBOARD)
-
-// #define DEBUG_PIN     GPIO_NUM_9
-
-// #define LED2812_PIN   GPIO_NUM_9
-#define LED_STATUS_INDEX 0
-#define LED_RADIO1_INDEX 2
-#define LED_RADIO2_INDEX 1
-
-// #define LATENCY_INPUT_PIN GPIO_NUM_9
-
-#ifdef IS_TRANSMITTER
-// For the transmitter module, s.port pin:
-
-// XXX pin 9 is a bad choice, it has a relatively strong pull-up for the boot button that overrides the weak pulldown on the gpio
-// Swap with something else? Swapped with sx1262 reset
-// #define CRSF_SPORT_PIN     GPIO_NUM_9    // Don't use this
-
-// #define CRSF_SPORT_PIN     GPIO_NUM_12  // swapped from RADIO_RESET_PIN, use this
-
-// #define CRSF_SPORT_PIN     GPIO_NUM_19
-// #define CRSF_SPORT_PIN     GPIO_NUM_20  // 20 is normally the uart0 rx pin
-// #define CRSF_SPORT_PIN     GPIO_NUM_21  // 21 is normally the uart0 tx pin
-#define DEBUG_RX_PIN    GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21
-// #define DEBUG_TX_PIN    GPIO_NUM_19
-#endif
-
-#ifdef IS_RECEIVER
-// #define CRSF_TX_PIN   GPIO_NUM_9
-// #define CRSF_RX_PIN   GPIO_NUM_20
-// #define CRSF_TX_PIN   GPIO_NUM_21
-#define DEBUG_RX_PIN    GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21
-#endif
-
 
 #elif defined(DUAL_BAND_PROTOTYPE)
+// bare C3, modules for radios
 
 // #define DEBUG_PIN     GPIO_NUM_9
 #define LED2812_PIN   GPIO_NUM_9
@@ -591,33 +532,15 @@
 
 #elif defined(DB_PCB_V1)
 
-#define LED2812_PIN   GPIO_NUM_13
-
-#ifdef IS_TRANSMITTER
-// For the transmitter module, s.port pin: XXX maybe switch to pin 21 which has the safety resistor
-// #define CRSF_SPORT_PIN     GPIO_NUM_3
-// #define CRSF_SPORT_PIN     GPIO_NUM_9
-// #define CRSF_SPORT_PIN  GPIO_NUM_21
-// #define DEBUG_TX_PIN    GPIO_NUM_20
-#define CRSF_SPORT_PIN  GPIO_NUM_20
-#define DEBUG_TX_PIN    GPIO_NUM_21
-#endif // IS_TRANSMITTER
-
-#ifdef IS_RECEIVER
-// Comment these out to disable CRSF for development
-#define CRSF_TX_PIN   GPIO_NUM_21
-#define CRSF_RX_PIN   GPIO_NUM_20
-
-// #define DEBUG_TX_PIN    GPIO_NUM_21     // shared with crsf :(
-
-#endif // IS_RECEIVER
-
-#define LED_STATUS_INDEX 0
-#define LED_RADIO1_INDEX 2
-#define LED_RADIO2_INDEX 1
+// temporary until refactoring complete
 
 
-#else
+
+#elif defined(DUAL_BAND_BREADBOARD)
+
+// empty, temporary until refactored
+
+#else   // XXX what board are these for?
 
 // #define DEBUG_PIN     GPIO_NUM_9
 // #define CRSF_TX_PIN     GPIO_NUM_9
@@ -630,7 +553,7 @@
 #endif // C3_PCB_V0
 
 
-#endif // USE_PWM6
+#endif // USE_PWM6 or not
 
 #else
 #error "define the board type in config.h"
