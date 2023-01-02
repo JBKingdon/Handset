@@ -3,7 +3,7 @@
 #define SX1262_XTAL_FREQ 32000000
 
 // step is xo / 2^25
-#define SX1262_FREQ_STEP (33554432.0D / (double)SX1262_XTAL_FREQ )
+#define SX1262_FREQ_STEP (33554432.0 / (double)SX1262_XTAL_FREQ ) 
 
 
 /*!

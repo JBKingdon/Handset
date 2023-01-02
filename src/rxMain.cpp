@@ -77,23 +77,23 @@
 
     // 915
     #ifdef DEV_MODE
-    // #define TX_POWER_915 (0)       // 1mW
-    #define TX_POWER_915 (10)       // 10mW
+        #define TX_POWER_915 (0)       // 1mW
+        // #define TX_POWER_915 (10)       // 10mW
     #else
-    // #warning "CAUTION low power configured CAUTION"
-    // #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
+        // #warning "CAUTION low power configured CAUTION"
+        // #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
 
-    #define TX_POWER_915 (13)   // 20mW
-    // #define TX_POWER_915 (17)   // 50mW
+        #define TX_POWER_915 (13)   // 20mW
+        // #define TX_POWER_915 (17)   // 50mW
     #endif  // DEV_MODE
 
     // 2G4
     #ifdef RADIO_E28_27
-    // #define TX_POWER_2G4 (-17)      // 10mW
-    #define TX_POWER_2G4 (-7)    // 100mW
+        // #define TX_POWER_2G4 (-17)      // 10mW
+        #define TX_POWER_2G4 (-7)    // 100mW
     #else
-    // #define TX_POWER_2G4 (0)    // XXX CAUTION low power
-    #define TX_POWER_2G4 (13)
+        #define TX_POWER_2G4 (0)
+        // #define TX_POWER_2G4 (13)
     #endif // RADIO_E28_27
 
 #else 
@@ -2789,8 +2789,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             break;
                         case RadioSelection::second:
                             #ifdef USE_SECOND_RADIO
-                            // XXX disabled for testing in sx1280.cpp
-                            bool startRX;
+                            bool startRX;   // XXX disabled for testing in sx1280.cpp
                             // 2G4 is currently unidirectional, so on the receiver auto-start the rx
                             if (!TRANSMITTER) {
                                 startRX = true;
@@ -2798,7 +2797,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                                 startRX = false;
                             }
                             radio2->SetFrequency(taskInfo.frequency, startRX);
-                            // clear the fei flag to indicate that the radio now has a new frequency set
+                            // clear the fei flag to indicate that the radio now has a new frequency set which will include the new correction factor
                             feiWaitingForFreqUpdate = false;
 
                             #endif  // USE_SECOND_RADIO
@@ -3649,6 +3648,8 @@ void ICACHE_RAM_ATTR tockTX915()
 
     // hopefully this will already have been done from txDone interrupt
     HandleFHSS915();
+
+    alreadyFHSS915 = false;
 
     if (!isTelemetryFrame()) {
         sendRCdataToRF915DB();
