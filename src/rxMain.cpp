@@ -249,6 +249,8 @@ typedef struct
 bool flrcFirstPacket = false;
 bool flrcFirstPacketSuccess = false;
 
+bool dataReceived2G4 = false;       // true when we got data on the 2G4 channel. Used for LQ
+bool dataReceived915 = false;       // true when we got data on the 915 channel. Used for LQ
 bool newDataIsAvailable = false;    // true when data has been received and can be sent to the FC
 
 bool linkStatsPacketNeeded = false; // used to force a send of linkstats after a change of packet rate
@@ -2467,7 +2469,8 @@ static void handleEvents915()
                 totalRX1Events++;
                 packetReceived = true; // needed?
                 lqEffective.add();
-                lqRadio1.add();
+                // lqRadio1.add();
+                dataReceived915 = true;
 
                 #if defined(PRINT_RX_SCOREBOARD)
                 // printf("1");
@@ -2521,6 +2524,8 @@ static void handleEvents915()
 /** receive a packet from the 2G4 channel
  * Only expected to be used on the receiver since 2G4 is currently unidirectional
  * 
+ * Called from rx_task2G4, so runs in task context
+ * 
  */
 static void receive2G4()
 {
@@ -2566,8 +2571,11 @@ static void receive2G4()
         // flrc uses hardware CRC not software CRC so we can skip the check
         if (ExpressLRS_currAirRate_Modparams->modemType == ModemType::FLRC || hasValidCRC2G4DB((DB2G4Packet_t *)radio2->RXdataBuffer))
         {
-            if (!flrcFirstPacketSuccess) {
-                // only go to the trouble of processing and sending the packet to the FC if we haven't already sent it for this cycle
+            dataReceived2G4 = true; // for managing LQ in tock
+
+            // only go to the trouble of processing the packet if we haven't already done it for this cycle
+            if (!flrcFirstPacketSuccess)
+            {
                 ProcessRFPacket2G4DB((uint8_t*)radio2->RXdataBuffer, tPacketR2, RadioSelection::second);
 
                 #if defined(PRINT_RX_SCOREBOARD)
@@ -2582,8 +2590,8 @@ static void receive2G4()
                 // }
 
                 totalRX2Events++;
-                lqEffective.add();
-                lqRadio2.add();
+                // lqRadio2.add();  // Moved to tock
+                // lqEffective.add();
                 antenna = 1;
                 getRFlinkInfo();
 
@@ -3206,6 +3214,7 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
         // getting the sync onto the right sub-frame. But once we're locked 2G4 can be used to fine tune
         // the sync
 
+        // XXX The test on currentIsSet looks redundant and potentially dangerous - remove?
         if (RXtimerState == tim_locked && (lqRadio2.currentIsSet()) && Offset < 100 && Offset > -100)
         {
             // loop frequency adjustment
@@ -3292,14 +3301,16 @@ void ICACHE_RAM_ATTR tick915()
     // uplinkLQ = lqEffective.getLQ();
     // lpfLq.update(uplinkLQ);
 
-    // Only advance the LQI period counter if we didn't send Telemetry this period
-    if (!alreadyTLMresp) {
-        lqRadio1.inc();
-        // lqEffective.inc();
-    }
+    // moved to tockRX915()
 
-    alreadyTLMresp = false;
-    alreadyFHSS915 = false;
+    // // Only advance the LQI period counter if we didn't send Telemetry this period
+    // if (!alreadyTLMresp) {
+    //     lqRadio1.inc();
+    //     // lqEffective.inc();
+    // }
+
+    // alreadyTLMresp = false;
+    // alreadyFHSS915 = false;
 
 
     // printf("tickOut\n");
@@ -3428,6 +3439,15 @@ void ICACHE_RAM_ATTR tockRX915()
     HandleFHSS915();
     tockWhere = (char *)"telem";
 
+    // Only advance the LQI period counter if we didn't send Telemetry this period
+    if (!alreadyTLMresp) {
+        lqRadio1.inc();
+    }
+
+    alreadyTLMresp = false;
+    alreadyFHSS915 = false;
+
+
 
     if (isTelemetryFrame())
     {
@@ -3486,6 +3506,12 @@ void ICACHE_RAM_ATTR tockRX915()
     lastPacketWasTelemetry = alreadyTLMresp;
     #endif
     // printf("tockOut\n");
+
+
+    if (dataReceived915) {
+        lqRadio1.add();
+        dataReceived915 = false;
+    }
 
     tockWhere = (char *)"end";
 
@@ -3584,6 +3610,13 @@ void ICACHE_RAM_ATTR tockRX2G4()
 
     // lqEffective.inc();
     lqRadio2.inc();
+
+    if (dataReceived2G4)
+    {
+        lqRadio2.add();
+        dataReceived2G4 = false;
+    }
+
 
     // If we got new data during the previous frame, send it to the FC
     if (newDataIsAvailable)
@@ -4406,16 +4439,9 @@ void setupSerial()
 
         // RECEIVER
 
-        #if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1)
-
+        #if defined(CRSF_TX_PIN)
         uart_set_baudrate(UART_NUM_0, CRSF_RX_BAUDRATE);
-
         #else
-        // uart_set_baudrate(UART_NUM_0, 115200);
-        // uart_set_baudrate(UART_NUM_0, 420000);
-        // uart_set_baudrate(UART_NUM_0, 460800);
-        // uart_set_baudrate(UART_NUM_0, 921600);
-
         uart_set_baudrate(UART_NUM_0, 2000000);
         #endif
 
