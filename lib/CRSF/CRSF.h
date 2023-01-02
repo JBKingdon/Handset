@@ -5,56 +5,19 @@
 
 #include "../../src/config.h"
 
-// XXX TODO what a mess, move this to config? And sort out a better debug vs production control so it's all in one place
-#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(DB_TX_V1)
 
-#ifdef IS_RECEIVER
-
-// The receiver PCB needs to share uart0 with the normal debug output
-
-#define CRSF_PORT_NUM 0
-
-#else
-
-// The transmitter can use uart1 and keep debug on uart0
-// XXX but isn't for now - needs to be 0 for use in the handset, and 1 for stand alone dev. Can't remember why
-#define CRSF_PORT_NUM 0
-// #define CRSF_PORT_NUM 1
-
-#endif // IS_RECEIVER
-
-#elif defined(DUAL_BAND_BREADBOARD)
-
-// The breadboard prototype can use uart1 with pin 12 for crossfire s.port
-
-// As currently setup, use port 0 for normal operation and port 1 for dev with keyboard input to change modes
-
-#ifdef DEV_MODE
-#define CRSF_PORT_NUM 1
-#else
-#define CRSF_PORT_NUM 0 
-#endif
-
-#else
-
-#error("Must define boardtype")
-
-#endif // DUAL_BAND_PROTOTYPE
-
-
+// alias some defines that are hangovers from earlier code - TODO rationalise names
 #ifdef IS_RECEIVER
 #define CRSF_RX_MODULE
 #endif
+
 #ifdef IS_TRANSMITTER
 #define CRSF_TX_MODULE
 #endif
 
 
-// #include "targets.h"
 #include "crsf_protocol.h"
-#ifndef TARGET_NATIVE
-// #include "HardwareSerial.h" // Arduino serial library. We're going to need a HAL for that
-#endif
+
 // #include "msp.h"
 // #include "msptypes.h"
 // #include "LowPassFilter.h"

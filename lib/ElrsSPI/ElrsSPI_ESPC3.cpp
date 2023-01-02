@@ -159,57 +159,65 @@ int ElrsSPI::init()
     // Breadboard: ok up to 10 (but dropped to 8 to try and be sure)
     // PCB V0 (modules) up to 18MHz (max speed in 1280 docs)
 
-    // printf("SPI clk set slow for testing\n");
-    // devcfg.clock_speed_hz = 10*1000*1000,   // Clock speed in Hz (approximate, driver selects nearest possible)
-    #ifdef C3_PCB_V0    // dual sx1280
+    #ifdef SPI_CLOCK_SPEED
 
-    // Run at 12 so that we should have some timing room once we bump back to 18
-    // printf("SPI clock at 12MHz\n");
-    // devcfg.clock_speed_hz = 12*1000*1000,
-
-    // Full speed is 18MHz per 1280 datasheet
-    printf("SPI clock at 18MHz\n");
-    devcfg.clock_speed_hz = 18*1000*1000;
-
-    #elif defined(DUAL_BAND_BREADBOARD)
-
-    // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
-
-    // printf("SPI clock at 16MHz\n");
-    // devcfg.clock_speed_hz = 16*1000*1000;   // many crc errors on the sx1262 on the breadboard
-
-    printf("SPI clock at 12MHz\n");
-    devcfg.clock_speed_hz = 12*1000*1000;
-
-    // printf("SPI clock at 10MHz\n");
-    // devcfg.clock_speed_hz = 10000000;
-
-    // printf("SPI clock at 8MHz\n");
-    // devcfg.clock_speed_hz = 8000000;
-
-    // printf("SPI clock at 4MHz\n");
-    // devcfg.clock_speed_hz = 4*1000*1000;
-
-    #elif  defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(DB_TX_V1)
-
-    // sx1262 is max 16MHz, and at the moment we use the same speed for both radios
-
-    // Looks like changing the SPI speed changes the timing so needs different pfd offsets
-    // Telemetry LQ goes down the toilet at 16MHz for some packet rates
-
-    // printf("SPI clock at 16MHz\n");
-    // devcfg.clock_speed_hz = 16*1000*1000;
-
-    // printf("SPI clock at 14MHz\n");
-    // devcfg.clock_speed_hz = 14*1000*1000;
-
-    printf("SPI clock at 12MHz\n");
-    devcfg.clock_speed_hz = 12*1000*1000;
+    printf("SPI clock %u\n", SPI_CLOCK_SPEED);
+    devcfg.clock_speed_hz = SPI_CLOCK_SPEED;
 
     #else
-    devcfg.clock_speed_hz = 8*1000*1000;
+        #error "Need to set SPI_CLOCK_SPEED"
     #endif
-    // devcfg.clock_speed_hz = 4*1000*1000;
+
+    // #ifdef C3_PCB_V0    // dual sx1280
+
+    // // Run at 12 so that we should have some timing room once we bump back to 18
+    // // printf("SPI clock at 12MHz\n");
+    // // devcfg.clock_speed_hz = 12*1000*1000,
+
+    // // Full speed is 18MHz per 1280 datasheet
+    // printf("SPI clock at 18MHz\n");
+    // devcfg.clock_speed_hz = 18*1000*1000;
+
+    // #elif defined(DUAL_BAND_BREADBOARD)
+
+    // // will be limited by the sx1262 at 16MHz, but leave some slack for long breadboard wiring
+
+    // // printf("SPI clock at 16MHz\n");
+    // // devcfg.clock_speed_hz = 16*1000*1000;   // many crc errors on the sx1262 on the breadboard
+
+    // printf("SPI clock at 12MHz\n");
+    // devcfg.clock_speed_hz = 12*1000*1000;
+
+    // // printf("SPI clock at 10MHz\n");
+    // // devcfg.clock_speed_hz = 10000000;
+
+    // // printf("SPI clock at 8MHz\n");
+    // // devcfg.clock_speed_hz = 8000000;
+
+    // // printf("SPI clock at 4MHz\n");
+    // // devcfg.clock_speed_hz = 4*1000*1000;
+
+    // #elif  defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(DB_TX_V1)
+
+    // // sx1262 is max 16MHz, and at the moment we use the same speed for both radios
+
+    // // Looks like changing the SPI speed changes the timing so needs different pfd offsets
+    // // Telemetry LQ goes down the toilet at 16MHz for some packet rates
+
+    // // printf("SPI clock at 16MHz\n");
+    // // devcfg.clock_speed_hz = 16*1000*1000;
+
+    // // printf("SPI clock at 14MHz\n");
+    // // devcfg.clock_speed_hz = 14*1000*1000;
+
+    // printf("SPI clock at 12MHz\n");
+    // devcfg.clock_speed_hz = 12*1000*1000;
+
+    // #else
+    // devcfg.clock_speed_hz = 8*1000*1000;
+    // #endif
+
+
     devcfg.spics_io_num = pinCSS;           // CS pin
     devcfg.queue_size = 2;                  // Are we going to use queing at all?
 

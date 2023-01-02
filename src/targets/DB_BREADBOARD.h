@@ -56,3 +56,13 @@
 #define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 #endif
+
+
+// The breadboard prototype can use uart1 with pin 12 for crossfire s.port
+// As currently setup, use port 0 for normal operation and port 1 for dev with keyboard input to change modes
+
+#ifdef DEV_MODE
+#define CRSF_PORT_NUM 1
+#else
+#define CRSF_PORT_NUM 0 
+#endif

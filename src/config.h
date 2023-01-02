@@ -28,9 +28,6 @@
 
 // #define DEV_MODE
 
-// XXX where's the best place for these?
-
-
 // Hardware revision:
 
 // #define DUAL_BAND_BREADBOARD
@@ -38,8 +35,11 @@
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
 
-// DB pcb with no modules (NB may be hacked for V1.2)
-#define DB_PCB_V1
+// DB pcb with no modules
+// #define DB_PCB_V1_0
+
+// new version of the above with tcxo for 1280, lpf for 915 and dio2 as txen on the 1262
+#define DB_PCB_V1_2
 
 // DB specific TX module with e28-27
 // #define DB_TX_V1
@@ -50,35 +50,44 @@
 
 // ---------------------------
 
+// figure out how to make this board specific without messing up pfdOffsets
+// sx1262 is max 16MHz, and at the moment we use the same speed for both radios
+// Looks like changing the SPI speed changes the timing so needs different pfd offsets
+// Telemetry LQ goes down the toilet at 16MHz for some packet rates
+#define SPI_CLOCK_SPEED (12*1000*1000)
+
 #ifdef DUAL_BAND_BREADBOARD
 
-// for testing llcc68 - need to know because it doesn't have tcxo
-// currently being used on the transmitter board
-#if defined(IS_TRANSMITTER)
-#define E220
+    // for testing llcc68 - need to know because it doesn't have tcxo
+    // currently being used on the transmitter board
+    #if defined(IS_TRANSMITTER)
+    #define E220
+    #else
+    #define E22
+    #endif
+
+    #include "targets/DB_BREADBOARD.h"
+
+#elif defined(DB_PCB_V1_0)
+
+    #include "targets/DB_RX_V1.0.h"
+
+#elif defined(DB_PCB_V1_2)
+
+    #include "targets/DB_RX_V1.2.h"
+
 #endif
 
-#include "targets/DB_BREADBOARD.h"
+// The E22 module uses a tcxo. E220 and my bare 1262 pcbs don't
+// TODO refactor DUAL_BAND_PROTOTYPE and define E22
+#if defined(E22) || defined(DUAL_BAND_PROTOTYPE)
 
-#elif defined(DB_PCB_V1)
-
-// #include "targets/DB_RX_V1.0.h"
-
-// XXX temp hack
-#include "targets/DB_RX_V1.2.h"
-
-#endif
-
-// PCB_V1 uses an ordinary XO for the 1262, the others (with E22 modules) have TCXO
-// E220 also doesn't have a tcxo
-#if !(defined(DB_PCB_V1) || defined(E220))
-
-#define USE_SX1262_TCXO
+    #define USE_SX1262_TCXO
 
 #endif
 
 // PCB_V1 test inverted txen. Looks to work better non-inverted
-// #ifdef DB_PCB_V1
+// #ifdef DB_PCB_V1_0
 // #define SX1262_TXEN_INVERTED
 // #endif
 
@@ -97,7 +106,7 @@
 #define RADIO_E22
 
 // Set the right E28 version depending on type
-#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1) || defined(C3_PCB_V0)
+#if defined(DUAL_BAND_PROTOTYPE) || defined(C3_PCB_V0)
 
 #define RADIO_E28_12    // CAREFUL - this will break _20 and _27 if you use it by accident
 
@@ -106,7 +115,7 @@
 // #define RADIO_E28_20
 #define RADIO_E28_27    // Slightly careful - this goes 2 steps higher than E28_20. Probably won't break anything, but not ideal
 
-#elif defined(DUAL_BAND_BREADBOARD)
+#elif defined(DUAL_BAND_BREADBOARD) || defined(DB_PCB_V1_0) || defined(DB_PCB_V1_2) 
 
 // nothing, temporary until all targets are converted to individual include files
 
@@ -349,7 +358,7 @@
 // #define RADIO_DIO2_PIN  Not connected
 #define RADIO_TXEN_PIN  GPIO_NUM_2
 
-#elif defined(DB_PCB_V1)
+#elif defined(DB_PCB_V1_0) || defined(DB_PCB_V1_2)
 
 // temporary until refactoring complete
 
@@ -403,7 +412,7 @@
 #define RADIO2_TXEN_PIN  GPIO_NUM_19
 
 
-#elif defined(DB_PCB_V1)
+#elif defined(DB_PCB_V1_0) || defined(DB_PCB_V1_2) 
 
 // temporary until refactoring complete
 
@@ -434,7 +443,7 @@
 
 #define RADIO2_RESET_PIN GPIO_NUM_18
 
-#elif defined(DB_PCB_V1)
+#elif defined(DB_PCB_V1_0) || defined(DB_PCB_V1_2) 
 
 #define RADIO2_RESET_PIN GPIO_NUM_12
 
@@ -530,7 +539,7 @@
 
 #endif // DEV_MODE
 
-#elif defined(DB_PCB_V1)
+#elif defined(DB_PCB_V1_0) || defined(DB_PCB_V1_2)
 
 // temporary until refactoring complete
 
@@ -559,6 +568,43 @@
 #error "define the board type in config.h"
 #endif // Board type
 
+
+// Set the UART to be used by CRSF. Moved from crsf.h
+// TODO refactor into targets
+
+#if defined(DUAL_BAND_PROTOTYPE) || defined(DB_PCB_V1_0)  || defined(DB_PCB_V1_2) || defined(DB_TX_V1)
+
+    #ifdef IS_RECEIVER
+
+        // The receiver PCB needs to share uart0 with the normal debug output
+
+        #define CRSF_PORT_NUM 0
+
+    #else
+
+        // The transmitter can use uart1 and keep debug on uart0
+        // XXX but isn't for now - needs to be 0 for use in the handset, and 1 for stand alone dev. Can't remember why
+        #ifdef DEV_MODE
+            #define CRSF_PORT_NUM 1
+        #else
+            #define CRSF_PORT_NUM 0
+        #endif
+
+    #endif // IS_RECEIVER
+
+#elif defined(DUAL_BAND_BREADBOARD)
+
+    // moved to target file
+
+#else
+
+    #error("Must define boardtype")
+
+#endif // DUAL_BAND_PROTOTYPE || ...
+
+
+
+// old stuff unrelated to DB
 
 #ifndef RX_C3
 
