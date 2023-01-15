@@ -30,8 +30,7 @@
  *   FLRC
  *      second packet has lower LQ than first packet - why? (and now the first is lower than the second)
  *          Seems to be timing related, you can change the lq by adding a delay in the sender.
- *      Check the SPI bus speed
- *      Check the LQ calc - seems lower than it should be
+ *      Check the SPI bus speed - need to recalibrate the pfd offsets for different spi bus speeds
  * 
  *      Can we optimise the timing to get a 2k raw rate?
  *          Yes, but using highest flrc speed which is probably not a good idea.
@@ -51,7 +50,7 @@
 // do everything except actually sending the packet
 // #define SUPPRESS_TX2G4
 
-// XXX testing - don't change frequency between DS pkts
+// Disable changing frequency between DS pkts
 // Currently not implemented after changes to DS hopping
 // #define DS_DONT_HOP
 
@@ -77,14 +76,16 @@
 
     // 915
     #ifdef DEV_MODE
-        #define TX_POWER_915 (0)       // 1mW
-        // #define TX_POWER_915 (10)       // 10mW
+        // #define DEFAULT_MAX_POWER_915 (-9)       // min power
+        // #define DEFAULT_MAX_POWER_915 (0)       // 1mW
+        // #define DEFAULT_MAX_POWER_915 (10)       // 10mW
+        #define DEFAULT_MAX_POWER_915 (22)       // 100mW (with the reduced PA scaling)
     #else
         // #warning "CAUTION low power configured CAUTION"
-        // #define TX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
+        // #define DEFAULT_MAX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
 
-        #define TX_POWER_915 (13)   // 20mW
-        // #define TX_POWER_915 (17)   // 50mW
+        #define DEFAULT_MAX_POWER_915 (13)   // 20mW
+        // #define DEFAULT_MAX_POWER_915 (17)   // 50mW
     #endif  // DEV_MODE
 
     // 2G4
@@ -100,10 +101,10 @@
     // receiver
 
     #ifdef DEV_MODE
-    // #define TX_POWER_915 (-9)
-    #define TX_POWER_915 (0)
+    // #define DEFAULT_MAX_POWER_915 (-9)
+    #define DEFAULT_MAX_POWER_915 (0)
     #else
-    #define TX_POWER_915 (15)   // Added a couple since the 1262 is configured in the lower power mode
+    #define DEFAULT_MAX_POWER_915 (15)   // Added a couple since the 1262 is configured in the lower power mode
     #endif
     // not used, but needs to be defined
     #define TX_POWER_2G4 (-18)
@@ -116,10 +117,6 @@
 
 // enable separate 2g4 rssi measurements during telemetry sends to see if sending on 915 impacts 2g4 rssi
 // #define DEBUG_EXTRA_RSSI
-
-// recompile both rx & tx when changing this:
-// XXX doesn't work, needs updating after change to conventional telemetry
-// #define DISABLE_TELEM
 
 // only need to recompile tx:
 // #define DISABLE_2G4
@@ -136,6 +133,29 @@
 // Time in ms of no TLM response to consider that we have lost connection
 #define RX_CONNECTION_LOST_TIMEOUT 3000
 
+// The RSSI dB delta relative to the rx sensitivity at which the TX power will be increased
+// So if the RXsensitivity is -105 and DYN_POWER_INCREASE_MARGIN is 25, power will be increased
+// if rssi is below -80
+#define DYN_POWER_INCREASE_MARGIN 22    //  -112 -> 90
+// #define DYN_POWER_INCREASE_MARGIN 32    //  -112 -> 80
+// #define DYN_POWER_INCREASE_MARGIN 42    //  -112 -> 70
+
+// The RSSI dB delta above DYN_POWER_INCREASE_MARGIN at which the TX power will be decreased
+// If RXsensitivity is -105, DYN_POWER_INCREASE_MARGIN is 25 and DYN_POWER_DECREASE_MARGIN is 10
+// then power will be decreased when rssi is above -70 (105-25 = -80, then 10 above that is -70)
+#define DYN_POWER_DECREASE_MARGIN 10
+
+// The LQ below which the power will be increased to improve the link
+#define DYN_POWER_LQ_THRESHOLD 90
+
+// The LQ below which the power will be increased directly to the configured max value
+#define DYN_POWER_LQ_PANIC_THRESHOLD 50
+
+// XXX TODO NOT IMPLEMENTED
+// The number of consecutive missed telemetry packets to trigger full tx power
+#define DYN_POWER_MISSED_TELEM_PACKET_THRESHOLD 4
+
+#define DYN_POWER_RSSI_FILTER_CUTOFF_HZ 0.1f
 
 #include <stdio.h>
 #include <string.h>
@@ -160,6 +180,8 @@
 #include "PFD.h"
 
 #include "LowPassFilter.h"
+#include "1AUDfilterInt.h"  // for the doublePT1 filter
+
 #include "LQCALC.h"
 #include "OTA.h"
 
@@ -245,6 +267,12 @@ typedef struct
     };
 
 } SpiTaskInfo;
+
+int32_t maxPower915 = DEFAULT_MAX_POWER_915;
+
+// rssi thresholds for 915 dynamic power increase and decrease
+const int16_t dynamicPowerRSSIIncreaseThreshold915 = airRateRFPerf915.RXsensitivity + DYN_POWER_INCREASE_MARGIN;
+const int16_t dynamicPowerRSSIDecreaseThreshold915 = dynamicPowerRSSIIncreaseThreshold915 + DYN_POWER_DECREASE_MARGIN;
 
 bool flrcFirstPacket = false;
 bool flrcFirstPacketSuccess = false;
@@ -413,6 +441,11 @@ static bool lastPacketCrcError, lastPacketCrcError2G4;
 led_strip_t *strip = nullptr;
 #endif
 
+#ifdef USE_DYNAMIC_POWER
+DoublePT1filterInt rssiFilter;
+#endif
+
+
 // forward refs
 void setLedColour(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
 void liveUpdateRFLinkRate(uint8_t index);
@@ -429,6 +462,102 @@ void ICACHE_RAM_ATTR delay(uint32_t millis)
     } else {
         vTaskDelay(millis / portTICK_PERIOD_MS);
     }
+}
+
+/**
+ * Conservative version of armed, will return true if the
+ * channel specified by ARM_CHANNEL is not in the low position
+*/
+bool isArmed()
+{
+    return (crsf.ChannelDataIn[ARM_CHANNEL] > 250);
+}
+
+/**
+ * Used on the Transmitter to adjust the power of the 915 channel based on the linkstats reported in telemetry packets
+ * 
+ * XXX TODO
+ *   Add rxSnr915 - needs to be added to telemetry
+*/
+void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr915)
+{
+    #ifdef USE_DYNAMIC_POWER
+
+    static uint32_t rssiSamplesNeeded = 10; // static for persistence accross calls
+
+    static bool prevArm = false;
+
+    // when changing from armed to disarmed, reduce the power
+    if (prevArm && !isArmed()) {
+        prevArm = false;
+        radio1->SetOutputPower(DISARM_POWER_915);
+
+        return; // EARLY RETURN
+    }
+
+    prevArm = isArmed();
+
+    // Don't run dynamic power when disarmed. This allows the user to set the power manually while disarmed
+    // (might be useful if the quad is lost)
+
+    if (!prevArm) return;
+
+
+    // use rssi * 100 in the filter for greater resolution
+
+    int32_t rssiF;
+    if (((int32_t)rxRssi915 * 100) < rssiFilter.getCurrent())
+    {
+        // when things are getting worse, just jam the new value into the filter
+        rssiFilter.setInitial(rxRssi915 * 100);
+        rssiF = rssiFilter.getCurrent();
+    } else {
+        // things are getting better, use the filter normally
+        rssiF = rssiFilter.update(rxRssi915 * 100);
+    }
+
+    if (rssiSamplesNeeded) rssiSamplesNeeded--;
+
+    // printf("rssi %d, filtered %ld, limit %d, cPwr %d, maxPwr %d\n", rxRssi915, rssiF, dynamicPowerRSSIIncreaseThreshold915 * 100, radio1->currPWR, maxPower915);
+
+    // Order of tests is important for lq vs max rssi conditions since both could evaluate true and if
+    // so we want the LQ test to take priority. The tests are therefore in priority order, highest to
+    // lowest
+
+    if ((rxLq915 < DYN_POWER_LQ_PANIC_THRESHOLD) && (radio1->currPWR < maxPower915)) {
+        // Panic time, take the power directly to the configured max
+        radio1->SetOutputPower(maxPower915);
+        #ifdef DEV_MODE
+        printf("lq panic, power set to max of %u\n", maxPower915);
+        #endif
+    }
+    else if ((rssiSamplesNeeded == 0) && (rssiF < (dynamicPowerRSSIIncreaseThreshold915 * 100)) && (radio1->currPWR < maxPower915)) // XXX does this also need a sample counter to get valid rssi?
+    {
+        radio1->SetOutputPower(radio1->currPWR + 1);
+        rssiSamplesNeeded = 5;
+        #ifdef DEV_MODE
+        printf("915 rssi %d rssiF %ld power up! %d\n", rxRssi915, rssiF, radio1->currPWR);
+        #endif
+    }
+    else if ((rssiSamplesNeeded == 0) && (rxLq915 < DYN_POWER_LQ_THRESHOLD) && (radio1->currPWR < maxPower915))
+    {
+        // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
+        radio1->SetOutputPower(radio1->currPWR + 1);
+        rssiSamplesNeeded = 5; // prevent this change from happening too quickly
+        #ifdef DEV_MODE
+        printf("915 LQ %d power up to %d\n", rxLq915, radio1->currPWR);
+        #endif
+    }
+    else if ((rssiSamplesNeeded == 0) && (rssiF > dynamicPowerRSSIDecreaseThreshold915 * 100) && (radio1->currPWR > MIN_PRE_PA_POWER_915))
+    {
+        radio1->SetOutputPower(radio1->currPWR - 1);
+        rssiSamplesNeeded = 10; // prevent this change from happening too quickly        
+        #ifdef DEV_MODE
+        printf("915 rssi %d rssiF %ld power down! %d\n", rxRssi915, rssiF, radio1->currPWR);
+        #endif
+    }
+
+    #endif // USE_DYNAMIC_POWER    
 }
 
 /**
@@ -801,7 +930,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 
     packet->nonce = timerNonce;
     packet->armed = crsf.ChannelDataIn[ARM_CHANNEL] > 1024;
-    packet->txPower = 1;
+    packet->txPower = radio1->getPowerDBM();
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
     packet->ch0 = crsfTo10bit(crsf.ChannelDataIn[0]); // input data is 11 bit reduced range, backup channels are 10 bit clean
@@ -2452,6 +2581,10 @@ static void handleEvents915()
             // radio1->ClearIrqStatus(SX1262_IRQ_RX_DONE);
             static const SpiTaskInfo taskInfo = {.id = SpiTaskID::ClearIRQs, .radioID = RadioSelection::first, .irqMask = SX1262_IRQ_RX_DONE};
             xQueueSend(rx_evt_queue, &taskInfo, 1);
+
+            #ifdef USE_DYNAMIC_POWER
+            managePower915(telemData.rssi915, telemData.lq915); // XXX TODO add snr915 to telemetry and pass in
+            #endif
 
             #ifdef ENABLE_DYNAMIC_RATES
             checkDynamicRate();
@@ -4333,16 +4466,21 @@ void handleLua()
     case 0: // get current settings
         break;
     case 1: // 915 power
-        pwr = radio1->currPWR;
         if (crsf.ParameterUpdateData[1] == 0)
         {
             // reduce power
-            radio1->SetOutputPower(pwr - 1);
-        }
-        else
-        {
+            if (maxPower915 > MIN_PRE_PA_POWER_915)
+            {
+                maxPower915 = maxPower915 - 1;
+                radio1->SetOutputPower(maxPower915);
+            }
+        } else {
             // increase power
-            radio1->SetOutputPower(pwr + 1);
+            if (maxPower915 < MAX_PRE_PA_POWER_915)
+            {
+                maxPower915 = maxPower915 + 1;
+                radio1->SetOutputPower(maxPower915);
+            }
         }
         // printf("915pwr %d\n", radio1->currPWR);
         break;
@@ -4364,8 +4502,7 @@ void handleLua()
 
     luaMessage = false;
 
-    // TODO need to implement a getPowerDBM function that adjusts for PA
-    uint8_t luaPayload[] = {(uint8_t)radio1->getPowerDBM(), (uint8_t)radio2->getPowerDBM()};
+    uint8_t luaPayload[] = {(uint8_t)maxPower915, (uint8_t)radio2->getPowerDBM()};
 
     crsf.sendLUAresponse(luaPayload, 2);
 }
@@ -4459,6 +4596,18 @@ void setupRadios()
 
     #else
 
+    // Setup the filter for 915 rssi that is used for dynamic power
+    const float updateRate = 125.0 / 8;   // packetRate/telemRatio XXX use constants
+    float cutOffHz = DYN_POWER_RSSI_FILTER_CUTOFF_HZ;
+
+    // if the filter cutoff is too large a fraction of the update rate the filter becomes unstable
+    if (cutOffHz > (updateRate/8.0f)) {
+        cutOffHz = updateRate/8.0f;
+    }
+
+    rssiFilter.setCutoffHz(cutOffHz, updateRate);
+
+
     radio1 = new SX1262Driver();
     // radio1 = new SX1280Driver();
     #ifdef USE_SECOND_RADIO
@@ -4507,16 +4656,20 @@ void setupRadios()
     #endif // LED2812_PIN
     #endif // USE_SECOND_RADIO
 
-    radio1->SetOutputPower(TX_POWER_915);
-    
+    #if (TRANSMITTER)
+    radio1->SetOutputPower(DISARM_POWER_915);
+    #else
+    radio1->SetOutputPower(DEFAULT_MAX_POWER_915);   
+    #endif
+
     #ifdef USE_SECOND_RADIO
     radio2->SetOutputPower(TX_POWER_2G4);
     #endif
 
     // radio1 settings are fixed, so we can do them once here
 
-    // XXX Testing - override the preamble length for sending telemetry
     uint8_t preambleLen = airRateConfig915.PreambleLen;
+    // For Testing - override the preamble length for sending telemetry
     // if (!TRANSMITTER) preambleLen = 16;
 
     radio1->Config(airRateConfig915.bw, airRateConfig915.sf, airRateConfig915.cr, GetInitialFreq915(), preambleLen, false);

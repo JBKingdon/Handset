@@ -19,7 +19,7 @@
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
-#define IS_RECEIVER
+// #define IS_RECEIVER
 
 #ifndef IS_RECEIVER
 #define IS_TRANSMITTER
@@ -39,10 +39,10 @@
 // #define DB_PCB_V1_0
 
 // new version of the above with tcxo for 1280, lpf for 915 and dio2 as txen on the 1262
-#define DB_PCB_V1_2
+// #define DB_PCB_V1_2
 
 // DB specific TX module with e28-27
-// #define DB_TX_V1
+#define DB_TX_V1
 
 
 // This was for dual sx1280 with a c3 module on a PCB
@@ -80,7 +80,7 @@
 
 // The E22 module uses a tcxo. E220 and my bare 1262 pcbs don't
 // TODO refactor DUAL_BAND_PROTOTYPE and define E22
-#if defined(E22) || defined(DUAL_BAND_PROTOTYPE)
+#if defined(E22) || defined(DUAL_BAND_PROTOTYPE) || defined(DB_TX_V1)
 
     #define USE_SX1262_TCXO
 
@@ -170,7 +170,9 @@
 #if defined(RADIO_E22)
 #define MAX_PRE_PA_POWER_915 22  // sx1262 can be configured to scale the max power down from the commanded value, so this may result in either 20 or 22dBm
 // #define MAX_PRE_PA_POWER_915 10     // while testing
-#define DISARM_POWER_915 (-9)
+
+#define MIN_PRE_PA_POWER_915 (-9)
+#define DISARM_POWER_915 MIN_PRE_PA_POWER_915
 #endif
 
 // Not used by dual band
