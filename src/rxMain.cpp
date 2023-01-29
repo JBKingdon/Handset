@@ -84,17 +84,19 @@
         // #warning "CAUTION low power configured CAUTION"
         // #define DEFAULT_MAX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
 
-        #define DEFAULT_MAX_POWER_915 (13)   // 20mW
+        // #define DEFAULT_MAX_POWER_915 (13)   // 20mW
         // #define DEFAULT_MAX_POWER_915 (17)   // 50mW
+        #define DEFAULT_MAX_POWER_915 (22)       // 100mW (with the reduced PA scaling)
+
     #endif  // DEV_MODE
 
     // 2G4
     #ifdef RADIO_E28_27
-        // #define TX_POWER_2G4 (-17)      // 10mW
-        #define TX_POWER_2G4 (-7)    // 100mW
+        // #define DEFAULT_MAX_POWER_2G4 (-17)      // 10mW
+        #define DEFAULT_MAX_POWER_2G4 (-7)    // 100mW
     #else
-        #define TX_POWER_2G4 (0)
-        // #define TX_POWER_2G4 (13)
+        // #define DEFAULT_MAX_POWER_2G4 (0)
+        #define DEFAULT_MAX_POWER_2G4 (MAX_PRE_PA_POWER)
     #endif // RADIO_E28_27
 
 #else 
@@ -107,7 +109,7 @@
     #define DEFAULT_MAX_POWER_915 (15)   // Added a couple since the 1262 is configured in the lower power mode
     #endif
     // not used, but needs to be defined
-    #define TX_POWER_2G4 (-18)
+    #define DEFAULT_MAX_POWER_2G4 (-18)
 
 #endif // TRANSMITTER
 
@@ -268,7 +270,10 @@ typedef struct
 
 } SpiTaskInfo;
 
+// The upper limit for dynamic power (not the physical limit of the modules)
+// These values can be changed via lua script, so not const
 int32_t maxPower915 = DEFAULT_MAX_POWER_915;
+int32_t maxPower2G4 = DEFAULT_MAX_POWER_2G4;
 
 // rssi thresholds for 915 dynamic power increase and decrease
 const int16_t dynamicPowerRSSIIncreaseThreshold915 = airRateRFPerf915.RXsensitivity + DYN_POWER_INCREASE_MARGIN;
@@ -442,7 +447,8 @@ led_strip_t *strip = nullptr;
 #endif
 
 #ifdef USE_DYNAMIC_POWER
-DoublePT1filterInt rssiFilter;
+DoublePT1filterInt rssiFilter915;
+DoublePT1filterInt rssiFilter2G4;
 #endif
 
 
@@ -474,7 +480,7 @@ bool isArmed()
 }
 
 /**
- * Used on the Transmitter to adjust the power of the 915 channel based on the linkstats reported in telemetry packets
+ * Used on the transmitter to adjust the power of the 915 channel based on the linkstats reported in telemetry packets
  * 
  * XXX TODO
  *   Add rxSnr915 - needs to be added to telemetry
@@ -506,14 +512,14 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
     // use rssi * 100 in the filter for greater resolution
 
     int32_t rssiF;
-    if (((int32_t)rxRssi915 * 100) < rssiFilter.getCurrent())
+    if (((int32_t)rxRssi915 * 100) < rssiFilter915.getCurrent())
     {
         // when things are getting worse, just jam the new value into the filter
-        rssiFilter.setInitial(rxRssi915 * 100);
-        rssiF = rssiFilter.getCurrent();
+        rssiFilter915.setInitial(rxRssi915 * 100);
+        rssiF = rssiFilter915.getCurrent();
     } else {
         // things are getting better, use the filter normally
-        rssiF = rssiFilter.update(rxRssi915 * 100);
+        rssiF = rssiFilter915.update(rxRssi915 * 100);
     }
 
     if (rssiSamplesNeeded) rssiSamplesNeeded--;
@@ -558,6 +564,130 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
     }
 
     #endif // USE_DYNAMIC_POWER    
+}
+
+/**
+ * Used on the transmitter to adjust the power of the 2G4 channel based on the linkstats reported in telemetry packets
+ *
+*/
+void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
+{
+    #ifdef USE_DYNAMIC_POWER
+
+    // After changing power it takes a while for the change to be reflected in the rssi filter.
+    // Setting this to a non-zero value sets a delay in terms of number of telemetry reports before
+    // making another power change (will be ignored for the 'panic' case)
+    static uint32_t rssiSamplesNeeded = 10; // static for persistence accross calls
+
+    static bool prevArm = false;
+
+    // privatize the armed status
+    const bool isArmedP = isArmed();
+
+    // when changing from armed to disarmed, reduce the power
+    // TODO since this is only called when telemetry packets arrive it doesn't work before the link is established
+    // It might be useful if it did (during pre-flight setup, to toggle the arm switch to reset the output power to low),
+    // so maybe move this somewhere else.
+    if (prevArm && !isArmedP) {
+        prevArm = false;
+        radio2->SetOutputPower(DISARM_POWER);
+
+        return; // EARLY RETURN
+    }
+
+    prevArm = isArmedP;
+
+    // Update the rssi filter even if we're not going to do a power update, so that we're ready when needed
+
+    // use rssi * 100 in the filter for greater resolution
+    int32_t rssiF;
+    if (((int32_t)rxRssi2G4 * 100) < rssiFilter2G4.getCurrent())
+    {
+        // when things are getting worse, just jam the new value into the filter
+        rssiFilter2G4.setInitial(rxRssi2G4 * 100);
+        rssiF = rssiFilter2G4.getCurrent();
+    } else {
+        // things are getting better, use the filter normally
+        rssiF = rssiFilter2G4.update(rxRssi2G4 * 100);
+    }
+    if (rssiSamplesNeeded) rssiSamplesNeeded--;
+
+    // Don't run dynamic power when disarmed. This allows the user to set the power manually while disarmed
+    // (might be useful if the quad is lost)
+    if (!prevArm) return;
+
+
+    const int16_t dynamicPowerRSSIIncreaseThreshold2G4 = ExpressLRS_currAirRate_RFperfParams->RXsensitivity + DYN_POWER_INCREASE_MARGIN;
+    const int16_t dynamicPowerRSSIDecreaseThreshold2G4 = dynamicPowerRSSIIncreaseThreshold2G4 + DYN_POWER_DECREASE_MARGIN;
+
+
+    // printf("2G4 rssi %d, filtered %ld, limit %d, cPwr %d, maxPwr %d\n", rxRssi2G4, rssiF, dynamicPowerRSSIIncreaseThreshold2G4 * 100, radio2->currPWR, maxPower2G4);
+
+    // Flag to prevent considering reducing power after we just increased it
+    bool powerWasIncreased = false;
+
+    if (radio2->currPWR < maxPower2G4)
+    {
+        // Test conditions that can increase power output
+        // Using the same LQ thresholds for 915 and 2G4
+        if (rxLq2G4 < DYN_POWER_LQ_PANIC_THRESHOLD)
+        {
+            // Panic time, take the power directly to the configured max
+            radio2->SetOutputPower(maxPower2G4);
+            powerWasIncreased = true;
+            #ifdef DEV_MODE
+            printf("lq panic, 2G4 power set to max of %u\n", maxPower2G4
+            );
+            #endif
+        }
+        // Remaining tests all depend on sufficient telemetry packets having been received to update the data
+        else if (rssiSamplesNeeded == 0)
+        {
+            if (rssiF < (dynamicPowerRSSIIncreaseThreshold2G4 * 100))
+            {
+                radio2->SetOutputPower(radio2->currPWR + 1);
+                powerWasIncreased = true;
+                rssiSamplesNeeded = 5;
+                #ifdef DEV_MODE
+                printf("2G4 rssi %d rssiF %ld power up! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+                #endif
+            }
+            else if (rxLq2G4 < DYN_POWER_LQ_THRESHOLD)
+            {
+                // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
+                radio2->SetOutputPower(radio2->currPWR + 1);
+                powerWasIncreased = true;
+                rssiSamplesNeeded = 2;
+                #ifdef DEV_MODE
+                printf("2G4 LQ %d power up to %d\n", rxLq2G4, radio2->currPWR);
+                #endif
+            }
+            // TODO add SNR increase power
+        }
+    }
+
+    // only consider decreasing power if
+    //   - we didn't just increase it above
+    //   - LQ is better than threshold
+    //   - we aren't already at min power
+    //   - we have sufficient telemetry samples
+    if (!powerWasIncreased && (rxLq2G4 > DYN_POWER_LQ_THRESHOLD) && (radio2->currPWR > MIN_PRE_PA_POWER_2G4) && (rssiSamplesNeeded == 0))
+    {
+        // Test conditions that can decrease power output
+        if (rssiF > dynamicPowerRSSIDecreaseThreshold2G4 * 100)
+        {
+            radio2->SetOutputPower(radio2->currPWR - 1);
+            rssiSamplesNeeded = 10;
+            #ifdef DEV_MODE
+            printf("2G4 rssi %d rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+            #endif
+        }
+        // TODO add SNR decrease power
+    }
+
+
+
+    #endif // USE_DYNAMIC_POWER
 }
 
 /**
@@ -930,7 +1060,9 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 
     packet->nonce = timerNonce;
     packet->armed = crsf.ChannelDataIn[ARM_CHANNEL] > 1024;
-    packet->txPower = radio1->getPowerDBM();
+    // TODO add separate txPower for 915 and 2G4
+    // packet->txPower = radio1->getPowerDBM();    // Sends 915 power
+    packet->txPower = radio2->getPowerDBM();    // Sends 2G4 power
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
     packet->ch0 = crsfTo10bit(crsf.ChannelDataIn[0]); // input data is 11 bit reduced range, backup channels are 10 bit clean
@@ -2574,6 +2706,7 @@ static void handleEvents915()
                 // crsf.sendLinkStatisticsToTX();
                 crsf.updateLinkStatistics();
             } else {
+                // CRC not valid
                 // XXX reduce the SNR here
             }
 
@@ -2584,6 +2717,7 @@ static void handleEvents915()
 
             #ifdef USE_DYNAMIC_POWER
             managePower915(telemData.rssi915, telemData.lq915); // XXX TODO add snr915 to telemetry and pass in
+            managePower2G4(telemData.rssi2G4, telemData.lq2G4, telemData.snr2G4);
             #endif
 
             #ifdef ENABLE_DYNAMIC_RATES
@@ -4489,12 +4623,20 @@ void handleLua()
         if (crsf.ParameterUpdateData[1] == 0)
         {
             // reduce power
-            radio2->SetOutputPower(pwr - 1);
+            if (maxPower2G4 > MIN_PRE_PA_POWER_2G4)
+            {
+                maxPower2G4--;
+                radio2->SetOutputPower(maxPower2G4);
+            }
         }
         else
         {
             // increase power
-            radio2->SetOutputPower(pwr + 1);
+            if (maxPower2G4 < MAX_PRE_PA_POWER)
+            {
+                maxPower2G4++;
+                radio2->SetOutputPower(maxPower2G4);
+            }
         }
         // printf("2G4pwr %d\n", radio2->currPWR);
         break;
@@ -4502,7 +4644,7 @@ void handleLua()
 
     luaMessage = false;
 
-    uint8_t luaPayload[] = {(uint8_t)maxPower915, (uint8_t)radio2->getPowerDBM()};
+    uint8_t luaPayload[] = {(uint8_t)maxPower915, (uint8_t)maxPower2G4};
 
     crsf.sendLUAresponse(luaPayload, 2);
 }
@@ -4605,7 +4747,8 @@ void setupRadios()
         cutOffHz = updateRate/8.0f;
     }
 
-    rssiFilter.setCutoffHz(cutOffHz, updateRate);
+    rssiFilter915.setCutoffHz(cutOffHz, updateRate);
+    rssiFilter2G4.setCutoffHz(cutOffHz, updateRate);
 
 
     radio1 = new SX1262Driver();
@@ -4663,7 +4806,7 @@ void setupRadios()
     #endif
 
     #ifdef USE_SECOND_RADIO
-    radio2->SetOutputPower(TX_POWER_2G4);
+    radio2->SetOutputPower(DISARM_POWER);
     #endif
 
     // radio1 settings are fixed, so we can do them once here
@@ -4942,7 +5085,7 @@ void app_main()
                         timeout1Counter = 0;
                     }
 
-                    printf("2G4: %d, %u, SNR: %d, fei %d\n", rssi2G4, lq2G4, snr, feiCorrected);
+                    printf("2G4: %d, %u, SNR: %d, fei %d, 2G4 power %d\n", rssi2G4, lq2G4, snr, feiCorrected, radio2->currPWR);
 
                 } else {
                     std::cout << "No RX connected\n";

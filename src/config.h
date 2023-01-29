@@ -26,11 +26,11 @@
 #endif
 //-------------------------------------------------
 
-// #define DEV_MODE
+#define DEV_MODE
 
 // Hardware revision:
 
-// #define DUAL_BAND_BREADBOARD
+#define DUAL_BAND_BREADBOARD
 
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
@@ -42,7 +42,7 @@
 // #define DB_PCB_V1_2
 
 // DB specific TX module with e28-27
-#define DB_TX_V1
+// #define DB_TX_V1
 
 
 // This was for dual sx1280 with a c3 module on a PCB
@@ -143,6 +143,9 @@
 
 #if defined(RADIO_E28_12) || defined(RADIO_E28_20) || defined(RADIO_E28_27)
 
+// XXX TODO min/max power defines should be part of the radio classes
+#define MIN_PRE_PA_POWER_2G4 (-18)
+
 #ifdef ELRS_OG_COMPATIBILITY
     #define Regulatory_Domain_ISM_2400
 #else
@@ -153,6 +156,7 @@
 
 
 #ifdef RADIO_E28_12
+// XXX TODO rename to be explicit about 2G4
 // E28-12 and both GNICERF modules can use the full output range
 #define MAX_PRE_PA_POWER 13
 #define DISARM_POWER (0)
