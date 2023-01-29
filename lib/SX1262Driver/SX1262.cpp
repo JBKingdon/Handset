@@ -649,6 +649,7 @@ void ICACHE_RAM_ATTR SX1262Driver::SetOutputPower(int8_t power)
     buf[1] = power;
     // printf("power buf[1] %d\n\r", buf[1]);
     buf[2] = (uint8_t)SX1262_RADIO_RAMP_10_US;
+    // buf[2] = (uint8_t)SX1262_RADIO_RAMP_20_US;
     hal.fastWriteCommand(buf, sizeof(buf));
 
     currPWR = power;
