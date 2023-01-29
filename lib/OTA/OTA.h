@@ -35,6 +35,7 @@ typedef struct DB915Packet_s {
     unsigned int crc : 16;       // 16 bits
     unsigned int nonce : 16;     // 16 bits
 
+    // backup version of the primary channels at reduced resolution
     unsigned int ch0 : 10;
     unsigned int ch1 : 10;
     unsigned int ch2 : 10;
@@ -57,7 +58,7 @@ typedef struct DB915Packet_s {
 
     unsigned int txPower : 8;    // 8 bits
 
-    unsigned int rateIndex : 3; // 2 bits
+    unsigned int rateIndex : 3; // 3 bits
     unsigned int armed : 1;     // 1 bit
 
 } PACKED DB915Packet_t;          // total 15 bytes
