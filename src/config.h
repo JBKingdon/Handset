@@ -2,6 +2,7 @@
 
 #include "user_config.h"
 
+
 // which board are we using
 
 // NB moved to platformio.ini:
@@ -14,8 +15,9 @@
 // #define LORA_TEST
 
 #ifdef ESPC3
+#include "esp_attr.h" // for IRAM_ATTR
 #define ICACHE_RAM_ATTR IRAM_ATTR
-#endif
+#endif // ESPC3
 
 //-------------------------------------------------
 // Compile for TX or RX (Don't forget to select the right Hardware type as well!)
@@ -26,7 +28,16 @@
 #endif
 //-------------------------------------------------
 
+// Use CH8 to set packet rate
+// #define RATE_ON_CHANNEL
+
+// Reduces output power (but may be configured out for tx), enables debug - what else?
+// enables packet rate change by keyboard?
+// does it suppress packet rate change by channel?
 #define DEV_MODE
+
+// Send tx power for both 915 and 2G4. If not set, only send 915 power
+// #define SEND_BOTH_TX_POWERS
 
 // Hardware revision:
 
