@@ -221,7 +221,7 @@ void HwTimer::resume()
  */
 void HwTimer::setInterval(uint64_t newTimerInterval)
 {
-    if (newTimerInterval > 5000) printf("XXX setInterval %lu\n", newTimerInterval);
+    if (newTimerInterval > 5000) printf("XXX setInterval %llu\n", newTimerInterval);
 
     interval = newTimerInterval * HWTIMER_TICKS_PER_US;
     timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, interval >> 1);

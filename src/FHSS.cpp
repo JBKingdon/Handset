@@ -17,50 +17,54 @@ int32_t FreqCorrection = 0;
 
 // ---------- 915 functions ----------
 
-void ICACHE_RAM_ATTR FHSSsetCurrIndex915(uint8_t value)
+void FHSSsetCurrIndex915(uint8_t value)
 { // set the current index of the FHSS pointer
     FHSSptr915 = value;
 }
 
-uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex915()
+uint8_t FHSSgetCurrIndex915()
 { // get the current index of the FHSS pointer
     return FHSSptr915;
 }
 
-uint32_t ICACHE_RAM_ATTR GetInitialFreq915()
+uint32_t GetInitialFreq915()
 {
     return FHSSfreqs915[0] - FreqCorrection;
 }
 
-uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq915()
+uint32_t FHSSgetCurrFreq915()
 {
     return FHSSfreqs915[FHSSsequence915[FHSSptr915]] - FreqCorrection;
 }
 
-uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq915()
+uint32_t FHSSgetNextFreq915()
 {
-    FHSSptr915++;  // as long as FHSSptr is uint8 it will wrap without extra code
+    // as long as FHSSptr is uint8 it will wrap without extra code
+    // ++ on volatile deprecated
+    //FHSSptr915++;  
+    FHSSptr915 = FHSSptr915 + 1;
+
     return FHSSgetCurrFreq915();
 }
 
 // ---------- 2G4 functions ----------
 
-void ICACHE_RAM_ATTR FHSSsetCurrIndex2G4(uint8_t value)
+void FHSSsetCurrIndex2G4(uint8_t value)
 { // set the current index of the FHSS pointer
     FHSSptr2G4 = value;
 }
 
-uint8_t ICACHE_RAM_ATTR FHSSgetCurrIndex2G4()
+uint8_t FHSSgetCurrIndex2G4()
 { // get the current index of the FHSS pointer
     return FHSSptr2G4;
 }
 
-uint32_t ICACHE_RAM_ATTR GetInitialFreq2G4()
+uint32_t GetInitialFreq2G4()
 {
     return FHSSfreqs2G4[0];
 }
 
-uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4()
+uint32_t FHSSgetCurrFreq2G4()
 {
     return FHSSfreqs2G4[FHSSsequence2G4[FHSSptr2G4]];
 }
@@ -71,7 +75,7 @@ uint32_t ICACHE_RAM_ATTR FHSSgetCurrFreq2G4()
  *  wrapping around to the beginning if necessary
  * 
  */
-uint32_t ICACHE_RAM_ATTR FHSSgetCurrDupSendFreq2G4()
+uint32_t FHSSgetCurrDupSendFreq2G4()
 {
     // NR_FHSS_ENTRIES_2G4 is the number of channels in the frequency table (needs renaming)
     uint32_t dupIndex = (FHSSsequence2G4[FHSSptr2G4] + (NR_FHSS_ENTRIES_2G4 / 2)) % NR_FHSS_ENTRIES_2G4;
@@ -81,9 +85,13 @@ uint32_t ICACHE_RAM_ATTR FHSSgetCurrDupSendFreq2G4()
 /**
  * WARNING SIDE EFFECT - This increments the fhss pointer before returning the new freq
 */
-uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4()
+uint32_t FHSSgetNextFreq2G4()
 {
-    FHSSptr2G4++;  // as long as FHSSptr is uint8 and there are 256 entries in the hop table it will wrap without extra code
+    // as long as FHSSptr is uint8 and there are 256 entries in the hop table it will wrap without extra code
+    // ++ on volatile deprecated
+    // FHSSptr2G4++;  
+    FHSSptr2G4 = FHSSptr2G4 + 1;
+    
     return FHSSgetCurrFreq2G4();
 }
 
@@ -93,7 +101,7 @@ uint32_t ICACHE_RAM_ATTR FHSSgetNextFreq2G4()
 // Set all of the flags in the array to true, except for the first one
 // which corresponds to the sync channel and is never available for normal
 // allocation.
-void ICACHE_RAM_ATTR resetIsAvailable(uint8_t *array, const uint8_t nEntries)
+void resetIsAvailable(uint8_t *array, const uint8_t nEntries)
 {
     // channel 0 is the sync channel and is never considered available
     array[0] = 0;
@@ -120,7 +128,7 @@ Approach:
     if the index is not a repeat, assing it to the FHSSsequence array, clear the availability flag and decrement the available count
     if there are no available channels left, reset the flags array and the count
 */
-void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence(uint8_t FHSSsequence[], const uint8_t nEntries, const uint8_t syncInterval)
+void FHSSrandomiseFHSSsequence(uint8_t FHSSsequence[], const uint8_t nEntries, const uint8_t syncInterval)
 {
     Serial.print("Number of FHSS frequencies =");
     Serial.println(nEntries);
@@ -211,7 +219,7 @@ void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequence(uint8_t FHSSsequence[], const uin
     Serial.println();
 }
 
-void ICACHE_RAM_ATTR FHSSrandomiseFHSSsequences()
+void FHSSrandomiseFHSSsequences()
 {
     // uint8_t FHSSsequence[], const uint8_t nEntries, const uint8_t syncInterval)
 

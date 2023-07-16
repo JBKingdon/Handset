@@ -326,7 +326,8 @@ void CRSF::flush_port_input(void)
  * For hybrid switches, switch 0 is sent with every packet and the rest of the switches
  * are in the round-robin.
  */
-uint8_t ICACHE_RAM_ATTR CRSF::getNextSwitchIndex()
+// uint8_t ICACHE_RAM_ATTR CRSF::getNextSwitchIndex()
+uint8_t CRSF::getNextSwitchIndex()
 {
     int firstSwitch = 0; // sequential switches includes switch 0
 
@@ -365,7 +366,8 @@ uint8_t ICACHE_RAM_ATTR CRSF::getNextSwitchIndex()
 /**
  * Record the value of a switch that was sent to the rx
  */
-void ICACHE_RAM_ATTR CRSF::setSentSwitch(uint8_t index, uint8_t value)
+// void ICACHE_RAM_ATTR CRSF::setSentSwitch(uint8_t index, uint8_t value)
+void CRSF::setSentSwitch(uint8_t index, uint8_t value)
 {
     sentSwitches[index] = value;
 }
@@ -629,6 +631,8 @@ bool ICACHE_RAM_ATTR CRSF::syncPacketRequired()
 
 /**
  * Builds the sync packet and writes to the serial port
+ * 
+ * TODO Test using a fixed 1000Hz rate from the handset and disable sync. Packet can be fixed/invariant
  * 
 */
 void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX()
@@ -969,7 +973,7 @@ void ICACHE_RAM_ATTR CRSF::handleUARTin()
                 SerialInPacketLen = 0;
                 CRSFframeActive = true;
                 SerialInBuffer[SerialInPacketPtr] = inChar;
-                SerialInPacketPtr++;
+                SerialInPacketPtr++;    // deprecated volatile xxx
             } else {
                 // if (!CRSFisConnected) std::cout << 'I';
             }
@@ -1274,7 +1278,7 @@ bool CRSF::UARTwdt()
         #endif // TX_AUTOBAUD_ENABLED
 
         if (uartDetected) {
-            printf("UART STATS Bad:Good = %u:%u, offset %d\n", BadPktsCount, GoodPktsCount, CRSF::OpenTXsyncOffset);
+            printf("UART STATS Bad:Good = %lu:%lu, offset %ld\n", BadPktsCount, GoodPktsCount, CRSF::OpenTXsyncOffset);
         }
 
         UARTwdtLastChecked = now;

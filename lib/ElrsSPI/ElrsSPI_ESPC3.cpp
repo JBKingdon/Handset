@@ -34,7 +34,7 @@ ElrsSPI::ElrsSPI(uint32_t pinCSS2)
 
 void ElrsSPI::debug()
 {
-    printf("pinMosi %u, pinMiso %u, pinSCK %u, pinCSS %u\n", pinMosi, pinMiso, pinSCK, pinCSS);
+    printf("pinMosi %lu, pinMiso %lu, pinSCK %lu, pinCSS %lu\n", pinMosi, pinMiso, pinSCK, pinCSS);
 }
 
 
@@ -236,7 +236,7 @@ int ElrsSPI::init()
         spiType = "secondary";
     }
 
-    printf("SPI %s device initialised on css %u\n", spiType, pinCSS);
+    printf("SPI %s device initialised on css %lu\n", spiType, pinCSS);
 
     return 0; // XXX decide on ret values
 }

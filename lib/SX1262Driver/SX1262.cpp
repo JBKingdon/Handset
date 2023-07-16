@@ -996,7 +996,8 @@ void SX1262Driver::RXnb()
  * returns:
  * rfu Status PayloadLengthRx RxStartBufferPointer
  */
-uint8_t ICACHE_RAM_ATTR SX1262Driver::GetRxBufferAddr()
+// uint8_t ICACHE_RAM_ATTR SX1262Driver::GetRxBufferAddr()
+uint8_t SX1262Driver::GetRxBufferAddr()
 {
     int32_t tmp = 0;    // single instruction zero init
     uint8_t *status = (uint8_t*)&tmp;
@@ -1020,7 +1021,8 @@ uint8_t ICACHE_RAM_ATTR SX1262Driver::GetRxBufferAddr()
  bits 6:4 mode
  bits 3:1 command status, 2=data available, 3=timeout, 4=command error, 5=execute failure, 6=tx done
  */
-void ICACHE_RAM_ATTR SX1262Driver::GetStatus()
+// void ICACHE_RAM_ATTR SX1262Driver::GetStatus()
+void SX1262Driver::GetStatus()
 {
     uint8_t buf = 0;
 
@@ -1090,7 +1092,8 @@ void ICACHE_RAM_ATTR SX1262Driver::GetStatus()
  * Average over last packet received of RSSI. Actual signal power is –RssiPkt/2 (dBm)
  * Estimation of SNR on last packet received in two’s compliment format multiplied by 4. Actual SNR in dB =SnrPkt/4
  */
-int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketRSSI()
+// int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketRSSI()
+int8_t SX1262Driver::GetLastPacketRSSI()
 {
     uint8_t buf[5];
 
@@ -1111,7 +1114,8 @@ int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketRSSI()
     return LastPacketRSSI;
 }
 
-int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketSNR()
+// int8_t ICACHE_RAM_ATTR SX1262Driver::GetLastPacketSNR()
+int8_t SX1262Driver::GetLastPacketSNR()
 {
     GetLastPacketRSSI();
     return LastPacketSNR;

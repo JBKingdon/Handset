@@ -44,7 +44,7 @@ public:
     {
         int32_t result = (gotExtEvent915 && gotIntEvent915) ? (int32_t)(extEventTime915 - intEventTime915) : 0;
         if (result > 1000000 || result < -1000000) {
-            printf("915 ext %u int %u\n", extEventTime915, intEventTime915);
+            printf("915 ext %lu int %lu\n", extEventTime915, intEventTime915);
         }
         return result;
     }
@@ -78,7 +78,7 @@ public:
     {
         int32_t result = (gotExtEvent2G4 && gotIntEvent2G4) ? (int32_t)(extEventTime2G4 - intEventTime2G4) : 0;
         if (result > 1000000 || result < -1000000) {
-            printf("2G4 ext %u int %u\n", extEventTime2G4, intEventTime2G4);
+            printf("2G4 ext %lu int %lu\n", extEventTime2G4, intEventTime2G4);
         }
         // if (!gotExtEvent2G4) std::cout << "no ext evt ";
         // if (!gotIntEvent2G4) std::cout << "no int evt ";

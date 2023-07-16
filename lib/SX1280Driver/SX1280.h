@@ -152,6 +152,8 @@ public:
     // uint8_t SetCodingRate(SX1280_RadioLoRaCodingRates_t cr);
 
     bool ICACHE_RAM_ATTR GetFrequencyErrorbool();
+    // bool GetFrequencyErrorbool();
+
     void ICACHE_RAM_ATTR SetPPMoffsetReg(int32_t offset);
     uint8_t ICACHE_RAM_ATTR GetRxBufferAddr();
 

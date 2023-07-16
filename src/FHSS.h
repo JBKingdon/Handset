@@ -10,11 +10,6 @@
 #error "Need to set Reg domain"
 #endif
 
-#ifdef ESPC3
-#define ICACHE_RAM_ATTR IRAM_ATTR
-#endif
-
-
 // #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 // #include "SX1262Driver.h"
 // #endif
@@ -160,7 +155,7 @@ const uint32_t FHSSfreqs915[] = {
 #endif // sub gHz bands
 
 #if defined(Regulatory_Domain_ISM_2400_NA)
-// a more conservative frequency table with wider spacing.
+// a more conservative frequency table only using the lower half of the band and with 2mhz guard at each end.
 const uint32_t FHSSfreqs2G4[] = {
     2425000000,
     2402000000,

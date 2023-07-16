@@ -1,7 +1,9 @@
 #define RUN_RADIO_BUFFER_TEST
 
 // get access to gnu specific pow10 function
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <math.h>
 
@@ -285,7 +287,8 @@ int32_t SX1280Driver::Begin(const bool usePreamble)
 }
 
 
-void ICACHE_RAM_ATTR SX1280Driver::ConfigFLRC(flrc_modem_settings_t modemSettings, uint32_t freq)
+// void ICACHE_RAM_ATTR SX1280Driver::ConfigFLRC(flrc_modem_settings_t modemSettings, uint32_t freq)
+void SX1280Driver::ConfigFLRC(flrc_modem_settings_t modemSettings, uint32_t freq)
 {
     this->setupFLRC(modemSettings);
     SetFrequency(freq);
@@ -807,14 +810,16 @@ void SX1280Driver::RXnb()
     SetMode(SX1280_MODE_RX);
 }
 
-uint8_t ICACHE_RAM_ATTR SX1280Driver::GetRxBufferAddr()
+// uint8_t ICACHE_RAM_ATTR SX1280Driver::GetRxBufferAddr()
+uint8_t SX1280Driver::GetRxBufferAddr()
 {
     uint8_t status[2];
     hal->ReadCommand(SX1280_RADIO_GET_RXBUFFERSTATUS, status, 2);
     return status[1];
 }
 
-uint8_t ICACHE_RAM_ATTR SX1280Driver::getStatus()
+// uint8_t ICACHE_RAM_ATTR SX1280Driver::getStatus()
+uint8_t SX1280Driver::getStatus()
 {
     uint8_t status = 0;
 
@@ -823,7 +828,8 @@ uint8_t ICACHE_RAM_ATTR SX1280Driver::getStatus()
     return status;
 }
 
-void ICACHE_RAM_ATTR SX1280Driver::printStatus(uint8_t status)
+// void ICACHE_RAM_ATTR SX1280Driver::printStatus(uint8_t status)
+void SX1280Driver::printStatus(uint8_t status)
 {
     uint8_t stat1;
     uint8_t stat2;
@@ -836,7 +842,8 @@ void ICACHE_RAM_ATTR SX1280Driver::printStatus(uint8_t status)
     printf("Status: %u, %u (%X)\n", stat1, stat2, status);
 }
 
-bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
+// bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
+bool SX1280Driver::GetFrequencyErrorbool()
 {
     printf("GetFrequencyErrorbool IMPL NEEDED\n");
     //uint8_t val = hal->ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
@@ -859,9 +866,8 @@ bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
     return 0;
 }
 
-void ICACHE_RAM_ATTR SX1280Driver::SetPPMoffsetReg(int32_t offset) { return; };
-
-
+// void ICACHE_RAM_ATTR SX1280Driver::SetPPMoffsetReg(int32_t offset) { return; };
+void SX1280Driver::SetPPMoffsetReg(int32_t offset) { return; };
 
 
 /** Get the packet status data for FLRC mode
@@ -888,7 +894,8 @@ errors:
     bit 0   packetCtrlBusy  Indicates that the packet controller is busy. Applicable both in Rx/Tx
 
  */
-FlrcPacketStatus_s * ICACHE_RAM_ATTR SX1280Driver::GetLastPacketStatusFLRC()
+// FlrcPacketStatus_s * ICACHE_RAM_ATTR SX1280Driver::GetLastPacketStatusFLRC()
+FlrcPacketStatus_s * SX1280Driver::GetLastPacketStatusFLRC()
 {
     uint8_t buffer[8] = {0,};
 
@@ -908,7 +915,8 @@ FlrcPacketStatus_s * ICACHE_RAM_ATTR SX1280Driver::GetLastPacketStatusFLRC()
 // TODO get rssi/snr can be made more efficient by using a single call to get
 // both values, which is hacked in here for now but needs a better interface.
 // Not for use with FLRC, see GetLastPacketStatusFLRC() instead.
-int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
+// int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
+int8_t SX1280Driver::GetLastPacketRSSI()
 {
     // uint8_t status[2];
     uint32_t tmpB = 0; // cheap clear to 0
@@ -930,7 +938,8 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
     return LastPacketRSSI;
 }
 
-int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
+// int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
+int8_t SX1280Driver::GetLastPacketSNR()
 {
     uint8_t status[2];
 
@@ -943,7 +952,8 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
     return LastPacketSNR;
 }
 
-uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
+// uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
+uint16_t SX1280Driver::GetIrqStatus()
 {
     int32_t buf = 0;
     uint8_t *status = (uint8_t*) &buf;
