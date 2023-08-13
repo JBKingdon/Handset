@@ -22,7 +22,8 @@ private:
 protected:
 
 public:
-	static xQueueHandle s_timer_queue;
+	// static xQueueHandle s_timer_queue;
+	static QueueHandle_t s_timer_queue;
 
 	static void init();
 	static void stop();
