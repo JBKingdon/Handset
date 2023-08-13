@@ -3,6 +3,10 @@
  * 
  * TODO:
  * 
+ *  Fix IRAM attr
+ * 
+ *  Implement missed telem packet trigger for dynamic power
+ * 
  *  Is telem actually using the short packet length OTA?
  * 
  *   Interference between bands
@@ -187,6 +191,7 @@
 #include "LQCALC.h"
 #include "OTA.h"
 
+// TODO XXX replace RMT driver
 #include "driver/rmt.h"
 #include "led_strip.h"
 
@@ -331,10 +336,14 @@ static uint32_t r2LastIRQms = 0;
 static uint32_t lastTelemPacketTimeMs = 0;
 static bool telemPacketExpected = false;
 
-static xQueueHandle rx_evt_queue = NULL;
-static xQueueHandle rx2G4_evt_queue = NULL;
 // static xQueueHandle tx_evt_queue = NULL;
-static xQueueHandle tx2_evt_queue = NULL;
+
+// static xQueueHandle rx_evt_queue = NULL;
+// static xQueueHandle rx2G4_evt_queue = NULL;
+// static xQueueHandle tx2_evt_queue = NULL;
+static QueueHandle_t rx_evt_queue = NULL;
+static QueueHandle_t rx2G4_evt_queue = NULL;
+static QueueHandle_t tx2_evt_queue = NULL;
 
 static volatile uint32_t nonceRX915 = 0;    // XXX check if these need to be volatile - it seems unlikely
 static volatile uint32_t nonceRX2G4 = 0;
@@ -534,7 +543,7 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
         // Panic time, take the power directly to the configured max
         radio1->SetOutputPower(maxPower915);
         #ifdef DEV_MODE
-        printf("lq panic, power set to max of %u\n", maxPower915);
+        printf("lq panic, power set to max of %lu\n", maxPower915);
         #endif
     }
     else if ((rssiSamplesNeeded == 0) && (rssiF < (dynamicPowerRSSIIncreaseThreshold915 * 100)) && (radio1->currPWR < maxPower915)) // XXX does this also need a sample counter to get valid rssi?
@@ -542,7 +551,7 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
         radio1->SetOutputPower(radio1->currPWR + 1);
         rssiSamplesNeeded = 5;
         #ifdef DEV_MODE
-        printf("915 rssi %d rssiF %ld power up! %d\n", rxRssi915, rssiF, radio1->currPWR);
+        printf("915 rssi %ld rssiF %ld power up! %d\n", rxRssi915, rssiF, radio1->currPWR);
         #endif
     }
     else if ((rssiSamplesNeeded == 0) && (rxLq915 < DYN_POWER_LQ_THRESHOLD) && (radio1->currPWR < maxPower915))
@@ -551,7 +560,7 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
         radio1->SetOutputPower(radio1->currPWR + 1);
         rssiSamplesNeeded = 5; // prevent this change from happening too quickly
         #ifdef DEV_MODE
-        printf("915 LQ %d power up to %d\n", rxLq915, radio1->currPWR);
+        printf("915 LQ %ld power up to %d\n", rxLq915, radio1->currPWR);
         #endif
     }
     else if ((rssiSamplesNeeded == 0) && (rssiF > dynamicPowerRSSIDecreaseThreshold915 * 100) && (radio1->currPWR > MIN_PRE_PA_POWER_915))
@@ -559,7 +568,7 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
         radio1->SetOutputPower(radio1->currPWR - 1);
         rssiSamplesNeeded = 10; // prevent this change from happening too quickly        
         #ifdef DEV_MODE
-        printf("915 rssi %d rssiF %ld power down! %d\n", rxRssi915, rssiF, radio1->currPWR);
+        printf("915 rssi %ld rssiF %ld power down! %d\n", rxRssi915, rssiF, radio1->currPWR);
         #endif
     }
 
@@ -636,7 +645,7 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
             radio2->SetOutputPower(maxPower2G4);
             powerWasIncreased = true;
             #ifdef DEV_MODE
-            printf("lq panic, 2G4 power set to max of %u\n", maxPower2G4
+            printf("lq panic, 2G4 power set to max of %lu\n", maxPower2G4
             );
             #endif
         }
@@ -649,7 +658,7 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
                 powerWasIncreased = true;
                 rssiSamplesNeeded = 5;
                 #ifdef DEV_MODE
-                printf("2G4 rssi %d rssiF %ld power up! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+                printf("2G4 rssi %ld rssiF %ld power up! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
                 #endif
             }
             else if (rxLq2G4 < DYN_POWER_LQ_THRESHOLD)
@@ -659,7 +668,7 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
                 powerWasIncreased = true;
                 rssiSamplesNeeded = 2;
                 #ifdef DEV_MODE
-                printf("2G4 LQ %d power up to %d\n", rxLq2G4, radio2->currPWR);
+                printf("2G4 LQ %ld power up to %d\n", rxLq2G4, radio2->currPWR);
                 #endif
             }
             // TODO add SNR increase power
@@ -679,7 +688,7 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
             radio2->SetOutputPower(radio2->currPWR - 1);
             rssiSamplesNeeded = 10;
             #ifdef DEV_MODE
-            printf("2G4 rssi %d rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+            printf("2G4 rssi %ld rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
             #endif
         }
         // TODO add SNR decrease power
@@ -765,7 +774,6 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.elrsLinkStatsDB.lq0 = lqRadio1.getLQ();
     crsf.elrsLinkStatsDB.lq1 = lqRadio2.getLQ();
     crsf.elrsLinkStatsDB.rf_Mode = (RATE_MAX-1) - ExpressLRS_currAirRate_Modparams->index;
-    // crsf.elrsLinkStatsDB.txPower = 
 
     #else // standard crsf link stats packet
 
@@ -1037,7 +1045,7 @@ uint16_t crsfTo10bit(const unsigned int x)
 }
 
 /**
- * Test out the new DB specific packet format
+ * Send DB packet format on 915 channel
  */
 void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 {
@@ -1060,9 +1068,11 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
 
     packet->nonce = timerNonce;
     packet->armed = crsf.ChannelDataIn[ARM_CHANNEL] > 1024;
-    // TODO add separate txPower for 915 and 2G4
-    // packet->txPower = radio1->getPowerDBM();    // Sends 915 power
-    packet->txPower = radio2->getPowerDBM();    // Sends 2G4 power
+
+    packet->txPower915 = radio1->getPowerDBM();    // Sends 915 power
+    #ifdef SEND_BOTH_TX_POWERS
+    packet->txPower2G4 = radio2->getPowerDBM();    // Sends 2G4 power
+    #endif
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
     packet->ch0 = crsfTo10bit(crsf.ChannelDataIn[0]); // input data is 11 bit reduced range, backup channels are 10 bit clean
@@ -1090,8 +1100,10 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
         packet->swD = CRSF_to_N(crsf.ChannelDataIn[15],3);
     }
 
-    #ifndef DEV_MODE
-    // Check Channel 7 as a way of changing packet rates
+    // Set packet rate in flight using a channel
+    // for dev mode we set packet rate from the keyboard with +/- and this would interfere
+    #if defined(RATE_ON_CHANNEL) && !defined(DEV_MODE)
+    // Check Channel 8 (index 7) as a way of changing packet rates
     // buttons 1-6: 173, 500, 828, 1155, 1483, 1810
     // XXX moved to slider, didn't change the code, seems to be working, but maybe should double check the conversion
     uint8_t ch8Index = (crsf.ChannelDataIn[7] - 173) / 327; // 0 through 5 from the 6 way switch
@@ -1103,7 +1115,7 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
         pendingAirRateIndex = ch8Index;
         // printf("raw %u\n", crsf.ChannelDataIn[7]);
     }
-    #endif // not DEV_MODE
+    #endif // not RATE_ON_CHANNEL
 
     // printf("c[0]=%u\n", crsf.ChannelDataIn[0] >> 1);
 
@@ -1756,8 +1768,11 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
         // If we are connected then store the RC command data and check for rate changes and nonce slips
 
         #ifdef USE_DB_PACKETS
-        crsf.elrsLinkStatsDB.txPower = packet->txPower;
-        #else
+        crsf.elrsLinkStatsDB.txPower0 = packet->txPower915;
+        #ifdef SEND_BOTH_TX_POWERS
+        crsf.elrsLinkStatsDB.txPower1 = packet->txPower2G4;
+        #endif
+        #else   // not DB packets
         crsf.elrsLinkStatistics.txPower = packet->txPower;
         #endif
         // need to estimate the age of the last 2G4 packet from when it was sent (not received)
@@ -1903,7 +1918,7 @@ uint8_t ICACHE_RAM_ATTR ProcessRFPacket915DB(uint8_t *rxBuffer, uint32_t tPacket
                 }
             }
             uint32_t packetHz = 1000000 / ExpressLRS_currAirRate_Modparams->interval;
-            printf("%u\n", packetHz);
+            printf("%lu\n", packetHz);
             #endif
         }
 
@@ -2163,7 +2178,8 @@ void ICACHE_RAM_ATTR updateFreqForDupSend()
 }
 
 
-bool ICACHE_RAM_ATTR isTelemetryFrame()
+// bool ICACHE_RAM_ATTR isTelemetryFrame()
+bool isTelemetryFrame()
 {
     uint32_t nonce = (TRANSMITTER) ? nonceTX915 : nonceRX915;
 
@@ -2696,9 +2712,29 @@ static void handleEvents915()
                 crsf.LinkStatistics.downlink_RSSI = (uint8_t)LPF_UplinkRSSI0.SmoothDataINT;
                 crsf.LinkStatistics.downlink_Link_quality = lqTelem.getLQPercent();
                 //crsf.LinkStatistics.downlink_Link_quality = Radio.currPWR;
-                #ifdef USE_SECOND_RADIO
-                crsf.LinkStatistics.uplink_TX_Power = radio2->currPWR;
-                #endif
+
+                // 915 power is more likely to be useful on the handset
+                // standard crsf protocol for edgeTX only understands a limited number of 
+                // power levels encoded by an array index - need to convert from dBm
+
+                // Crossfire's power levels as defined in opentx:radio/src/telemetry/crossfire.cpp
+                //static const int32_t power_values[] = { 0, 10, 25, 100, 500, 1000, 2000, 250, 50 };
+                const int txPower = radio1->currPWR;
+                uint8_t crsfPowerIndex;
+                if (txPower < 7) {
+                    crsfPowerIndex = 0; // 0mW
+                } else if (txPower < 13) {
+                    crsfPowerIndex = 1; // 10mW
+                } else if (txPower < 16) {
+                    crsfPowerIndex = 2; // 25mW
+                } else if (txPower < 19) {
+                    crsfPowerIndex = 8; // 50mW
+                } else {
+                    crsfPowerIndex = 3; // 100mW
+                }
+
+                crsf.LinkStatistics.uplink_TX_Power = crsfPowerIndex;
+
                 crsf.LinkStatistics.rf_Mode = (RATE_MAX-1) - ExpressLRS_currAirRate_Modparams->index;
 
                 // crsf.TLMbattSensor.voltage = (Radio.RXdataBuffer[3] << 8) + Radio.RXdataBuffer[6];
@@ -2888,7 +2924,7 @@ static void receive2G4()
                         LPF_fei.init(0);
                         #ifndef DEBUG_SUPPRESS
                         // std::cout << 'A';
-                        printf("fe %d\n", fe);
+                        printf("fe %ld\n", fe);
                         #endif
                         feiWaitingForFreqUpdate = true;
                     }
@@ -3039,7 +3075,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             #endif // USE_SECOND_RADIO
                             break;
                         default:
-                            printf("unexpected radioID for StartTx %d\n", taskInfo.radioID);
+                            printf("unexpected radioID for StartTx %ld\n", taskInfo.radioID);
                     }
                     break;
 
@@ -3070,7 +3106,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             #endif  // USE_SECOND_RADIO
                             break;
                         default:
-                            printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
+                            printf("unexpected radioID for StartRx %ld\n", taskInfo.radioID);
                     }
                     break;
 
@@ -3093,7 +3129,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             #endif
                             break;
                         default:
-                            printf("unexpected radioID for StartRx %d\n", taskInfo.radioID);
+                            printf("unexpected radioID for StartRx %ld\n", taskInfo.radioID);
                     }
                     break;
 
@@ -3109,7 +3145,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             #endif
                             break;
                         default:
-                            printf("unexpected radioID for ClearIRQs %d\n", taskInfo.radioID);
+                            printf("unexpected radioID for ClearIRQs %ld\n", taskInfo.radioID);
                     }
                     break;
 
@@ -3369,13 +3405,13 @@ void ICACHE_RAM_ATTR updatePhaseLock915()
         // for reasons unknown, combining these two tests causes the < min clause to always evaluate true
         if (RawOffset915 > max)
         {
-            printf("ign %d, max = %d\n", RawOffset915, max);
+            printf("ign %ld, max = %ld\n", RawOffset915, max);
             return;
         }
 
         if (RawOffset915 < min)
         {
-            printf("ign %d, min = %d\n", RawOffset915, min);
+            printf("ign %ld, min = %ld\n", RawOffset915, min);
             return;
         }
 
@@ -3384,7 +3420,7 @@ void ICACHE_RAM_ATTR updatePhaseLock915()
         OffsetDx = LPF_OffsetDx.update(RawOffset915 - prevRawOffset915);
 
         if (Offset > 1000000 || Offset < -1000000) {
-            printf("raw %d off %d\n", RawOffset915, Offset);
+            printf("raw %ld off %ld\n", RawOffset915, Offset);
         }
 
 
@@ -3451,13 +3487,13 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
         // for reasons unknown, combining these two tests causes the < min clause to always evaluate true
         if (RawOffset2G4 > max)
         {
-            printf("2G4 ign %d, max = %d\n", RawOffset2G4, max);
+            printf("2G4 ign %ld, max = %ld\n", RawOffset2G4, max);
             return;
         }
 
         if (RawOffset2G4 < min)
         {
-            printf("2G4 ign %d, min = %d\n", RawOffset2G4, min);
+            printf("2G4 ign %ld, min = %ld\n", RawOffset2G4, min);
             return;
         }
 
@@ -3466,7 +3502,7 @@ void ICACHE_RAM_ATTR updatePhaseLock2G4()
         // int32_t OffsetDx2G4 = LPF_OffsetDx2G4.update(RawOffset2G4 - prevRawOffset2G4);
 
         if (Offset2G4 > 1000000 || Offset2G4 < -1000000) {
-            printf("2G4 raw %d off %d\n", RawOffset2G4, Offset2G4);
+            printf("2G4 raw %ld off %ld\n", RawOffset2G4, Offset2G4);
         }
 
         #ifdef PFD_CALIBRATION
@@ -4014,7 +4050,7 @@ void lostConnection()
 {
     #ifndef DEBUG_SUPPRESS
     // TODO pretty sure FreqCorrection isn't used - update this with the new FEI info?
-    printf("lost conn fc=%d fo=%d\n", FreqCorrection, HwTimer::getFreqOffset());
+    printf("lost conn fc=%ld fo=%ld\n", FreqCorrection, HwTimer::getFreqOffset());
     // printf(" fo="); Serial.println(HwTimer::getFreqOffset, DEC);
     #endif
 
@@ -4594,7 +4630,6 @@ void handleLua()
 
     // printf("p0 %u\n", crsf.ParameterUpdateData[0]);
 
-    int32_t pwr ;
     switch (crsf.ParameterUpdateData[0])
     {
     case 0: // get current settings
@@ -4619,7 +4654,6 @@ void handleLua()
         // printf("915pwr %d\n", radio1->currPWR);
         break;
     case 2: // 2G4 power
-        pwr = radio2->currPWR;
         if (crsf.ParameterUpdateData[1] == 0)
         {
             // reduce power
@@ -5007,7 +5041,7 @@ void app_main()
 
         #ifndef DEBUG_SUPPRESS
         if (now - prevTime > 200) {
-            printf("big gap %u to %u\n", prevTime, now);
+            printf("big gap %lu to %lu\n", prevTime, now);
         }
         #endif
 
@@ -5081,7 +5115,7 @@ void app_main()
                     printf("Telem 915: %d %u ", rssi915, lq915);
 
                     if (timeout1Counter > 0) {
-                        printf("TO:%u ", timeout1Counter);
+                        printf("TO:%lu ", timeout1Counter);
                         timeout1Counter = 0;
                     }
 
@@ -5092,7 +5126,7 @@ void app_main()
                 }
 
                 if (timeout2Counter != 0) {
-                    printf("Timeouts: %d\n", timeout2Counter);
+                    printf("Timeouts: %ld\n", timeout2Counter);
                 }
 
                 #ifdef USE_SECOND_RADIO
@@ -5133,13 +5167,13 @@ void app_main()
                 }
 
                 if (now - r2LastIRQms > 1000) {
-                    printf("no irqs for 2G4, now %d, last %d\n", now, r2LastIRQms);
+                    printf("no irqs for 2G4, now %ld, last %ld\n", now, r2LastIRQms);
                 }
 
-                printf("offset %3d offset2G4 %3d ", Offset, LPF_Offset2G4.SmoothDataINT);
+                printf("offset %3ld offset2G4 %3ld ", Offset, LPF_Offset2G4.SmoothDataINT);
 
                 if (rfModeDivisor2G4 == 8) {
-                    printf("fei %4d ", LPF_fei.SmoothDataINT);
+                    printf("fei %4ld ", LPF_fei.SmoothDataINT);
                 }
 
                 // show some data from the handset
@@ -5187,10 +5221,10 @@ void app_main()
                     // printf("1: %4u, 2: %4u, both: %4u, only2: %4u, only2%%: %3u, LQ: %3u\n", flrcFirstPacketCounter, flrcSecondPacketCounter, 
                     //     flrcBothPacketCounter, secondPacketOnly, secondPercent, lqRadio2.getLQ());
 
-                    printf("(DS 1: %4u, 2: %4u", flrcFirstPacketCounter, flrcSecondPacketCounter);
+                    printf("(DS 1: %4lu, 2: %4lu", flrcFirstPacketCounter, flrcSecondPacketCounter);
 
                     #if true // defined(DS_TRY_BOTH_PKTS)
-                    printf(" both: %4u) ", flrcBothPacketCounter);
+                    printf(" both: %4lu) ", flrcBothPacketCounter);
                     #else
                     printf(") ");
                     #endif
@@ -5203,13 +5237,19 @@ void app_main()
 
                 int32_t fLQ = filteredLQ.update(lqRadio2.getLQ());
 
-                printf("915: pkts %3d rssi %4d snr %4.1f LQ %3u ", delta1, rssiDBM0, SNR0, lqRadio1.getLQ());
+                printf("915: pkts %3ld rssi %4ld snr %4.1f LQ %3u ", delta1, rssiDBM0, SNR0, lqRadio1.getLQ());
 
                 if (timeout1Counter > 0) {
-                    printf("TO:%u ", timeout1Counter);
+                    printf("TO:%lu ", timeout1Counter);
                 }
 
-                printf("2G4: pkts %4d (total %d) rssi %4d snr %4.1f LQ %3u (av %u)\n", delta2, totalRX2Events, rssiDBM1, SNR1, lqRadio2.getLQ(), fLQ);
+                printf("2G4: pkts %4ld (total %ld) rssi %4ld snr %4.1f LQ %3u (av %lu) ", delta2, totalRX2Events, rssiDBM1, SNR1, lqRadio2.getLQ(), fLQ);
+
+                #ifdef SEND_BOTH_TX_POWERS
+                printf("Pwr 915: %d, 2G4 %d\n", crsf.elrsLinkStatsDB.txPower0, crsf.elrsLinkStatsDB.txPower1);
+                #else
+                printf("Pwr 915: %d\n", crsf.elrsLinkStatsDB.txPower0);
+                #endif
 
                 // totalPackets = 0;
                 timeout1Counter = 0;
@@ -5225,8 +5265,8 @@ void app_main()
                 if (connectionState == tentative)
                 {
                     printf("tentative:");
-                    if (abs(OffsetDx) > 10) printf(" offsetDx %d", OffsetDx);
-                    if (Offset >= 100) printf(" offset %d", Offset);
+                    if (abs(OffsetDx) > 10) printf(" offsetDx %ld", OffsetDx);
+                    if (Offset >= 100) printf(" offset %ld", Offset);
                     if (uplinkLQ <= minLqForChaos()) printf(" lq %u", uplinkLQ);
                     printf("\n");
                 }
