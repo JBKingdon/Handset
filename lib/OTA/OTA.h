@@ -56,12 +56,16 @@ typedef struct DB915Packet_s {
     unsigned int swD : 2;
                                 // 8 bits
 
-    unsigned int txPower : 8;    // 8 bits
+    unsigned int txPower915 : 8;    // 8 bits
+
+    #ifdef SEND_BOTH_TX_POWERS
+    unsigned int txPower2G4 : 8;    // 8 bits
+    #endif
 
     unsigned int rateIndex : 3; // 3 bits
     unsigned int armed : 1;     // 1 bit
 
-} PACKED DB915Packet_t;          // total 15 bytes
+} PACKED DB915Packet_t;          // total 15 or 16 bytes (with both tx powers)
 
 typedef struct DB915Telem_s {
 
@@ -122,7 +126,13 @@ typedef struct DB2G4Packet_s {
 
 #define OTA_PACKET_LENGTH_2G4 8
 #define OTA_PACKET_LENGTH_2G4_FLRC 6
+
+#ifdef SEND_BOTH_TX_POWERS
+// Extra byte for the 2G4 power
+#define OTA_PACKET_LENGTH_915 16
+#else
 #define OTA_PACKET_LENGTH_915 15
+#endif
 
 #define OTA_PACKET_LENGTH_TELEM sizeof(DB915Telem_t)
 

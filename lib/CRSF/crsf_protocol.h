@@ -412,7 +412,10 @@ typedef struct elrsPayloadLinkstatistics_DB_s
     uint8_t lq0, lq1;   // range 0-99
     int8_t  snr0, snr1;
     uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
-    int8_t txPower;     // power in dBm
+    int8_t txPower0;     // power in dBm
+    #ifdef SEND_BOTH_TX_POWERS
+    int8_t txPower1;     // power in dBm
+    #endif
 } elrsLinkStatistics_DB_t;
 
 
