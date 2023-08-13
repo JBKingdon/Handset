@@ -165,14 +165,34 @@ flrc_modem_settings_t flrcModem_1khz = {FLRC_BR_0_325_BW_0_3, FLRC_CR_1_2};
 
 // XXX TODO get rid of all the unused fields and the annoying index
 
+// typedef struct expresslrs_mod_settings_s
+// {
+//     uint8_t index;                      // XXX get rid of?
+//     expresslrs_RFrates_e enum_rate;     // Max value of 16 since only 4 bits have been assigned in the sync package. XXX get rid of?
+//     expresslrs_tlm_ratio_e TLMinterval; // every X packets is a response TLM packet, should be a power of 2
+//     uint8_t FHSShopInterval;            // every X packets we hope to a new frequnecy. Max value of 16 since only 4 bits have been assigned in the sync package.
+//     uint32_t interval;                  // interval in microseconds between packets
+
+//     ModemType modemType;                // whether this mode uses lora or flrc
+
+//     bool    useDoubleSend;              // whether to send multiple copies of each packet
+
+//     union {
+//         lora_modem_settings_t lora_settings;
+//         flrc_modem_settings_t flrc_settings;
+//     };
+
+// } expresslrs_mod_settings_t;
+
+
 // NB Any changes to these modes will require recalibrating the PFD offsets!
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,   Telem,     FHSShopInterval, interval,  modulation, double send, modem settings
-    //                                                                                      len  8        9
+    //                                                                                             len  8        9
     // {0, RATE_1KHZ,  TLM_RATIO_1_128, 4,         1000,   ModemType::FLRC, true, .flrc_settings = flrcModem_1khz_DS},  //  145us, double send, destabilises uart link to handset
-    {0, RATE_1KHZ,  TLM_RATIO_1_128, 4,         1000,   ModemType::FLRC, false, .flrc_settings = flrcModem_1khz},  //  630us (6 bytes payload)
+    {.index = 0, .enum_rate = RATE_1KHZ, .TLMinterval = TLM_RATIO_1_128, .FHSShopInterval = 4, .interval = 1000,  .modemType = ModemType::FLRC, .useDoubleSend = false, .flrc_settings = flrcModem_1khz},  //  630us (6 bytes payload)
     // {2, RATE_1KHZ,  TLM_RATIO_1_128, 4,         1000,   ModemType::LORA, false, loraModem_1khz},  //   675      714us
-    {1, RATE_500HZ, TLM_RATIO_1_128, 4,         2000,   ModemType::FLRC, true, .flrc_settings = flrcModem_1khz},  //  630us (6 bytes payload), double send
+    {.index = 1, .enum_rate = RATE_500HZ, .TLMinterval = TLM_RATIO_1_128, .FHSShopInterval = 4, .interval = 2000, .modemType = ModemType::FLRC, .useDoubleSend = true, .flrc_settings = flrcModem_1khz},  //  630us (6 bytes payload), double send
     {2, RATE_500HZ, TLM_RATIO_1_128, 4,         2000,   ModemType::LORA, false, loraModem_500hz}, //  1507     1586us, 79%
     {3, RATE_250HZ, TLM_RATIO_1_64,  4,         4000,   ModemType::LORA, false, loraModem_250hz}, //  3172     3330us, 
     {4, RATE_125HZ, TLM_RATIO_1_32,  4,         8000,   ModemType::LORA, false, loraModem_125hz}, //  5872     6187us, 7133 with header
@@ -318,7 +338,7 @@ uint8_t DeviceAddr = UID[5] & 0b111111; // XXX check what this is used for
 #define RSSI_FLOOR_NUM_READS 5 // number of times to sweep the noise foor to get avg. RSSI reading
 #define MEDIAN_SIZE 20
 
-uint8_t ICACHE_RAM_ATTR TLMratioEnumToValue(expresslrs_tlm_ratio_e enumval)
+uint8_t TLMratioEnumToValue(expresslrs_tlm_ratio_e enumval)
 {
     switch (enumval)
     {
