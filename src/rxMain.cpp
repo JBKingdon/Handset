@@ -3,6 +3,8 @@
  * 
  * TODO:
  * 
+ *  Can we run edgeTX at fixed 1kHz and down sample in the tx for different packet rates? I don't trust edgeTX's ability to change rate.
+ * 
  *  Fix IRAM attr
  * 
  *  Implement missed telem packet trigger for dynamic power
@@ -22,6 +24,7 @@
  *   Fix SPI collisions
  *      Add a new SPI thread to centralise all SPI transactions
  *      Need another queue for returning results from SPI
+ * 
  *   Add code to detect if a modem stops talking to us. There should always be one of txdone, rxdone or timeout in every frame
  *      add code to try harder when the modem stops talking
  *   Figure out why the radios stop talking
@@ -38,9 +41,14 @@
  * 
  *      Can we optimise the timing to get a 2k raw rate?
  *          Yes, but using highest flrc speed which is probably not a good idea.
+ *          Worked on the bench but was unstable in real use.
  */
 #include "user_config.h"
 #include "config.h"
+
+#include "rom/gpio.h"
+#include "soc/gpio_sig_map.h"
+
 
 // Test mode - don't try and use the radios
 // #define DISABLE_RADIOS
@@ -82,8 +90,8 @@
     #ifdef DEV_MODE
         // #define DEFAULT_MAX_POWER_915 (-9)       // min power
         // #define DEFAULT_MAX_POWER_915 (0)       // 1mW
-        // #define DEFAULT_MAX_POWER_915 (10)       // 10mW
-        #define DEFAULT_MAX_POWER_915 (22)       // 100mW (with the reduced PA scaling)
+        #define DEFAULT_MAX_POWER_915 (10)       // 10mW
+        // #define DEFAULT_MAX_POWER_915 (22)       // 100mW (with the reduced PA scaling)
     #else
         // #warning "CAUTION low power configured CAUTION"
         // #define DEFAULT_MAX_POWER_915 (0)       // 1mW   XXX CAUTION low power for testing breadboard with handset
@@ -119,7 +127,7 @@
 
 // Channel to use for arming, 0 through 15
 // XXX only partially implemented. Manual changes needed if this is changed!
-#define ARM_CHANNEL 8
+#define ARM_CHANNEL 8   // ZERO INDEXED
 
 // enable separate 2g4 rssi measurements during telemetry sends to see if sending on 915 impacts 2g4 rssi
 // #define DEBUG_EXTRA_RSSI
@@ -4678,10 +4686,15 @@ void handleLua()
 
     luaMessage = false;
 
-    uint8_t luaPayload[] = {(uint8_t)maxPower915, (uint8_t)maxPower2G4};
+    // Add in the PA gain so that the lua shows the effective dBm instead of the pre-PA value
+    uint8_t luaPayload[] = {(uint8_t)maxPower915, (uint8_t)(maxPower2G4+PA_OFFSET)};
 
     crsf.sendLUAresponse(luaPayload, 2);
 }
+
+/**
+ * Setup a serial port for debug text
+*/
 
 void setupSerial()
 {
@@ -4690,12 +4703,19 @@ void setupSerial()
 
     if (CRSF_PORT_NUM != UART_NUM_0)
     {
+        // We can use uart0 for debugging
+
         // delete the default uart0 driver and recreate
         uart_driver_delete(UART_NUM_0);
 
-        // not sure what this was for - 0x100 disconnects the pin from any peripheral output
+        // See if we can remove this from here, it seems a bit out of place
+
+        // not sure what this was for - disconnects the pin from any peripheral output
+        // see https://github.com/espressif/esp-idf/issues/11737
+        // According to the above issue, 0x100 is for esp32, 0x80 is for C3. These values are
+        // available via define SIG_GPIO_OUT_IDX from soc/gpio_sig_map.h
         #ifdef CRSF_SPORT_PIN
-        gpio_matrix_out(CRSF_SPORT_PIN, 0x100, false, false);
+        gpio_matrix_out(CRSF_SPORT_PIN, SIG_GPIO_OUT_IDX, false, false);
         #endif
 
         static uart_config_t uart_config;
@@ -5345,12 +5365,14 @@ void app_main()
                     #ifndef DEFER_MANUAL_RATE_CHANGES
                     SetRFLinkRate(pendingAirRateIndex);
                     #endif
+                    std::cout << "+";
 
                 } else if (buf == '-' && (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX-1))) {
                     pendingAirRateIndex = ExpressLRS_currAirRate_Modparams->index + 1;
                     #ifndef DEFER_MANUAL_RATE_CHANGES
                     SetRFLinkRate(pendingAirRateIndex);
                     #endif
+                    std::cout << "-";
                 }
             }
             #endif

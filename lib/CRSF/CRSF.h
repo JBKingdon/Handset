@@ -168,9 +168,20 @@ public:
     uint8_t ICACHE_RAM_ATTR getNextSwitchIndex();
     void ICACHE_RAM_ATTR setSentSwitch(uint8_t index, uint8_t value);
 
-///// Variables for OpenTX Syncing //////////////////////////
+    ///// OpenTX External module sync //////////////////////////
+
+    #ifdef USE_MODULE_FIXED_PKT_RATE
+
+    #define OpenTXsyncPacketInterval 200 // in ms. Use slow 5Hz updates for fixed packet rate (at least while it also ignores offset)
+
+    #else // module switches etx to match ota packet rate
+
     // #define OpenTXsyncPacketInterval 200 // in ms. Default is 200 for 5Hz, but if we send much more often we can keep the delta smaller
     #define OpenTXsyncPacketInterval 10 // in ms
+
+    #endif // USE_MODULE_FIXED_PKT_RATE
+
+
     static void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
     // void ICACHE_RAM_ATTR setSyncParams(uint32_t PacketInterval);
 

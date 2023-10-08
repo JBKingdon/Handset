@@ -11,6 +11,9 @@
 
 #include "freertos/FreeRTOS.h"
 
+#include "rom/gpio.h"
+#include "soc/gpio_sig_map.h"
+
 // #define DEBUG_OPENTX_SYNC
 
 // Forces a sync packet to be sent after every packet from the handset
@@ -551,9 +554,15 @@ void ICACHE_RAM_ATTR CRSF::JustSentRFpacket()
     }
     else
     {
+        static uint32_t effectivePacketInterval = CRSF::RequestedRCpacketInterval;
+
+        #ifdef USE_MODULE_FIXED_PKT_RATE
+        effectivePacketInterval = 1000;
+        #endif
+
         // recenter the delta around 0 so that the instability is at the midpoint of the interval - farthest away from what we care about
-        if (delta > CRSF::RequestedRCpacketInterval/2) {
-            delta = delta - CRSF::RequestedRCpacketInterval;
+        if (delta > effectivePacketInterval/2) {
+            delta = delta - effectivePacketInterval;
             // printf(">%d ", delta);
         }
 
@@ -621,9 +630,13 @@ bool ICACHE_RAM_ATTR CRSF::syncPacketRequired()
 
     if (CRSF::CRSFisConnected && (now >= (syncLastSent + OpenTXsyncPacketInterval)))
     {
+        #ifdef USE_MODULE_FIXED_PKT_RATE
+        result = true;
+        #else
         int32_t offsetError = CRSF::OpenTXsyncOffset - CRSF::OpenTXsyncOffsetSafeMargin;
 
         if (offsetError > ERROR_LIMIT || offsetError < -ERROR_LIMIT) result = true;
+        #endif
     }
 
     return result;
@@ -642,7 +655,11 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX()
     {
         packetIntervalTenthsUs = 40000; //constrain to 250hz max (interval expressed in 10ths of a us)
     } else {
+        #ifdef USE_MODULE_FIXED_PKT_RATE
+        packetIntervalTenthsUs = 10000;
+        #else  // edgetx rate matches ota packet rate
         packetIntervalTenthsUs = CRSF::RequestedRCpacketInterval * 10; //convert to tenths of a us
+        #endif // USE_MODULE_FIXED_PKT_RATE
     }
 
     // int32_t offset = CRSF::OpenTXsyncOffset * 10 - CRSF::OpenTXsyncOffsetSafeMargin; // + 400us offset so that opentx always has some headroom
@@ -653,12 +670,12 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX()
     // from elrs mainstream
     int32_t offset;
     
+    // TODO Where is this USR_CRSF_ACK defined, and what does it really mean? It looks more like "use offsets"
     #ifdef USE_CRSF_ACK
     if (syncPacketRequired())
     #endif
     {
         offset = CRSF::OpenTXsyncOffset - CRSF::OpenTXsyncOffsetSafeMargin; // offset so that opentx always has some headroom
-
         // cap the delta to prevent wild swings. Note that offset is in tenths of a microsecond (edgeTX units), where as interval is in us
         const int32_t MAX_OFFSET_PERCENT = 1;
         const int32_t MAX_OFFSET = (MAX_OFFSET_PERCENT * (int32_t)CRSF::RequestedRCpacketInterval) / 10; // factor of 10 implied by units
@@ -682,6 +699,8 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX()
     printf("Offset %d ", offset); // in 10ths of us (OpenTX sync unit)
     #endif
 
+    // TODO zero init unnecessary?
+    // TODO make static and only update variable parts
     uint8_t outBuffer[OpenTXsyncFrameLength + 4] = {0};
 
     outBuffer[0] = CRSF_ADDRESS_RADIO_TRANSMITTER; //0xEA
@@ -1156,8 +1175,15 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
     #if (defined(PLATFORM_ESP32) || defined(ESPC3)) && defined(CRSF_SPORT_PIN)
 
     #ifdef UART_INVERTED
-    // detach the tx out pin?
-    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, 0x100, true, false); // 0x100 special value for cancel output
+
+    // detach the tx out pin
+
+    // See https://github.com/espressif/esp-idf/issues/11737
+    // According to the above issue, 0x100 is for esp32, 0x80 is for C3. These values are
+    // available via define SIG_GPIO_OUT_IDX from soc/gpio_sig_map.h
+    // TODO checkout the recommendation from that issue to use APIs provided by esp_rom_gpio.h
+
+    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, SIG_GPIO_OUT_IDX, true, false); // SIG_GPIO_OUT_IDX special value for cancel output
 
     gpio_matrix_in((gpio_num_t)CRSF_SPORT_PIN, U0RXD_IN_IDX, true);
 
@@ -1172,7 +1198,11 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_RX()
     #endif // inverted or not
 
     // Seems to work best with this done last
+    #ifdef DEV_MODE
     ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_INPUT));
+    #else
+    gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_INPUT);
+    #endif 
 
     #endif // platform and sport pin
 }
@@ -1184,16 +1214,26 @@ void ICACHE_RAM_ATTR CRSF::duplex_set_TX()
     // ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)CRSF_SPORT_PIN, GPIO_FLOATING));
 
     #ifdef UART_INVERTED
-    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0)); // prevent any spikes on switch over
+    // prevent any spikes on switch over
+    #ifdef DEV_MODE
+    ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0));
     ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_OUTPUT));
-    constexpr uint8_t MATRIX_DETACH_IN_LOW = 0x30; // routes 0 to matrix slot
-    gpio_matrix_in(MATRIX_DETACH_IN_LOW, U0RXD_IN_IDX, false); // Disconnect RX from all pads
-    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, U0TXD_OUT_IDX, true, false);
     #else
+    gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 0);
+    gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_OUTPUT);
+    #endif
+
+    // See https://github.com/espressif/esp-idf/issues/11737, docs in code give wrong values for C3!
+    gpio_matrix_in(GPIO_MATRIX_CONST_ZERO_INPUT, U0RXD_IN_IDX, false); // Disconnect RX from all pads
+    gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, U0TXD_OUT_IDX, true, false);
+
+    #else // not inverted...
+    
     ESP_ERROR_CHECK(gpio_set_level((gpio_num_t)CRSF_SPORT_PIN, 1));
     ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)CRSF_SPORT_PIN, GPIO_MODE_OUTPUT));
-    constexpr uint8_t MATRIX_DETACH_IN_HIGH = 0x38; // routes 1 to matrix slot
-    gpio_matrix_in(MATRIX_DETACH_IN_HIGH, U1RXD_IN_IDX, false); // Disconnect RX from all pads
+
+    // See https://github.com/espressif/esp-idf/issues/11737, docs in code give wrong values for C3!
+    gpio_matrix_in(GPIO_MATRIX_CONST_ONE_INPUT, U1RXD_IN_IDX, false); // Disconnect RX from all pads
     gpio_matrix_out((gpio_num_t)CRSF_SPORT_PIN, U1TXD_OUT_IDX, false, false);
     #endif  // invert or not
 

@@ -14,6 +14,9 @@
 // Simple test mode with slow lora signals to see if the chirps are measurable with hackrf
 // #define LORA_TEST
 
+// Instead of trying to make edgeTX match the packet rate, just run it at a fixed high rate
+#define USE_MODULE_FIXED_PKT_RATE
+
 #ifdef ESPC3
 #include "esp_attr.h" // for IRAM_ATTR
 #define ICACHE_RAM_ATTR IRAM_ATTR
@@ -29,19 +32,19 @@
 //-------------------------------------------------
 
 // Use CH8 to set packet rate
-// #define RATE_ON_CHANNEL
+#define RATE_ON_CHANNEL
 
 // Reduces output power (but may be configured out for tx), enables debug - what else?
 // enables packet rate change by keyboard?
 // does it suppress packet rate change by channel?
-#define DEV_MODE
+// #define DEV_MODE
 
 // Send tx power for both 915 and 2G4. If not set, only send 915 power
 // #define SEND_BOTH_TX_POWERS
 
 // Hardware revision:
 
-#define DUAL_BAND_BREADBOARD
+// #define DUAL_BAND_BREADBOARD
 
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
@@ -53,7 +56,7 @@
 // #define DB_PCB_V1_2
 
 // DB specific TX module with e28-27
-// #define DB_TX_V1
+#define DB_TX_V1
 
 
 // This was for dual sx1280 with a c3 module on a PCB
@@ -171,12 +174,15 @@
 // E28-12 and both GNICERF modules can use the full output range
 #define MAX_PRE_PA_POWER 13
 #define DISARM_POWER (0)
+#define PA_OFFSET -1
 #elif defined(RADIO_E28_20)
 #define MAX_PRE_PA_POWER (-2)
 #define DISARM_POWER (-12)
+#define PA_OFFSET 22
 #elif defined(RADIO_E28_27)
 #define MAX_PRE_PA_POWER 0
 #define DISARM_POWER (-15)
+#define PA_OFFSET 27
 #else
 #error "Must define a radio module to use"
 #endif
