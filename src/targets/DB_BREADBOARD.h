@@ -17,7 +17,7 @@
 // #define RADIO_DIO2_PIN  GPIO_NUM_19  pin shortage on the breadboard devkit
 #define RADIO_TXEN_PIN    GPIO_NUM_19
 
-// LQ improves with RXEN properly setup - or does it?
+// LQ improves with RXEN properly setup - or does it? Needs retesting
 // #define RADIO_RXEN_PIN    GPIO_NUM_9
 
 // SX1280
@@ -29,7 +29,7 @@
 #define RADIO2_RESET_PIN GPIO_NUM_4
 
 
-#define DEBUG_PIN     GPIO_NUM_12
+// #define DEBUG_PIN     GPIO_NUM_12
 // #define LED2812_PIN   GPIO_NUM_12
 #define LED_STATUS_INDEX 0
 #define LED_RADIO1_INDEX 2
@@ -44,7 +44,7 @@
 
 // #define CRSF_SPORT_PIN     GPIO_NUM_12  // swapped from RADIO_RESET_PIN, use this
 
-#define DEBUG_RX_PIN    GPIO_NUM_20
+// #define DEBUG_RX_PIN    GPIO_NUM_20
 #define DEBUG_TX_PIN    GPIO_NUM_21
 // #define DEBUG_TX_PIN    GPIO_NUM_19
 #endif
@@ -58,11 +58,16 @@
 #endif
 
 
-// The breadboard prototype can use uart1 with pin 12 for crossfire s.port
-// As currently setup, use port 0 for normal operation and port 1 for dev with keyboard input to change modes
+// XXX This doesn't make much sense, need to fix and so that dev_mode and port nums are independent and unambiguous
+
+// Known working combos:
+//   DEV_MODE off, DEBUG_RX_PIN not defined, CRSF_SPORT_PIN defined
+//   DEV_MODE on, DEBUG_RX_PIN defined, CRSF_SPORT_INT not defined
 
 #ifdef DEV_MODE
+// The breadboard prototype can use uart1 with pin 12 for crossfire s.port
 #define CRSF_PORT_NUM 1
 #else
+// use port 0 for crsf and port 1 for dev with keyboard input to change modes
 #define CRSF_PORT_NUM 0 
 #endif

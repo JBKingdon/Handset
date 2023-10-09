@@ -3,13 +3,15 @@
  * 
  * TODO:
  * 
- *  Can we run edgeTX at fixed 1kHz and down sample in the tx for different packet rates? I don't trust edgeTX's ability to change rate.
- * 
  *  Fix IRAM attr
  * 
  *  Implement missed telem packet trigger for dynamic power
  * 
  *  Is telem actually using the short packet length OTA?
+ * 
+ *  Dynamic link:
+ *    Add SNR to the up/down conditions
+ *    Figure out how to handle transitions between d500 and f1000 (can't use rssi)
  * 
  *   Interference between bands
  *      On the PCB rx (but not the breadboards), transmitting 2G4 at 13 dBm reduces 915 rssi by 20dB (fortunately we're not txing 2g4 on the receiver normally)
@@ -26,6 +28,7 @@
  *      Need another queue for returning results from SPI
  * 
  *   Add code to detect if a modem stops talking to us. There should always be one of txdone, rxdone or timeout in every frame
+ *   (may not be true if rx timeouts are disabled)
  *      add code to try harder when the modem stops talking
  *   Figure out why the radios stop talking
  * 
@@ -36,7 +39,9 @@
  * 
  *   FLRC
  *      second packet has lower LQ than first packet - why? (and now the first is lower than the second)
- *          Seems to be timing related, you can change the lq by adding a delay in the sender.
+ *          Seems to be timing related, you can change the lq by adding a delay in the sender. 
+ *          Next: add debug gpio for tx and rx and check the timing.
+ * 
  *      Check the SPI bus speed - need to recalibrate the pfd offsets for different spi bus speeds
  * 
  *      Can we optimise the timing to get a 2k raw rate?
@@ -154,6 +159,9 @@
 // #define DYN_POWER_INCREASE_MARGIN 32    //  -112 -> 80
 // #define DYN_POWER_INCREASE_MARGIN 42    //  -112 -> 70
 
+// We can have a different threshold for 2G4
+#define DYN_POWER_INCREASE_MARGIN_2G4 12
+
 // The RSSI dB delta above DYN_POWER_INCREASE_MARGIN at which the TX power will be decreased
 // If RXsensitivity is -105, DYN_POWER_INCREASE_MARGIN is 25 and DYN_POWER_DECREASE_MARGIN is 10
 // then power will be decreased when rssi is above -70 (105-25 = -80, then 10 above that is -70)
@@ -268,7 +276,8 @@ enum SpiTaskID
     SetStandby,
     StartRx,
     StartTx,
-    ClearIRQs
+    ClearIRQs,
+    SetPower
 };
 
 typedef struct 
@@ -279,6 +288,7 @@ typedef struct
         uint32_t frequency;
         uint32_t irqMask;
         uint32_t unused;
+        int32_t power;
     };
 
 } SpiTaskInfo;
@@ -513,7 +523,9 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
     // when changing from armed to disarmed, reduce the power
     if (prevArm && !isArmed()) {
         prevArm = false;
-        radio1->SetOutputPower(DISARM_POWER_915);
+
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::first, .power = DISARM_POWER_915};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
 
         return; // EARLY RETURN
     }
@@ -549,14 +561,19 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
 
     if ((rxLq915 < DYN_POWER_LQ_PANIC_THRESHOLD) && (radio1->currPWR < maxPower915)) {
         // Panic time, take the power directly to the configured max
-        radio1->SetOutputPower(maxPower915);
+
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::first, .power = maxPower915};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
+
         #ifdef DEV_MODE
         printf("lq panic, power set to max of %lu\n", maxPower915);
         #endif
     }
-    else if ((rssiSamplesNeeded == 0) && (rssiF < (dynamicPowerRSSIIncreaseThreshold915 * 100)) && (radio1->currPWR < maxPower915)) // XXX does this also need a sample counter to get valid rssi?
+    else if ((rssiSamplesNeeded == 0) && (rssiF < (dynamicPowerRSSIIncreaseThreshold915 * 100)) && (radio1->currPWR < maxPower915))
     {
-        radio1->SetOutputPower(radio1->currPWR + 1);
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::first, .power = radio1->currPWR + 1};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
+        
         rssiSamplesNeeded = 5;
         #ifdef DEV_MODE
         printf("915 rssi %ld rssiF %ld power up! %d\n", rxRssi915, rssiF, radio1->currPWR);
@@ -565,7 +582,10 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
     else if ((rssiSamplesNeeded == 0) && (rxLq915 < DYN_POWER_LQ_THRESHOLD) && (radio1->currPWR < maxPower915))
     {
         // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
-        radio1->SetOutputPower(radio1->currPWR + 1);
+
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::first, .power = radio1->currPWR + 1};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
+
         rssiSamplesNeeded = 5; // prevent this change from happening too quickly
         #ifdef DEV_MODE
         printf("915 LQ %ld power up to %d\n", rxLq915, radio1->currPWR);
@@ -573,7 +593,9 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
     }
     else if ((rssiSamplesNeeded == 0) && (rssiF > dynamicPowerRSSIDecreaseThreshold915 * 100) && (radio1->currPWR > MIN_PRE_PA_POWER_915))
     {
-        radio1->SetOutputPower(radio1->currPWR - 1);
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::first, .power = radio1->currPWR - 1};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
+
         rssiSamplesNeeded = 10; // prevent this change from happening too quickly        
         #ifdef DEV_MODE
         printf("915 rssi %ld rssiF %ld power down! %d\n", rxRssi915, rssiF, radio1->currPWR);
@@ -607,7 +629,9 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
     // so maybe move this somewhere else.
     if (prevArm && !isArmedP) {
         prevArm = false;
-        radio2->SetOutputPower(DISARM_POWER);
+
+        SpiTaskInfo taskInfo = {SpiTaskID::SetPower, RadioSelection::second, DISARM_POWER};
+        xQueueSend(rx_evt_queue, &taskInfo, 100);
 
         return; // EARLY RETURN
     }
@@ -631,77 +655,141 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
 
     // Don't run dynamic power when disarmed. This allows the user to set the power manually while disarmed
     // (might be useful if the quad is lost)
-    if (!prevArm) return;
+    if (!isArmedP) return;
 
 
-    const int16_t dynamicPowerRSSIIncreaseThreshold2G4 = ExpressLRS_currAirRate_RFperfParams->RXsensitivity + DYN_POWER_INCREASE_MARGIN;
-    const int16_t dynamicPowerRSSIDecreaseThreshold2G4 = dynamicPowerRSSIIncreaseThreshold2G4 + DYN_POWER_DECREASE_MARGIN;
+    const int16_t dynamicPowerRSSIIncreaseThreshold2G4 = ExpressLRS_currAirRate_RFperfParams->RXsensitivity + DYN_POWER_INCREASE_MARGIN_2G4;
+    const int16_t dynamicPowerRSSIDecreaseThreshold2G4 = dynamicPowerRSSIIncreaseThreshold2G4 + DYN_POWER_DECREASE_MARGIN; // using a common hysteresis value at the moment
 
 
     // printf("2G4 rssi %d, filtered %ld, limit %d, cPwr %d, maxPwr %d\n", rxRssi2G4, rssiF, dynamicPowerRSSIIncreaseThreshold2G4 * 100, radio2->currPWR, maxPower2G4);
 
-    // Flag to prevent considering reducing power after we just increased it
-    bool powerWasIncreased = false;
+    // flag to indicate that we want to improve the link, either by increasing power or reducing packet rate
+    bool betterSignalNeeded = false;
+    int desiredPowerLevel;
 
-    if (radio2->currPWR < maxPower2G4)
+    // Test conditions that can increase power output
+    // Using the same LQ thresholds as for 915
+    if (rxLq2G4 < DYN_POWER_LQ_PANIC_THRESHOLD)
     {
-        // Test conditions that can increase power output
-        // Using the same LQ thresholds for 915 and 2G4
-        if (rxLq2G4 < DYN_POWER_LQ_PANIC_THRESHOLD)
+        betterSignalNeeded = true;
+        // Panic time, take the power directly to the configured max
+        desiredPowerLevel = maxPower2G4;
+
+        #ifdef DEV_MODE
+        printf("lq panic, 2G4 power set to max %lu\n", maxPower2G4);
+        #endif
+    } else if (rssiSamplesNeeded == 0) {
+        // Tests that depend on sufficient telemetry packets having been received to update the data
+        if (rssiF < (dynamicPowerRSSIIncreaseThreshold2G4 * 100))
         {
-            // Panic time, take the power directly to the configured max
-            radio2->SetOutputPower(maxPower2G4);
-            powerWasIncreased = true;
+            betterSignalNeeded = true;
+            desiredPowerLevel = radio2->currPWR + 1;
+
+            rssiSamplesNeeded = 5;
             #ifdef DEV_MODE
-            printf("lq panic, 2G4 power set to max of %lu\n", maxPower2G4
-            );
+            printf("2G4 rssi %ld rssiF %ld power up! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
             #endif
         }
-        // Remaining tests all depend on sufficient telemetry packets having been received to update the data
-        else if (rssiSamplesNeeded == 0)
+        else if (rxLq2G4 < DYN_POWER_LQ_THRESHOLD)
         {
-            if (rssiF < (dynamicPowerRSSIIncreaseThreshold2G4 * 100))
-            {
-                radio2->SetOutputPower(radio2->currPWR + 1);
-                powerWasIncreased = true;
-                rssiSamplesNeeded = 5;
-                #ifdef DEV_MODE
-                printf("2G4 rssi %ld rssiF %ld power up! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
-                #endif
-            }
-            else if (rxLq2G4 < DYN_POWER_LQ_THRESHOLD)
-            {
-                // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
-                radio2->SetOutputPower(radio2->currPWR + 1);
-                powerWasIncreased = true;
-                rssiSamplesNeeded = 2;
-                #ifdef DEV_MODE
-                printf("2G4 LQ %ld power up to %d\n", rxLq2G4, radio2->currPWR);
-                #endif
-            }
-            // TODO add SNR increase power
+            // If we're losing packets it's worth boosting power even if the rssi is better than the threshold
+            betterSignalNeeded = true;
+            desiredPowerLevel = radio2->currPWR + 1;
+
+            rssiSamplesNeeded = 2;
+            #ifdef DEV_MODE
+            printf("2G4 LQ %ld power up to %d\n", rxLq2G4, radio2->currPWR);
+            #endif
         }
+        // TODO add SNR increase power
     }
+
+
+    if (betterSignalNeeded)
+    {
+        // do we have headroom to increase power?
+        if (radio2->currPWR < maxPower2G4) {
+            SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = desiredPowerLevel};
+            xQueueSend(rx_evt_queue, &taskInfo, 100);
+
+        } else {
+            printf("max power, checking rate\n");
+            // Already at max power, time to reduce packet rate.
+            // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+            const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+            if (currentIndex < (RATE_MAX - 1)) {
+                // decrease packet rate
+                pendingAirRateIndex = currentIndex + 1;
+                #ifdef DEV_MODE
+                printf("requested decreased rate %d\n", pendingAirRateIndex);
+                #endif
+            }
+            rssiSamplesNeeded = 20;
+        }
+
+        // No need to carry on to the section for reducing power if we've just increased it
+        return; // EARLY RETURN
+    }
+
+
+    // if the link is good increase the packet rate, or if the packet rate is already max, decrease power
+    // Need to break this into two stages, an LQ based stage and an rssi based stage, because the sensitivity threshold
+    // is the same for d500 vs f1000 so we can't use it as part of the decision for when to switch between them
+
+    const bool linkIsStrong = (rxLq2G4 > DYN_POWER_LQ_THRESHOLD) && (rssiF > dynamicPowerRSSIDecreaseThreshold2G4 * 100);
+
+    // if (linkIsStrong) {
+    //     printf("linkIsStrong\n");
+    // } else {
+    //     printf("not strong, lq %lu vs %u, rssi %ld vs %d\n", rxLq2G4, DYN_POWER_LQ_THRESHOLD, rssiF, dynamicPowerRSSIDecreaseThreshold2G4*100);
+    // }
+
+    if (linkIsStrong && (rssiSamplesNeeded == 0)) {
+        // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+        const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+        if (currentIndex > 0) {
+            // increase packet rate
+            pendingAirRateIndex = currentIndex - 1;
+
+            #ifndef DEBUG_SUPPRESS
+            printf("packet rate increase %d\n", pendingAirRateIndex);
+            #endif
+
+        } else {
+            // already at the fastest packet rate, so start reducing power
+            SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = radio2->currPWR - 1};
+            xQueueSend(rx_evt_queue, &taskInfo, 100);
+
+            #ifndef DEBUG_SUPPRESS
+            printf("2G4 rssi %ld rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+            #endif
+        }
+        rssiSamplesNeeded = 20;
+    }
+
 
     // only consider decreasing power if
     //   - we didn't just increase it above
     //   - LQ is better than threshold
     //   - we aren't already at min power
     //   - we have sufficient telemetry samples
-    if (!powerWasIncreased && (rxLq2G4 > DYN_POWER_LQ_THRESHOLD) && (radio2->currPWR > MIN_PRE_PA_POWER_2G4) && (rssiSamplesNeeded == 0))
-    {
-        // Test conditions that can decrease power output
-        if (rssiF > dynamicPowerRSSIDecreaseThreshold2G4 * 100)
-        {
-            radio2->SetOutputPower(radio2->currPWR - 1);
-            rssiSamplesNeeded = 10;
-            #ifdef DEV_MODE
-            printf("2G4 rssi %ld rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
-            #endif
-        }
-        // TODO add SNR decrease power
-    }
+    // if (!powerWasIncreased && (rxLq2G4 > DYN_POWER_LQ_THRESHOLD) && (radio2->currPWR > MIN_PRE_PA_POWER_2G4) && (rssiSamplesNeeded == 0))
+    // {
+    //     // Test conditions that can decrease power output
+    //     if (rssiF > dynamicPowerRSSIDecreaseThreshold2G4 * 100)
+    //     {
+    //         // radio2->SetOutputPower(radio2->currPWR - 1);
+    //         SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = radio2->currPWR - 1};
+    //         xQueueSend(rx_evt_queue, &taskInfo, 100);
 
+    //         rssiSamplesNeeded = 10;
+    //         #ifdef DEV_MODE
+    //         printf("2G4 rssi %ld rssiF %ld power down! %d\n", rxRssi2G4, rssiF, radio2->currPWR);
+    //         #endif
+    //     }
+    //     // TODO add SNR decrease power
+    // }
 
 
     #endif // USE_DYNAMIC_POWER
@@ -3044,6 +3132,7 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
 
                 case SpiTaskID::StartTx:
                     // send a packet which has already been placed in the radio instance's txbuffer
+                    // TODO how did the data get into the txbuffer? Should that be combined with this?
                     switch(taskInfo.radioID)
                     {
                         case RadioSelection::first:
@@ -3117,6 +3206,23 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                             printf("unexpected radioID for StartRx %ld\n", taskInfo.radioID);
                     }
                     break;
+
+                case SpiTaskID::SetPower:
+                    switch(taskInfo.radioID)
+                    {
+                        case RadioSelection::first:
+                            radio1->SetOutputPower(taskInfo.power);
+                            break;
+                        case RadioSelection::second:
+                            #ifdef USE_SECOND_RADIO
+                            radio2->SetOutputPower(taskInfo.power);
+                            #endif  // USE_SECOND_RADIO
+                            break;
+                        default:
+                            printf("unexpected radioID for setpower %ld\n", taskInfo.radioID);
+                    }
+                    break;
+
 
                 case SpiTaskID::StartRx:
                     switch(taskInfo.radioID)
@@ -5023,6 +5129,9 @@ void app_main()
     HwTimer::setCallbackTick(tickTock);
     HwTimer::setCallbackTock(tickTock);
 
+    // Delay to give supply voltage time to stabilise on the FC
+    delay(500);
+
     // Get the radios initialised and ready for use
     setupRadios();
 
@@ -5067,6 +5176,7 @@ void app_main()
 
         prevTime = now;
 
+        // Does this need to run more often than this idle loop? (20hz)
         if (TRANSMITTER && luaMessage) handleLua();
 
         // Reflect status on the leds
@@ -5134,19 +5244,22 @@ void app_main()
                     bool feiCorrected = telemData.feiCorrected;
                     printf("Telem 915: %d %u ", rssi915, lq915);
 
-                    if (timeout1Counter > 0) {
-                        printf("TO:%lu ", timeout1Counter);
-                        timeout1Counter = 0;
-                    }
+                    printf("2G4: %d, %u, SNR: %d, fei %d ", rssi2G4, lq2G4, snr, feiCorrected);
 
-                    printf("2G4: %d, %u, SNR: %d, fei %d, 2G4 power %d\n", rssi2G4, lq2G4, snr, feiCorrected, radio2->currPWR);
 
                 } else {
-                    std::cout << "No RX connected\n";
+                    std::cout << "No connection ";
+                }
+
+                printf("P: %d %d\n", radio1->currPWR, radio2->currPWR);
+
+                if (timeout1Counter != 0) {
+                    printf("TO 915:%lu\n", timeout1Counter);
+                    timeout1Counter = 0;
                 }
 
                 if (timeout2Counter != 0) {
-                    printf("Timeouts: %ld\n", timeout2Counter);
+                    printf("TO 2G4: %lu\n", timeout2Counter);
                 }
 
                 #ifdef USE_SECOND_RADIO
