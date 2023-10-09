@@ -381,12 +381,15 @@ void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
         power = -18;
     }
 
-    uint8_t buf[2];
-    buf[0] = power + 18;
-    buf[1] = (uint8_t)SX1280_RADIO_RAMP_04_US;
-    hal->WriteCommand(SX1280_RADIO_SET_TXPARAMS, buf, 2);
+    // Only do the SPI traffic if necessary
+    if (power != currPWR) {
+        uint8_t buf[2];
+        buf[0] = power + 18;
+        buf[1] = (uint8_t)SX1280_RADIO_RAMP_04_US;
+        hal->WriteCommand(SX1280_RADIO_SET_TXPARAMS, buf, 2);
 
-    currPWR = power;
+        currPWR = power;
+    }
 
     // Serial.print("SetPower raw: ");
     // Serial.println(buf[0]);

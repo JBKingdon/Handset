@@ -644,15 +644,18 @@ void ICACHE_RAM_ATTR SX1262Driver::SetOutputPower(int8_t power)
         power = -9;
     }
 
-    uint8_t buf[3];
-    buf[0] = SX1262_RADIO_SET_TXPARAMS;
-    buf[1] = power;
-    // printf("power buf[1] %d\n\r", buf[1]);
-    buf[2] = (uint8_t)SX1262_RADIO_RAMP_10_US;
-    // buf[2] = (uint8_t)SX1262_RADIO_RAMP_20_US;
-    hal.fastWriteCommand(buf, sizeof(buf));
+    // Only do the spi traffic if necessary
+    if (power != currPWR) {
+        uint8_t buf[3];
+        buf[0] = SX1262_RADIO_SET_TXPARAMS;
+        buf[1] = power;
+        // printf("power buf[1] %d\n\r", buf[1]);
+        buf[2] = (uint8_t)SX1262_RADIO_RAMP_10_US;
+        // buf[2] = (uint8_t)SX1262_RADIO_RAMP_20_US;
+        hal.fastWriteCommand(buf, sizeof(buf));
 
-    currPWR = power;
+        currPWR = power;
+    }
 
     return;
 }
