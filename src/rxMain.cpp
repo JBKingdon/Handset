@@ -3,15 +3,17 @@
  * 
  * TODO:
  * 
- *  Fix IRAM attr
+ *  Fix IRAM attr - check what's left to do to make it consistent
  * 
  *  Implement missed telem packet trigger for dynamic power
  * 
  *  Is telem actually using the short packet length OTA?
  * 
+ *  Receiver should use the tx power level when sending telem
+ * 
  *  Dynamic link:
  *    Add SNR to the up/down conditions
- *    Figure out how to handle transitions between d500 and f1000 (can't use rssi)
+ *    Does LQ need to be filtered for dyn rate changes?
  * 
  *   Interference between bands
  *      On the PCB rx (but not the breadboards), transmitting 2G4 at 13 dBm reduces 915 rssi by 20dB (fortunately we're not txing 2g4 on the receiver normally)
@@ -54,7 +56,6 @@
 #include "rom/gpio.h"
 #include "soc/gpio_sig_map.h"
 
-
 // Test mode - don't try and use the radios
 // #define DISABLE_RADIOS
 
@@ -70,9 +71,6 @@
 // Disable changing frequency between DS pkts
 // Currently not implemented after changes to DS hopping
 // #define DS_DONT_HOP
-
-
-// #define ENABLE_DYNAMIC_RATES
 
 // #define USE_RX_TIMEOUTS
 
@@ -178,6 +176,13 @@
 #define DYN_POWER_MISSED_TELEM_PACKET_THRESHOLD 4
 
 #define DYN_POWER_RSSI_FILTER_CUTOFF_HZ 0.1f
+
+// Threshold for reducing the packet rate
+#define DYN_RATE_LQ_LOW 85
+
+// Threshold for increasing the packet rate
+#define DYN_RATE_LQ_HIGH 95
+
 
 #include <stdio.h>
 #include <string.h>
@@ -380,7 +385,7 @@ static bool alreadyTLMresp = false;
 static volatile bool packetReceived = false;
 
 static bool radio1Timedout = false;
-static bool radio2Timedout = false;
+// static bool radio2Timedout = false;
 
 // uint32_t beginProcessing;
 // uint32_t doneProcessing;
@@ -606,7 +611,9 @@ void managePower915(int32_t rxRssi915, uint32_t rxLq915)    // , int32_t rxSnr91
 }
 
 /**
- * Used on the transmitter to adjust the power of the 2G4 channel based on the linkstats reported in telemetry packets
+ * Used on the transmitter to adjust the power of the 2G4 channel based on rssi and linkstats reported in telemetry packets
+ * 
+ * TODO use snr when available
  *
 */
 void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
@@ -630,7 +637,8 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
     if (prevArm && !isArmedP) {
         prevArm = false;
 
-        SpiTaskInfo taskInfo = {SpiTaskID::SetPower, RadioSelection::second, DISARM_POWER};
+        SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = DISARM_POWER};
+
         xQueueSend(rx_evt_queue, &taskInfo, 100);
 
         return; // EARLY RETURN
@@ -651,6 +659,7 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
         // things are getting better, use the filter normally
         rssiF = rssiFilter2G4.update(rxRssi2G4 * 100);
     }
+    // And decrement the counter if we're in a delay phase
     if (rssiSamplesNeeded) rssiSamplesNeeded--;
 
     // Don't run dynamic power when disarmed. This allows the user to set the power manually while disarmed
@@ -713,19 +722,19 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
             SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = desiredPowerLevel};
             xQueueSend(rx_evt_queue, &taskInfo, 100);
 
-        } else {
-            printf("max power, checking rate\n");
-            // Already at max power, time to reduce packet rate.
-            // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
-            const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
-            if (currentIndex < (RATE_MAX - 1)) {
-                // decrease packet rate
-                pendingAirRateIndex = currentIndex + 1;
-                #ifdef DEV_MODE
-                printf("requested decreased rate %d\n", pendingAirRateIndex);
-                #endif
-            }
-            rssiSamplesNeeded = 20;
+        // } else {
+        //     // printf("max power, checking rate\n");
+        //     // Already at max power, time to reduce packet rate.
+        //     // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+        //     const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+        //     if (currentIndex < (RATE_MAX - 1)) {
+        //         // decrease packet rate
+        //         pendingAirRateIndex = currentIndex + 1;
+        //         #ifdef DEV_MODE
+        //         printf("requested decreased rate %d\n", pendingAirRateIndex);
+        //         #endif
+        //     }
+        //     rssiSamplesNeeded = 20;
         }
 
         // No need to carry on to the section for reducing power if we've just increased it
@@ -747,16 +756,18 @@ void managePower2G4(int32_t rxRssi2G4, uint32_t rxLq2G4, int32_t rxSnr2G4)
 
     if (linkIsStrong && (rssiSamplesNeeded == 0)) {
         // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
-        const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
-        if (currentIndex > 0) {
-            // increase packet rate
-            pendingAirRateIndex = currentIndex - 1;
+        // const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+        // if (currentIndex > 0) {
+        //     // increase packet rate
+        //     pendingAirRateIndex = currentIndex - 1;
 
-            #ifndef DEBUG_SUPPRESS
-            printf("packet rate increase %d\n", pendingAirRateIndex);
-            #endif
+        //     #ifndef DEBUG_SUPPRESS
+        //     printf("packet rate increase %d\n", pendingAirRateIndex);
+        //     #endif
 
-        } else {
+        // } else 
+        if (radio2->currPWR > MIN_PRE_PA_POWER_2G4)
+        {
             // already at the fastest packet rate, so start reducing power
             SpiTaskInfo taskInfo = {.id = SpiTaskID::SetPower, .radioID = RadioSelection::second, .power = radio2->currPWR - 1};
             xQueueSend(rx_evt_queue, &taskInfo, 100);
@@ -2156,14 +2167,12 @@ bool ICACHE_RAM_ATTR HandleFHSS915()
  */
 bool ICACHE_RAM_ATTR HandleFHSS2G4()
 {
-    #ifdef DEFER_MANUAL_RATE_CHANGES
     // is there a pending air rate change?
     if (pendingAirRateIndex != -1)
     {
         SetRFLinkRate(pendingAirRateIndex);
         pendingAirRateIndex = -1;
     }
-    #endif // DEFER_MANUAL_RATE_CHANGES
 
     // privatize the hop interval so that it can't change between testing it for 0 and using it as a divisor
     const uint8_t hopInterval = ExpressLRS_currAirRate_Modparams->FHSShopInterval;
@@ -2634,46 +2643,106 @@ static void ICACHE_RAM_ATTR tx2_task(void* arg)
     }
 }
 
-/** Initial test for dynamic rate changes
+#ifdef USE_DYNAMIC_RATES
+/** 
+ * Manage automatic changes of packet rate
+ * 
+ * Decisions based only on LQ, gated by current power level
  * 
  */
-#ifdef ENABLE_DYNAMIC_RATES
+static void manageDynamicRate(unsigned int lq)
+{
+    #define MIN_RATE_CHANGE_INTERVAL_MS 2000
+
+    const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+    const bool powerIsMaxed = (radio2->currPWR == maxPower2G4);
+    const unsigned long now = millis();
+
+    // Check if we need to do a panic change, in which case we ignore the min interval timer
+    if (lq < DYN_POWER_LQ_PANIC_THRESHOLD && powerIsMaxed) 
+    {
+        // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+        if (currentIndex < (RATE_MAX - 1)) {
+            // decrease packet rate
+            pendingAirRateIndex = currentIndex + 1;
+            lastRateChangeMs = now;
+            #ifdef DEV_MODE
+            printf("requested decreased rate %d\n", pendingAirRateIndex);
+            #endif
+        }
+        return; // EARLY RETURN
+    }
+
+    // Don't allow consecutive changes within the interval
+    if ((lastRateChangeMs + MIN_RATE_CHANGE_INTERVAL_MS) > now) {
+        return; // EARLY RETURN
+    }
+
+
+    if (lq < DYN_RATE_LQ_LOW && powerIsMaxed) 
+    {
+        // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+        if (currentIndex < (RATE_MAX - 1)) {
+            // decrease packet rate
+            pendingAirRateIndex = currentIndex + 1;
+            lastRateChangeMs = now;
+            #ifdef DEV_MODE
+            printf("requested decreased rate %d\n", pendingAirRateIndex);
+            #endif
+        }
+
+    } else if (lq > DYN_RATE_LQ_HIGH) {
+        // elrs indexes run from RATE_MAX-1 (slowest) to 0 (fastest)
+        if (currentIndex > 0) {
+            // increase packet rate
+            pendingAirRateIndex = currentIndex - 1;
+            lastRateChangeMs = now;
+            #ifndef DEBUG_SUPPRESS
+            printf("packet rate increase %d\n", pendingAirRateIndex);
+            #endif
+        }
+    }
+
+}
+
 /**
+ * THIS IS THE OLD CODE for dynamic rate 
+ * 
  * Check if a change of packet rate is required
  * 
  * Currently uses only SNR which doesn't exist for FLRC. 
  * TODO Should also factor in LQ and RSSI
 */
-static void checkDynamicRate()
-{
-    #define MIN_RATE_CHANGE_INTERVAL_MS 2000
+// static void checkDynamicRate()
+// {
+//     #define MIN_RATE_CHANGE_INTERVAL_MS 2000
 
 
-    unsigned long now = millis();
+//     unsigned long now = millis();
 
-    // Don't allow consecutive changes within the interval
-    if ((lastRateChangeMs + MIN_RATE_CHANGE_INTERVAL_MS) > now) {
-        return;
-    }
+//     // Don't allow consecutive changes within the interval
+//     if ((lastRateChangeMs + MIN_RATE_CHANGE_INTERVAL_MS) > now) {
+//         return;
+//     }
 
-    const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
+//     const uint8_t currentIndex = ExpressLRS_currAirRate_Modparams->index;
 
-    if ((crsf.LinkStatistics.uplink_SNR > ExpressLRS_currAirRate_RFperfParams->maxSNR) && (currentIndex > 0)) 
-    {
-        // printf("DR+ %d > %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->maxSNR);
-        uint8_t newIndex = currentIndex - 1;
-        SetRFLinkRate(newIndex);
-        lastRateChangeMs = now;
-        std::cout << "DR+";
-    } else if ((crsf.LinkStatistics.uplink_SNR < ExpressLRS_currAirRate_RFperfParams->minSNR) && (currentIndex < (RATE_MAX-1))) {
-        // printf("DR- %d < %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->minSNR);
-        uint8_t newIndex = currentIndex + 1;
-        SetRFLinkRate(newIndex);
-        lastRateChangeMs = now;
-        std::cout << "DR-";
-    }
-}
-#endif // ENABLE_DYNAMIC_RATES
+//     if ((crsf.LinkStatistics.uplink_SNR > ExpressLRS_currAirRate_RFperfParams->maxSNR) && (currentIndex > 0)) 
+//     {
+//         // printf("DR+ %d > %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->maxSNR);
+//         uint8_t newIndex = currentIndex - 1;
+//         SetRFLinkRate(newIndex);
+//         lastRateChangeMs = now;
+//         std::cout << "DR+";
+//     } else if ((crsf.LinkStatistics.uplink_SNR < ExpressLRS_currAirRate_RFperfParams->minSNR) && (currentIndex < (RATE_MAX-1))) {
+//         // printf("DR- %d < %d\n", crsf.LinkStatistics.uplink_SNR, ExpressLRS_currAirRate_RFperfParams->minSNR);
+//         uint8_t newIndex = currentIndex + 1;
+//         SetRFLinkRate(newIndex);
+//         lastRateChangeMs = now;
+//         std::cout << "DR-";
+//     }
+// }
+#endif // USE_DYNAMIC_RATES
 
 
 /** Handle all the possible DIO interrupts for the 915 modem
@@ -2847,13 +2916,14 @@ static void handleEvents915()
             static const SpiTaskInfo taskInfo = {.id = SpiTaskID::ClearIRQs, .radioID = RadioSelection::first, .irqMask = SX1262_IRQ_RX_DONE};
             xQueueSend(rx_evt_queue, &taskInfo, 1);
 
+            // Consider rate changes first, before the power might be changed by dyn power
+            #ifdef USE_DYNAMIC_RATES
+            manageDynamicRate(telemData.lq2G4);
+            #endif
+
             #ifdef USE_DYNAMIC_POWER
             managePower915(telemData.rssi915, telemData.lq915); // XXX TODO add snr915 to telemetry and pass in
             managePower2G4(telemData.rssi2G4, telemData.lq2G4, telemData.snr2G4);
-            #endif
-
-            #ifdef ENABLE_DYNAMIC_RATES
-            checkDynamicRate();
             #endif
 
         } else {
@@ -5149,6 +5219,7 @@ void app_main()
 
     #ifndef DEBUG_SUPPRESS
     unsigned long lastDebug = 0;
+    uint32_t lastRX1debug = 0, lastRX2debug = 0;
     #endif
 
     unsigned long lastLEDUpdate = 0;
@@ -5157,8 +5228,6 @@ void app_main()
     #ifdef LED2812_PIN
     uint32_t lastRX1Events = 0, lastRX2Events = 0;
     #endif
-
-    uint32_t lastRX1debug = 0, lastRX2debug = 0;
 
     // loop
     while(true) {
@@ -5368,13 +5437,13 @@ void app_main()
                 // printf("SNR1 %2.1f, SNR2 %2.1f ", SNR0, SNR1);
                 // printf("LQ1 %3u LQ2 %3u \n", lqRadio1.getLQ(), lqRadio2.getLQ());
 
-                int32_t fLQ = filteredLQ.update(lqRadio2.getLQ());
-
                 printf("915: pkts %3ld rssi %4ld snr %4.1f LQ %3u ", delta1, rssiDBM0, SNR0, lqRadio1.getLQ());
 
                 if (timeout1Counter > 0) {
                     printf("TO:%lu ", timeout1Counter);
                 }
+
+                const int32_t fLQ = filteredLQ.update(lqRadio2.getLQ()*100)/100;
 
                 printf("2G4: pkts %4ld (total %ld) rssi %4ld snr %4.1f LQ %3u (av %lu) ", delta2, totalRX2Events, rssiDBM1, SNR1, lqRadio2.getLQ(), fLQ);
 
