@@ -37,14 +37,17 @@
 // Reduces output power (but may be configured out for tx), enables debug - what else?
 // enables packet rate change by keyboard?
 // does it suppress packet rate change by channel?
-#define DEV_MODE
+// #define DEV_MODE
 
-// Send tx power for both 915 and 2G4. If not set, only send 915 power
+// Send tx power for both 915 and 2G4
 // #define SEND_BOTH_TX_POWERS
+
+// Send the 2G4 power in the 915 slot
+#define SEND_2G4_POWER
 
 // Hardware revision:
 
-#define DUAL_BAND_BREADBOARD
+// #define DUAL_BAND_BREADBOARD
 
 // The first DB PCB: bare C3, modules for radios
 // #define DUAL_BAND_PROTOTYPE
@@ -56,7 +59,7 @@
 // #define DB_PCB_V1_2
 
 // DB specific TX module with e28-27
-// #define DB_TX_V1
+#define DB_TX_V1
 
 
 // This was for dual sx1280 with a c3 module on a PCB

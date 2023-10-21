@@ -7,9 +7,11 @@
  * 
  *  Implement missed telem packet trigger for dynamic power
  * 
- *  Is telem actually using the short packet length OTA?
+ *  Is telem actually using the short packet length OTA? No, the length change is commented out. Can it be made to work?
  * 
  *  Receiver should use the tx power level when sending telem
+ * 
+ *  Need to be able to see 2g4 tx power. Long term send both, short term swap which one is sent
  * 
  *  Dynamic link:
  *    Add SNR to the up/down conditions
@@ -153,12 +155,14 @@
 // The RSSI dB delta relative to the rx sensitivity at which the TX power will be increased
 // So if the RXsensitivity is -105 and DYN_POWER_INCREASE_MARGIN is 25, power will be increased
 // if rssi is below -80
-#define DYN_POWER_INCREASE_MARGIN 22    //  -112 -> 90
+#define DYN_POWER_INCREASE_MARGIN 27
+
+// #define DYN_POWER_INCREASE_MARGIN 22    //  -112 -> 90
 // #define DYN_POWER_INCREASE_MARGIN 32    //  -112 -> 80
 // #define DYN_POWER_INCREASE_MARGIN 42    //  -112 -> 70
 
 // We can have a different threshold for 2G4
-#define DYN_POWER_INCREASE_MARGIN_2G4 12
+#define DYN_POWER_INCREASE_MARGIN_2G4 15
 
 // The RSSI dB delta above DYN_POWER_INCREASE_MARGIN at which the TX power will be decreased
 // If RXsensitivity is -105, DYN_POWER_INCREASE_MARGIN is 25 and DYN_POWER_DECREASE_MARGIN is 10
@@ -1179,7 +1183,12 @@ void ICACHE_RAM_ATTR sendRCdataToRF915DB()
     packet->txPower915 = radio1->getPowerDBM();    // Sends 915 power
     #ifdef SEND_BOTH_TX_POWERS
     packet->txPower2G4 = radio2->getPowerDBM();    // Sends 2G4 power
+    #elif defined(SEND_2G4_POWER)
+    packet->txPower915 = radio2->getPowerDBM();    // Nasty hack - sends 2G4 power in the 915 slot
+    #else
+    packet->txPower915 = radio1->getPowerDBM();    // Sends 915 power
     #endif
+
     packet->rateIndex = ExpressLRS_currAirRate_Modparams->index;
 
     packet->ch0 = crsfTo10bit(crsf.ChannelDataIn[0]); // input data is 11 bit reduced range, backup channels are 10 bit clean
@@ -2314,7 +2323,9 @@ bool isTelemetryFrame()
 
 
 char * telemWhere = (char *)"not set";
-
+/**
+ * Sends a telemetry packet from the receiver to the transmitter
+*/
 bool ICACHE_RAM_ATTR sendTelemetryResponse()
 {
     // printf("telem...\n");
@@ -2387,7 +2398,7 @@ bool ICACHE_RAM_ATTR sendTelemetryResponse()
 
     telemWhere = (char *)"tx";
 
-    // packet length is set in the rx task when it detects the receiver is doing a send
+    // packet length is set in the rx task when it detects the receiver is doing a send (except it's currently commented out)
 
     SpiTaskInfo taskInfo;
     taskInfo.id = SpiTaskID::StartTx;
@@ -3158,7 +3169,9 @@ static void receive2G4()
 
 #endif
 
-/** Handles a mixture of incoming events (DIO interrupts) and SPI commands. Needs to be split up
+/** Handles a mixture of incoming events (DIO interrupts) and SPI commands. Needs to be split up.
+ * 
+ * Note that the name is misleading as this is handling both radios, not just the 915 band.
  * 
  * Each item on the queue represents an spi transaction, so if an activity requires multiple
  * spi calls (without something else jumping in between) then that should be represented as a single
@@ -3297,7 +3310,8 @@ static void ICACHE_RAM_ATTR rx_task915(void* arg)
                 case SpiTaskID::StartRx:
                     switch(taskInfo.radioID)
                     {
-                        case RadioSelection::both: // start rx on both radios
+                        // TODO update the packet length if we want to restore changing for ota vs telem
+                        case RadioSelection::both: // start rx on both radios                        
                             radio1->RXnb();
                             #ifdef USE_SECOND_RADIO
                             radio2->RXnb();
@@ -3370,7 +3384,7 @@ static void ICACHE_RAM_ATTR rx_task2G4(void* arg)
     }
 }
 
-#endif // TRANSMITTER
+#endif // Not TRANSMITTER
 
 /** dio1 interrupt when packet is received or preamble detected
  */
