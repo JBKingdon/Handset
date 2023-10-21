@@ -20,18 +20,12 @@
 
 //void ICACHE_RAM_ATTR TXnbISR(); // why is this here? Can we get rid of it?
 
-// XXX used?
-// enum InterruptAssignment_
-// {
-//     NONE,
-//     RX_DONE,
-//     TX_DONE
-// };
 
 class SX1262Driver
 {
 private:
     uint32_t rxTimeout = 0xFFFFFF; // default to continuous mode as that's what earlier impls used
+    uint8_t packetLength = 0;
     void setupLora();
     void clearRxTimeout();
     void optimizeIQ(bool isInverted);
@@ -101,7 +95,8 @@ public:
     void ICACHE_RAM_ATTR SetFrequency(uint32_t freq);
     void ICACHE_RAM_ATTR SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr);
     void SetOutputPower(int8_t power);
-    void setPacketLength(uint8_t packetLen);
+    void ICACHE_RAM_ATTR setPacketLength(uint8_t packetLen);
+    uint8_t getPacketLength();
 
 
     uint16_t convertPowerToMw(int power);

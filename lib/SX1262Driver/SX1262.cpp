@@ -370,7 +370,13 @@ void SX1262Driver::setupLora()
 
 void SX1262Driver::setPacketLength(uint8_t packetLen)
 {
+    packetLength = packetLen;
     SetPacketParams(12, SX1262_LORA_PACKET_FIXED_LENGTH, packetLen, SX1262_LORA_CRC_OFF, SX1262_LORA_IQ_NORMAL);
+}
+
+uint8_t SX1262Driver::getPacketLength()
+{
+    return packetLength;
 }
 
 void setDIO2TXEN()
