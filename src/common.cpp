@@ -68,7 +68,7 @@ expresslrs_mod_settings_915_s ExpressLRS_AirRateConfig[RATE_MAX] = {
 
     #else
 
-    // 333, but dodgy due to the out of spec pre-amble. Maybe with tigher pfd slack or a faster SPI impl?
+    // 333, but dodgy due to the out of spec pre-amble. Maybe with tighter pfd slack or a faster SPI impl?
     {0, RATE_200HZ, SX1262_LORA_BW_500, SX1262_LORA_SF5, SX1262_LORA_CR_4_5, 3000, TLM_RATIO_1_64,   4,  8}, // preamble 8 works, but some crc errors. 10 and 12 don't fit with current pfd setting
 
     // so what rate can we get with pre-amble 12?

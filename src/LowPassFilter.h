@@ -2,7 +2,16 @@
 #include "stdint.h"
 
 /////////// Super Simple Fixed Point Lowpass ////////////////
-
+/**
+ * Need to confirm the largest value this can hold.
+ * It's using signed values, so we have 2^31 bits available.
+ * The intermediate calculation deals with the values shifted by Beta + FP_Shift bits, 
+ * default is 8, so max value looks to be 2 ^ (31-8) = 2^23 or 8388608.
+ * But note that Beta and FP_Shift can be specified in the constructors per instance.
+ * 
+ * XXX Is it worth calculating the max and doing something if the input is out of range?
+ * 
+*/
 class LPF
 {
 public:
